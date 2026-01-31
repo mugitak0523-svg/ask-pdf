@@ -1,0 +1,6 @@
+uvicorn app.main:app --app-dir apps/server --reload
+
+
+python -m venv .venv
+source .venv/bin/activate
+pip install -r apps/server/requirements.txt
