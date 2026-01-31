@@ -6,3 +6,4 @@ python-multipart
 asyncpg
 supabase
 anyio
+python-jose

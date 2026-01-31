@@ -78,16 +78,18 @@ ask-pdf/
 
 ## 5. 主要機能の技術仕様
 
-### 5.1. PDF解析フロー
+### 5.1. PDF解析フロー（ユーザー単位）
 
 1. ユーザーがPDFをアップロード。
-2. ファイルをSupabase Storageに保存。
+2. ファイルをSupabase Storageに保存（ユーザーIDで紐付け）。
 3. Parser APIの `POST /documents` を呼び出し解析を開始。
 4. `GET /documents/{doc_id}` でステータスを監視。
-5. 解析完了後、`POST /documents/{doc_id}/chunks` でベクトルと座標データを一括取得。
-6. 全データを `document_chunks` に一括インサート。
+5. 解析完了後、`GET /documents/{doc_id}/result` で全文JSONを取得。
+6. `documents.user_id` をセットし、`document_chunks` に一括インサート。
 
-### 5.2. 自作PDFハイライト機能
+### 5.2. PDF表示とハイライト機能
+
+まずは「ユーザーごとにPDFをアップロード・一覧・表示」できる状態を優先し、その後にハイライト機能を実装します。
 
 PDFレンダリング層の上に、透明な `HighlightLayer` を実装します。
 
@@ -115,7 +117,7 @@ APIから返されるインチ単位の座標を、以下の数式でビュー�
 
 1. **Phase 1**: Supabase (pgvector) のセットアップとテーブル作成。
 2. **Phase 2**: Parser APIとサーバー（FastAPI）の連携（インデックス処理の自動化）。
-3. **Phase 3**: Next.js での 3ペインUI 実装。
-4. **Phase 4**: 自作ハイライトエンジンの構築とスクロール同期の実装。
+3. **Phase 3**: 認証・ユーザー別PDF管理（アップロード/一覧/表示）。
+4. **Phase 4**: ハイライト・ストリーミング・最適化。
 
 ---

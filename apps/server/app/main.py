@@ -1,4 +1,6 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import httpx
 
 from app.api import documents, search
 from app.config import get_settings
@@ -11,9 +13,27 @@ from app.services.storage import create_storage_client
 def create_app() -> FastAPI:
     app = FastAPI(title="AskPDF Backend")
 
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     @app.on_event("startup")
     async def startup() -> None:
         settings = get_settings()
+        app.state.settings = settings
+        app.state.supabase_jwks = None
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(settings.supabase_jwks_url)
+                response.raise_for_status()
+                payload = response.json()
+                app.state.supabase_jwks = payload.get("keys", [])
+        except Exception:
+            app.state.supabase_jwks = None
         app.state.parser_client = ParserClient(
             base_url=settings.parser_api_base_url,
             api_key=settings.parser_api_key,

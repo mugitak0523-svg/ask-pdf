@@ -1,6 +1,12 @@
 uvicorn app.main:app --app-dir apps/server --reload
 
+# Auth
+# Authorization: Bearer <supabase-jwt>
+# GET http://127.0.0.1:8000/documents
+
 
 python -m venv .venv
 source .venv/bin/activate
 pip install -r apps/server/requirements.txt
+
+curl -F "file=@/Users/programs/ask-pdf/samples/sample.pdf" http://127.0.0.1:8000/documents/index

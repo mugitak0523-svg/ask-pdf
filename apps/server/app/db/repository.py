@@ -34,6 +34,41 @@ async def insert_document(
     return str(row["id"])
 
 
+async def list_documents(
+    pool: asyncpg.Pool,
+    user_id: str,
+) -> list[dict[str, Any]]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            select id, title, storage_path, metadata, created_at
+            from documents
+            where user_id = $1
+            order by created_at desc
+            """,
+            user_id,
+        )
+    return [dict(row) for row in rows]
+
+
+async def get_document(
+    pool: asyncpg.Pool,
+    document_id: str,
+    user_id: str,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select id, title, storage_path, metadata, result, created_at
+            from documents
+            where id = $1 and user_id = $2
+            """,
+            document_id,
+            user_id,
+        )
+    return dict(row) if row else None
+
+
 async def insert_chunks(
     pool: asyncpg.Pool,
     document_id: str,

@@ -21,9 +21,10 @@ class Indexer:
         pool,
         file_bytes: bytes,
         filename: str | None,
+        user_id: str,
     ) -> dict[str, Any]:
         safe_name = filename or "document.pdf"
-        storage_path = f"{uuid4()}-{safe_name}"
+        storage_path = f"{user_id}/{uuid4()}-{safe_name}"
         await anyio.to_thread.run_sync(
             self._storage.upload_pdf,
             storage_path,
@@ -51,7 +52,7 @@ class Indexer:
                 },
             },
             result=result_payload,
-            user_id=None,
+            user_id=user_id,
         )
         inserted = await repository.insert_chunks(pool, document_id, chunks)
 
