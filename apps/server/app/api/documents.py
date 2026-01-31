@@ -7,6 +7,7 @@ from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status
 from app.db import repository
 from app.services.auth import AuthDependency, AuthUser
 from app.services.indexer import Indexer
+from app.services.storage import StorageClient
 
 router = APIRouter()
 
@@ -44,3 +45,23 @@ async def get_document(
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     return row
+
+
+@router.get("/documents/{document_id}/signed-url")
+async def get_document_signed_url(
+    request: Request,
+    document_id: str,
+    user: AuthUser = AuthDependency,
+) -> dict[str, str]:
+    pool = request.app.state.db_pool
+    row = await repository.get_document(pool, document_id, user.user_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    storage_client: StorageClient = request.app.state.storage_client
+    signed_url = storage_client.create_signed_url(str(row["storage_path"]))
+    if not signed_url:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create signed URL",
+        )
+    return {"signed_url": signed_url}

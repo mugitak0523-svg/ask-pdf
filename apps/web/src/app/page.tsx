@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { PdfViewer, type Highlight } from "@/components/pdf-viewer";
+import { PdfEmbed } from "@/components/pdf-embed";
 import { supabase } from "@/lib/supabase";
 
 const mockChats = [
@@ -51,8 +51,15 @@ type DocumentItem = {
   title: string;
 };
 
+type OpenDocument = {
+  id: string;
+  title: string;
+};
+
 export default function Home() {
   const containerRef = useRef<HTMLElement | null>(null);
+  const tabsRef = useRef<HTMLDivElement | null>(null);
+  const tabsWrapRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [chatWidth, setChatWidth] = useState(360);
   const [activeHighlightId, setActiveHighlightId] = useState<string | null>(
@@ -64,8 +71,21 @@ export default function Home() {
   const [docsError, setDocsError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
+  const [selectedDocumentUrl, setSelectedDocumentUrl] = useState<string | null>(null);
+  const [selectedDocumentTitle, setSelectedDocumentTitle] = useState<string | null>(null);
+  const [viewerLoading, setViewerLoading] = useState(false);
+  const [viewerError, setViewerError] = useState<string | null>(null);
+  const [openDocuments, setOpenDocuments] = useState<OpenDocument[]>([]);
+  const [tabsOverflow, setTabsOverflow] = useState(false);
 
   const mainStyle = useMemo(
+    () => ({
+      gridTemplateColumns: `minmax(0, 1fr) 6px ${chatWidth}px`,
+    }),
+    [chatWidth]
+  );
+  const topbarStyle = useMemo(
     () => ({
       gridTemplateColumns: `minmax(0, 1fr) 6px ${chatWidth}px`,
     }),
@@ -183,43 +203,98 @@ export default function Home() {
     }
   };
 
+  const handleSelectDocument = async (doc: DocumentItem) => {
+    setSelectedDocumentId(doc.id);
+    setSelectedDocumentTitle(doc.title);
+    setOpenDocuments((prev) => {
+      if (prev.some((item) => item.id === doc.id)) return prev;
+      return [...prev, { id: doc.id, title: doc.title }];
+    });
+    setSelectedDocumentUrl(null);
+    setViewerError(null);
+    setViewerLoading(true);
+    try {
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.access_token;
+      if (!accessToken) {
+        throw new Error("Not authenticated");
+      }
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/documents/${doc.id}/signed-url`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load PDF (${response.status})`);
+      }
+      const payload = await response.json();
+      const url = String(payload.signed_url ?? "");
+      if (!url) {
+        throw new Error("Signed URL is missing");
+      }
+      setSelectedDocumentUrl(url);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load PDF";
+      setViewerError(message);
+    } finally {
+      setViewerLoading(false);
+    }
+  };
+
+  const handleSelectTab = (docId: string) => {
+    const doc = openDocuments.find((item) => item.id === docId);
+    if (!doc) return;
+    void handleSelectDocument({ id: doc.id, title: doc.title });
+  };
+
+  const handleCloseTab = (docId: string) => {
+    setOpenDocuments((prev) => prev.filter((item) => item.id !== docId));
+    if (selectedDocumentId === docId) {
+      const remaining = openDocuments.filter((item) => item.id !== docId);
+      if (remaining.length > 0) {
+        const nextDoc = remaining[remaining.length - 1];
+        void handleSelectDocument(nextDoc);
+      } else {
+        setSelectedDocumentId(null);
+        setSelectedDocumentTitle(null);
+        setSelectedDocumentUrl(null);
+        setViewerError(null);
+      }
+    }
+  };
+
+  const scrollTabs = (direction: "left" | "right") => {
+    const container = tabsRef.current;
+    if (!container) return;
+    const step = 200;
+    container.scrollBy({
+      left: direction === "left" ? -step : step,
+      behavior: "smooth",
+    });
+  };
+
+  useEffect(() => {
+    const container = tabsRef.current;
+    const wrap = tabsWrapRef.current;
+    if (!container || !wrap) return;
+    const updateOverflow = () => {
+      setTabsOverflow(container.scrollWidth > wrap.clientWidth + 1);
+    };
+    const raf = requestAnimationFrame(updateOverflow);
+    const resizeObserver = new ResizeObserver(updateOverflow);
+    resizeObserver.observe(wrap);
+    window.addEventListener("resize", updateOverflow);
+    return () => {
+      cancelAnimationFrame(raf);
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updateOverflow);
+    };
+  }, [openDocuments.length, chatWidth]);
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
   };
-
-  const pages = useMemo(
-    () => [
-      { pageNumber: 12, widthInch: 8.26, heightInch: 11.69 },
-      { pageNumber: 13, widthInch: 8.26, heightInch: 11.69 },
-    ],
-    []
-  );
-
-  const highlights = useMemo<Highlight[]>(
-    () => [
-      {
-        id: "h-12-1",
-        pageNumber: 12,
-        bbox: [0.9, 1.2, 6.8, 2.1],
-      },
-      {
-        id: "h-12-2",
-        pageNumber: 12,
-        bbox: [1.1, 4.2, 7.2, 5.4],
-      },
-      {
-        id: "h-13-1",
-        pageNumber: 13,
-        bbox: [0.8, 2.0, 6.2, 3.2],
-      },
-      {
-        id: "h-13-2",
-        pageNumber: 13,
-        bbox: [1.0, 6.0, 7.0, 8.0],
-      },
-    ],
-    []
-  );
 
   return (
     <main className={`app ${sidebarOpen ? "" : "app--sidebar-closed"}`}>
@@ -345,7 +420,11 @@ export default function Home() {
               </div>
             ) : (
               documents.map((doc) => (
-                <button key={doc.id} className="history-item">
+                <button
+                  key={doc.id}
+                  className="history-item"
+                  onClick={() => handleSelectDocument(doc)}
+                >
                   <span className="label">{doc.title}</span>
                 </button>
               ))
@@ -388,9 +467,18 @@ export default function Home() {
       </section>
 
       <div className="right-col">
-      <header className="topbar">
-        <div className="topbar__brand">
-          <span className="brand">AskPDF</span>
+      <header className="topbar" style={topbarStyle}>
+        <div className="topbar__left">
+          <div className="topbar__brand">
+            <span className="brand">AskPDF</span>
+          </div>
+          <div className="topbar__doc">
+            {selectedDocumentTitle ? (
+              <span className="label">{selectedDocumentTitle}</span>
+            ) : (
+              <span className="label">PDF未選択</span>
+            )}
+          </div>
         </div>
         <div className="viewer__actions">
           {isAuthed ? (
@@ -412,8 +500,64 @@ export default function Home() {
 
       <section className="main" style={mainStyle} ref={containerRef}>
         <section className="viewer">
+          <div
+            className={`viewer__tabs-wrap ${tabsOverflow ? "is-overflow" : ""} ${
+              openDocuments.length > 0 ? "" : "is-empty"
+            }`}
+            ref={tabsWrapRef}
+          >
+            <button
+              type="button"
+              className={`viewer__tabs-nav ${tabsOverflow ? "" : "is-hidden"}`}
+              onClick={() => scrollTabs("left")}
+              aria-label="scroll left"
+            >
+              ≪
+            </button>
+            <div className="viewer__tabs" ref={tabsRef}>
+              {openDocuments.map((doc) => (
+                <button
+                  key={doc.id}
+                  type="button"
+                  className={`viewer__tab ${
+                    doc.id === selectedDocumentId ? "viewer__tab--active" : ""
+                  }`}
+                  onClick={() => handleSelectTab(doc.id)}
+                >
+                  <span className="viewer__tab-label">{doc.title}</span>
+                  <span
+                    className="viewer__tab-close"
+                    role="button"
+                    aria-label="close"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleCloseTab(doc.id);
+                    }}
+                  >
+                    ×
+                  </span>
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              className={`viewer__tabs-nav ${tabsOverflow ? "" : "is-hidden"}`}
+              onClick={() => scrollTabs("right")}
+              aria-label="scroll right"
+            >
+              ≫
+            </button>
+          </div>
           <div className="viewer__canvas">
-            <div className="empty-state">PDFがここに表示されます</div>
+            {viewerLoading ? (
+              <div className="empty-state">読み込み中...</div>
+            ) : viewerError ? (
+              <div className="empty-state">{viewerError}</div>
+            ) : selectedDocumentUrl ? (
+              <PdfEmbed url={selectedDocumentUrl} />
+            ) : (
+              <div className="empty-state">PDFがここに表示されます</div>
+            )}
           </div>
         </section>
 

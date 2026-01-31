@@ -45,6 +45,7 @@ def create_app() -> FastAPI:
             settings.supabase_service_role_key,
             settings.supabase_bucket,
         )
+        app.state.storage_client = storage_client
         app.state.indexer = Indexer(app.state.parser_client, storage_client)
 
     @app.on_event("shutdown")
