@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import { PdfViewer, type Highlight } from "@/components/pdf-viewer";
 
 const mockChats = [
   {
@@ -24,7 +25,10 @@ const mockMessages = [
   {
     role: "assistant",
     text: "この資料では売上成長率は前年比18%です。",
-    refs: ["p.12", "p.13"],
+    refs: [
+      { label: "p.12", id: "h-12-1" },
+      { label: "p.13", id: "h-13-1" },
+    ],
   },
   {
     role: "user",
@@ -33,7 +37,10 @@ const mockMessages = [
   {
     role: "assistant",
     text: "p.12の市場分析とp.13の売上推移グラフを参照しました。",
-    refs: ["p.12", "p.13"],
+    refs: [
+      { label: "p.12", id: "h-12-2" },
+      { label: "p.13", id: "h-13-2" },
+    ],
   },
 ];
 
@@ -73,6 +80,9 @@ const samplePdfs = [
 export default function Home() {
   const containerRef = useRef<HTMLElement | null>(null);
   const [chatWidth, setChatWidth] = useState(360);
+  const [activeHighlightId, setActiveHighlightId] = useState<string | null>(
+    "h-12-1"
+  );
 
   const mainStyle = useMemo(
     () => ({
@@ -102,6 +112,40 @@ export default function Home() {
     window.addEventListener("pointerup", onUp);
   };
 
+  const pages = useMemo(
+    () => [
+      { pageNumber: 12, widthInch: 8.26, heightInch: 11.69 },
+      { pageNumber: 13, widthInch: 8.26, heightInch: 11.69 },
+    ],
+    []
+  );
+
+  const highlights = useMemo<Highlight[]>(
+    () => [
+      {
+        id: "h-12-1",
+        pageNumber: 12,
+        bbox: [0.9, 1.2, 6.8, 2.1],
+      },
+      {
+        id: "h-12-2",
+        pageNumber: 12,
+        bbox: [1.1, 4.2, 7.2, 5.4],
+      },
+      {
+        id: "h-13-1",
+        pageNumber: 13,
+        bbox: [0.8, 2.0, 6.2, 3.2],
+      },
+      {
+        id: "h-13-2",
+        pageNumber: 13,
+        bbox: [1.0, 6.0, 7.0, 8.0],
+      },
+    ],
+    []
+  );
+
   return (
     <main className="app">
       <section className="sidebar">
@@ -129,29 +173,11 @@ export default function Home() {
       <section className="main" style={mainStyle} ref={containerRef}>
         <section className="viewer">
           <div className="viewer__canvas">
-            <article className="viewer__paper">
-              <h2>被りチェック前提で最後に決定</h2>
-              <ul>
-                <li>キャッチコピー（行・LP用）</li>
-                <li>サービス説明文（英語・30秒で理解できるやつ）</li>
-              </ul>
-              <p className="divider">どれ系で行く？</p>
-              <div className="quote">一瞬で意味が伝わる</div>
-              <h3>最有力（説明不要レベル）</h3>
-              <ul>
-                <li>AskPDF</li>
-                <li>ChatWithPDF</li>
-                <li>ChatPDF</li>
-                <li>TalkToPDF</li>
-                <li>AskYourPDF</li>
-              </ul>
-              <p className="note">📌 見た瞬間に「PDFに質問できる」と分かる。</p>
-            </article>
-
-            <div className="viewer__overlay">
-              <span className="marker">p.12</span>
-              <span className="marker">p.13</span>
-            </div>
+            <PdfViewer
+              pages={pages}
+              highlights={highlights}
+              activeHighlightId={activeHighlightId}
+            />
           </div>
         </section>
 
@@ -170,7 +196,14 @@ export default function Home() {
                 {msg.refs ? (
                   <div className="refs">
                     {msg.refs.map((ref) => (
-                      <span key={ref}>{ref}</span>
+                      <button
+                        type="button"
+                        key={ref.id}
+                        className="ref"
+                        onClick={() => setActiveHighlightId(ref.id)}
+                      >
+                        {ref.label}
+                      </button>
                     ))}
                   </div>
                 ) : null}
