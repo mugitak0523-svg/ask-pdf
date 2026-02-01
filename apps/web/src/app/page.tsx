@@ -1271,28 +1271,33 @@ export default function Home() {
                 />
               </div>
               <div className="input-panel__bottom">
-                <div className="model-select">
-                  <button
-                    type="button"
-                    className={`model-option ${chatMode === "fast" ? "is-active" : ""}`}
-                    onClick={() => setChatMode("fast")}
-                  >
-                    高速
-                  </button>
-                  <button
-                    type="button"
-                    className={`model-option ${chatMode === "standard" ? "is-active" : ""}`}
-                    onClick={() => setChatMode("standard")}
-                  >
-                    標準
-                  </button>
-                  <button
-                    type="button"
-                    className={`model-option ${chatMode === "think" ? "is-active" : ""}`}
-                    onClick={() => setChatMode("think")}
-                  >
-                    思考
-                  </button>
+                <div className="model-cluster">
+                  <div className="model-select">
+                    <button
+                      type="button"
+                      className={`model-option ${chatMode === "fast" ? "is-active" : ""}`}
+                      onClick={() => setChatMode("fast")}
+                    >
+                      高速
+                    </button>
+                    <button
+                      type="button"
+                      className={`model-option ${chatMode === "standard" ? "is-active" : ""}`}
+                      onClick={() => setChatMode("standard")}
+                    >
+                      標準
+                    </button>
+                    <button
+                      type="button"
+                      className={`model-option ${chatMode === "think" ? "is-active" : ""}`}
+                      onClick={() => setChatMode("think")}
+                    >
+                      思考
+                    </button>
+                  </div>
+                  <div className="usage-ring" aria-label="usage 40%">
+                    <span className="usage-ring__center" />
+                  </div>
                 </div>
                 <button
                   type="submit"

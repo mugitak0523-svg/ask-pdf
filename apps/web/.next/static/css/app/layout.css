@@ -1348,6 +1348,12 @@ button {
   gap: 8px;
 }
 
+.model-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .model-select {
   display: inline-flex;
   gap: 6px;
@@ -1355,6 +1361,23 @@ button {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: #fff;
+}
+
+.usage-ring {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: conic-gradient(#8c8c83 0 40%, #e6e6e0 40% 100%);
+  display: grid;
+  place-items: center;
+}
+
+.usage-ring__center {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--panel-soft);
+  border: 1px solid #e0dfd7;
 }
 
 .model-option {
