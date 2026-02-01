@@ -522,7 +522,7 @@ button {
   align-items: center;
   padding: 0 8px;
   border-bottom: 1px solid var(--line);
-  background: transparent;
+  background: #fbfbfa;
   min-height: 52px;
 }
 
@@ -1086,18 +1086,41 @@ button {
   border-radius: 999px;
 }
 
-.chat__messages {
+.chat__messages-wrap {
   flex: 1;
-  padding: 18px 20px;
+  position: relative;
+  min-height: 0;
+}
+
+.chat__messages {
+  height: 100%;
+  padding: 18px 6px;
   display: flex;
   flex-direction: column;
   gap: 16px;
   overflow-y: auto;
 }
 
+.chat {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.chat__header {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  font-size: 12px;
+}
+
 .bubble {
   max-width: 80%;
-  padding: 12px 14px;
+  padding: 6px 12px;
   border-radius: 8px;
   font-size: 14px;
   line-height: 1.5;
@@ -1146,24 +1169,63 @@ button {
   gap: 12px;
 }
 
-.input-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.input-panel {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--panel-soft);
   padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.chat__input textarea {
+.input-panel__top textarea {
+  width: 100%;
   resize: none;
   border: none;
   background: transparent;
   color: var(--text);
   padding: 6px;
-  flex: 1;
   outline: none;
+  line-height: 1.5;
+  overflow-y: hidden;
+}
+
+.input-panel__bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.model-select {
+  display: inline-flex;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.model-option {
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: #b8b8b0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.model-option:hover {
+  background: #f4f4f0;
+  color: var(--text);
+}
+
+.model-option.is-active {
+  border-color: var(--line);
+  color: var(--text);
+  background: #f7f7f5;
 }
 
 .send {
@@ -1174,6 +1236,33 @@ button {
   background: #111;
   color: #fff;
   font-size: 16px;
+}
+
+.chat__jump {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: -8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  width: 30px;
+  height: 30px;
+  background: #fff;
+  font-size: 16px;
+  color: var(--text);
+  display: grid;
+  place-items: center;
+  transition: opacity 120ms ease;
+  z-index: 1;
+}
+
+.chat__jump:hover {
+  background: #f4f4f0;
+}
+
+.chat__jump.is-hidden {
+  opacity: 0;
+  pointer-events: none;
 }
 
 @media (max-width: 1100px) {

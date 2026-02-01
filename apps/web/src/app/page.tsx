@@ -44,6 +44,85 @@ const mockMessages = [
       { label: "p.13", id: "h-13-2" },
     ],
   },
+  {
+    role: "user",
+    text: "この資料の目的は何？",
+  },
+  {
+    role: "assistant",
+    text: "目的は事業計画の承認に必要な数値根拠を示すことです。",
+  },
+  {
+    role: "user",
+    text: "主要KPIは？",
+  },
+  {
+    role: "assistant",
+    text: "ARR、解約率、CAC、LTVが主要KPIです。",
+    refs: [{ label: "p.7", id: "h-7-1" }],
+  },
+  {
+    role: "user",
+    text: "競合比較はどこにある？",
+  },
+  {
+    role: "assistant",
+    text: "競合比較はp.9のマトリクスにまとめられています。",
+    refs: [{ label: "p.9", id: "h-9-1" }],
+  },
+  {
+    role: "user",
+    text: "コスト構造の説明は？",
+  },
+  {
+    role: "assistant",
+    text: "固定費と変動費の内訳がp.15に記載されています。",
+    refs: [{ label: "p.15", id: "h-15-1" }],
+  },
+  {
+    role: "user",
+    text: "売上の内訳比率は？",
+  },
+  {
+    role: "assistant",
+    text: "製品Aが45%、製品Bが35%、その他が20%です。",
+    refs: [{ label: "p.11", id: "h-11-1" }],
+  },
+  {
+    role: "user",
+    text: "次のアクションは？",
+  },
+  {
+    role: "assistant",
+    text: "来月のパイロット導入と効果測定が次のステップです。",
+  },
+  {
+    role: "user",
+    text: "リスク要因は？",
+  },
+  {
+    role: "assistant",
+    text: "人材確保と市場競争激化が主なリスクです。",
+    refs: [{ label: "p.18", id: "h-18-1" }],
+  },
+  {
+    role: "user",
+    text: "スケジュールは？",
+  },
+  {
+    role: "assistant",
+    text: "Q2で設計、Q3で実装、Q4で展開の予定です。",
+    refs: [{ label: "p.20", id: "h-20-1" }],
+  },
+  {
+    role: "user",
+    text: "予算の合計は？",
+  },
+  {
+    role: "assistant",
+    text: "初年度の予算は1.2億円です。",
+    refs: [{ label: "p.14", id: "h-14-1" }],
+  },
 ];
 
 type DocumentItem = {
@@ -61,8 +140,12 @@ export default function Home() {
   const tabsRef = useRef<HTMLDivElement | null>(null);
   const tabsWrapRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const [chatWidth, setChatWidth] = useState(360);
   const [chatInput, setChatInput] = useState("");
+  const [chatMode, setChatMode] = useState<"fast" | "standard" | "think">("standard");
+  const chatMessagesRef = useRef<HTMLDivElement | null>(null);
+  const [showChatJump, setShowChatJump] = useState(false);
   const [activeHighlightId, setActiveHighlightId] = useState<string | null>(
     "h-12-1"
   );
@@ -115,6 +198,20 @@ export default function Home() {
     window.addEventListener("pointerup", onUp);
   };
 
+  const resizeChatInput = () => {
+    const el = chatInputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const styles = window.getComputedStyle(el);
+    const lineHeight = Number.parseFloat(styles.lineHeight || "0");
+    const paddingTop = Number.parseFloat(styles.paddingTop || "0");
+    const paddingBottom = Number.parseFloat(styles.paddingBottom || "0");
+    const maxHeight = lineHeight * 3 + paddingTop + paddingBottom;
+    const nextHeight = Math.min(el.scrollHeight, maxHeight);
+    el.style.height = `${nextHeight}px`;
+    el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
+  };
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setIsAuthed(Boolean(data.session));
@@ -134,6 +231,26 @@ export default function Home() {
     });
     return () => {
       subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    resizeChatInput();
+  }, [chatInput]);
+
+  useEffect(() => {
+    const target = chatMessagesRef.current;
+    if (!target) return;
+    const onScroll = () => {
+      const threshold = 16;
+      const distance =
+        target.scrollHeight - target.scrollTop - target.clientHeight;
+      setShowChatJump(distance > threshold);
+    };
+    onScroll();
+    target.addEventListener("scroll", onScroll);
+    return () => {
+      target.removeEventListener("scroll", onScroll);
     };
   }, []);
 
@@ -627,39 +744,87 @@ export default function Home() {
         />
 
         <section className="chat">
-          <div className="chat__messages">
-            {mockMessages.map((msg, index) => (
-              <div key={index} className={`bubble bubble--${msg.role}`}>
-                <p>{msg.text}</p>
-                {msg.refs ? (
-                  <div className="refs">
-                    {msg.refs.map((ref) => (
-                      <button
-                        type="button"
-                        key={ref.id}
-                        className="ref"
-                        onClick={() => setActiveHighlightId(ref.id)}
-                      >
-                        {ref.label}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            ))}
+          <div className="chat__header">
+            <span className="label">チャット</span>
           </div>
+          <div className="chat__messages-wrap">
+            <div className="chat__messages" ref={chatMessagesRef}>
+              {mockMessages.map((msg, index) => (
+                <div key={index} className={`bubble bubble--${msg.role}`}>
+                  <p>{msg.text}</p>
+                  {msg.refs ? (
+                    <div className="refs">
+                      {msg.refs.map((ref) => (
+                        <button
+                          type="button"
+                          key={ref.id}
+                          className="ref"
+                          onClick={() => setActiveHighlightId(ref.id)}
+                        >
+                          {ref.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
 
+            <button
+              type="button"
+              className={`chat__jump ${showChatJump ? "" : "is-hidden"}`}
+              onClick={() => {
+                if (chatMessagesRef.current) {
+                  chatMessagesRef.current.scrollTo({
+                    top: chatMessagesRef.current.scrollHeight,
+                    behavior: "smooth",
+                  });
+                }
+              }}
+              aria-label="scroll to latest"
+            >
+              ↓
+            </button>
+          </div>
           <form className="chat__input" onSubmit={(event) => event.preventDefault()}>
-            <div className="input-row">
-              <textarea
-                placeholder="質問してみましょう"
-                rows={2}
-                value={chatInput}
-                onChange={(event) => setChatInput(event.target.value)}
-              />
-              <button type="submit" className="send">
-                ↑
-              </button>
+            <div className="input-panel">
+              <div className="input-panel__top">
+                <textarea
+                  placeholder="質問してみましょう"
+                  rows={1}
+                  value={chatInput}
+                  onChange={(event) => setChatInput(event.target.value)}
+                  ref={chatInputRef}
+                />
+              </div>
+              <div className="input-panel__bottom">
+                <div className="model-select">
+                  <button
+                    type="button"
+                    className={`model-option ${chatMode === "fast" ? "is-active" : ""}`}
+                    onClick={() => setChatMode("fast")}
+                  >
+                    高速
+                  </button>
+                  <button
+                    type="button"
+                    className={`model-option ${chatMode === "standard" ? "is-active" : ""}`}
+                    onClick={() => setChatMode("standard")}
+                  >
+                    標準
+                  </button>
+                  <button
+                    type="button"
+                    className={`model-option ${chatMode === "think" ? "is-active" : ""}`}
+                    onClick={() => setChatMode("think")}
+                  >
+                    思考
+                  </button>
+                </div>
+                <button type="submit" className="send">
+                  ↑
+                </button>
+              </div>
             </div>
           </form>
         </section>
