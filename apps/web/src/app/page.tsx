@@ -23,107 +23,18 @@ const mockChats = [
   },
 ];
 
-const mockMessages = [
-  {
-    role: "assistant",
-    text: "この資料では売上成長率は前年比18%です。",
-    refs: [
-      { label: "p.12", id: "h-12-1" },
-      { label: "p.13", id: "h-13-1" },
-    ],
-  },
-  {
-    role: "user",
-    text: "根拠のページを教えて",
-  },
-  {
-    role: "assistant",
-    text: "p.12の市場分析とp.13の売上推移グラフを参照しました。",
-    refs: [
-      { label: "p.12", id: "h-12-2" },
-      { label: "p.13", id: "h-13-2" },
-    ],
-  },
-  {
-    role: "user",
-    text: "この資料の目的は何？",
-  },
-  {
-    role: "assistant",
-    text: "目的は事業計画の承認に必要な数値根拠を示すことです。",
-  },
-  {
-    role: "user",
-    text: "主要KPIは？",
-  },
-  {
-    role: "assistant",
-    text: "ARR、解約率、CAC、LTVが主要KPIです。",
-    refs: [{ label: "p.7", id: "h-7-1" }],
-  },
-  {
-    role: "user",
-    text: "競合比較はどこにある？",
-  },
-  {
-    role: "assistant",
-    text: "競合比較はp.9のマトリクスにまとめられています。",
-    refs: [{ label: "p.9", id: "h-9-1" }],
-  },
-  {
-    role: "user",
-    text: "コスト構造の説明は？",
-  },
-  {
-    role: "assistant",
-    text: "固定費と変動費の内訳がp.15に記載されています。",
-    refs: [{ label: "p.15", id: "h-15-1" }],
-  },
-  {
-    role: "user",
-    text: "売上の内訳比率は？",
-  },
-  {
-    role: "assistant",
-    text: "製品Aが45%、製品Bが35%、その他が20%です。",
-    refs: [{ label: "p.11", id: "h-11-1" }],
-  },
-  {
-    role: "user",
-    text: "次のアクションは？",
-  },
-  {
-    role: "assistant",
-    text: "来月のパイロット導入と効果測定が次のステップです。",
-  },
-  {
-    role: "user",
-    text: "リスク要因は？",
-  },
-  {
-    role: "assistant",
-    text: "人材確保と市場競争激化が主なリスクです。",
-    refs: [{ label: "p.18", id: "h-18-1" }],
-  },
-  {
-    role: "user",
-    text: "スケジュールは？",
-  },
-  {
-    role: "assistant",
-    text: "Q2で設計、Q3で実装、Q4で展開の予定です。",
-    refs: [{ label: "p.20", id: "h-20-1" }],
-  },
-  {
-    role: "user",
-    text: "予算の合計は？",
-  },
-  {
-    role: "assistant",
-    text: "初年度の予算は1.2億円です。",
-    refs: [{ label: "p.14", id: "h-14-1" }],
-  },
-];
+type ChatRef = {
+  label: string;
+  id: string;
+};
+
+type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  refs?: ChatRef[];
+  createdAt: string;
+};
 
 type DocumentItem = {
   id: string;
@@ -146,6 +57,22 @@ export default function Home() {
   const [chatMode, setChatMode] = useState<"fast" | "standard" | "think">("standard");
   const chatMessagesRef = useRef<HTMLDivElement | null>(null);
   const [showChatJump, setShowChatJump] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [chatThreads, setChatThreads] = useState<{ id: string; title: string | null }[]>(
+    []
+  );
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [allChatThreads, setAllChatThreads] = useState<
+    {
+      id: string;
+      title: string | null;
+      documentId: string;
+      documentTitle: string | null;
+      updatedAt: string | null;
+    }[]
+  >([]);
   const [activeHighlightId, setActiveHighlightId] = useState<string | null>(
     "h-12-1"
   );
@@ -225,8 +152,18 @@ export default function Home() {
       setIsAuthed(Boolean(session));
       if (session) {
         void loadDocuments(session.access_token);
+        if (selectedDocumentId) {
+          void loadChats(selectedDocumentId, session.access_token);
+        } else {
+          void loadAllChats(session.access_token);
+        }
       } else {
         setDocuments([]);
+        setChatMessages([]);
+        setChatError(null);
+        setChatThreads([]);
+        setActiveChatId(null);
+        setAllChatThreads([]);
       }
     });
     return () => {
@@ -253,6 +190,140 @@ export default function Home() {
       target.removeEventListener("scroll", onScroll);
     };
   }, []);
+
+  const loadChatMessages = async (
+    documentId: string,
+    chatId: string,
+    accessToken: string
+  ) => {
+    setChatLoading(true);
+    setChatError(null);
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(
+        `${baseUrl}/documents/${documentId}/chats/${chatId}/messages`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
+      );
+      if (!response.ok) {
+        throw new Error(`Failed to load chat messages (${response.status})`);
+      }
+      const payload = await response.json();
+      const items = Array.isArray(payload.messages) ? payload.messages : [];
+      const messages = items.map((item: ChatMessage) => ({
+        id: String(item.id),
+        role: item.role === "assistant" ? "assistant" : "user",
+        text: String(item.text ?? ""),
+        refs: Array.isArray(item.refs) ? item.refs : undefined,
+        createdAt: String(item.createdAt ?? new Date().toISOString()),
+      }));
+      setChatMessages(messages);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to load chat messages";
+      setChatError(message);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  const loadChats = async (documentId: string, accessToken: string) => {
+    setChatError(null);
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/documents/${documentId}/chats`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load chats (${response.status})`);
+      }
+      const payload = await response.json();
+      const items = Array.isArray(payload.chats) ? payload.chats : [];
+      const threads = items.map((item: { id: string; title?: string | null }) => ({
+        id: String(item.id),
+        title: item.title ?? null,
+      }));
+      if (threads.length === 0) {
+        const created = await createChat(documentId, accessToken);
+        if (created) {
+          setChatThreads([created]);
+          setActiveChatId(created.id);
+          await loadChatMessages(documentId, created.id, accessToken);
+        } else {
+          setChatThreads([]);
+          setActiveChatId(null);
+          setChatMessages([]);
+        }
+      } else {
+        setChatThreads(threads);
+        const nextChatId = threads[0].id;
+        setActiveChatId(nextChatId);
+        await loadChatMessages(documentId, nextChatId, accessToken);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load chats";
+      setChatError(message);
+      setChatThreads([]);
+      setActiveChatId(null);
+      setChatMessages([]);
+    }
+  };
+
+  const loadAllChats = async (accessToken: string) => {
+    setChatError(null);
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/chats`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load chats (${response.status})`);
+      }
+      const payload = await response.json();
+      const items = Array.isArray(payload.chats) ? payload.chats : [];
+      setAllChatThreads(
+        items.map((item: { id: string; title?: string | null; documentId: string; documentTitle?: string | null; updatedAt?: string | null }) => ({
+          id: String(item.id),
+          title: item.title ?? null,
+          documentId: String(item.documentId),
+          documentTitle: item.documentTitle ?? null,
+          updatedAt: item.updatedAt ?? null,
+        }))
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load chats";
+      setChatError(message);
+      setAllChatThreads([]);
+    }
+  };
+
+  const createChat = async (documentId: string, accessToken: string) => {
+    const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+    const response = await fetch(`${baseUrl}/documents/${documentId}/chats`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        title: "新しいチャット",
+      }),
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const payload = await response.json();
+    const chatId = String(payload.chat_id ?? "");
+    if (!chatId) return null;
+    return { id: chatId, title: "新しいチャット" };
+  };
 
   const loadDocuments = async (accessToken: string) => {
     setDocsLoading(true);
@@ -332,6 +403,10 @@ export default function Home() {
     setSelectedDocumentUrl(null);
     setViewerError(null);
     setViewerLoading(true);
+    setChatMessages([]);
+    setChatThreads([]);
+    setActiveChatId(null);
+    setAllChatThreads([]);
     try {
       const session = await supabase.auth.getSession();
       const accessToken = session.data.session?.access_token;
@@ -339,6 +414,7 @@ export default function Home() {
         throw new Error("Not authenticated");
       }
       setSelectedDocumentToken(accessToken);
+      void loadChats(doc.id, accessToken);
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const response = await fetch(`${baseUrl}/documents/${doc.id}/signed-url`, {
         headers: {
@@ -380,6 +456,15 @@ export default function Home() {
         setSelectedDocumentTitle(null);
         setSelectedDocumentUrl(null);
         setViewerError(null);
+        setChatMessages([]);
+        setChatThreads([]);
+        setActiveChatId(null);
+        supabase.auth.getSession().then(({ data }) => {
+          const accessToken = data.session?.access_token;
+          if (accessToken) {
+            void loadAllChats(accessToken);
+          }
+        });
       }
     }
   };
@@ -414,6 +499,98 @@ export default function Home() {
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
+  };
+
+  const activeChatTitle = selectedDocumentId
+    ? chatThreads.find((thread) => thread.id === activeChatId)?.title ??
+      (activeChatId ? "新しいチャット" : "チャット")
+    : "チャット一覧";
+
+  const formatRelativeTime = (value: string | null) => {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    const diffMs = Date.now() - date.getTime();
+    const diffMinutes = Math.max(0, Math.floor(diffMs / 60000));
+    if (diffMinutes < 1) return "今";
+    if (diffMinutes < 60) {
+      const rounded = Math.max(1, Math.round(diffMinutes / 5) * 5);
+      return `${rounded}分前`;
+    }
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) {
+      const rounded = Math.max(1, Math.round(diffHours));
+      return `${rounded}時間前`;
+    }
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays < 30) {
+      const rounded = Math.max(1, Math.round(diffDays));
+      return `${rounded}日前`;
+    }
+    const diffMonths = Math.floor(diffDays / 30);
+    if (diffMonths < 12) {
+      const rounded = Math.max(1, Math.round(diffMonths));
+      return `${rounded}ヶ月前`;
+    }
+    const diffYears = Math.floor(diffMonths / 12);
+    return `${Math.max(1, diffYears)}年前`;
+  };
+
+  const handleSendMessage = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmed = chatInput.trim();
+    if (!trimmed) return;
+    if (!selectedDocumentId || !activeChatId) return;
+    const message: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      text: trimmed,
+      createdAt: new Date().toISOString(),
+    };
+    setChatMessages((prev) => [...prev, message]);
+    setChatInput("");
+    try {
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.access_token;
+      if (!accessToken) return;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(
+        `${baseUrl}/documents/${selectedDocumentId}/chats/${activeChatId}/messages`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            role: "user",
+            text: trimmed,
+          }),
+        }
+      );
+      if (!response.ok) {
+        throw new Error(`Failed to send message (${response.status})`);
+      }
+      const payload = await response.json();
+      const saved = payload?.message;
+      if (saved?.id) {
+        setChatMessages((prev) =>
+          prev.map((item) =>
+            item.id === message.id
+              ? {
+                  ...item,
+                  id: String(saved.id),
+                  createdAt: String(saved.createdAt ?? item.createdAt),
+                }
+              : item
+          )
+        );
+      }
+    } catch (error) {
+      const messageText =
+        error instanceof Error ? error.message : "Failed to send message";
+      setChatError(messageText);
+    }
   };
 
   return (
@@ -745,29 +922,179 @@ export default function Home() {
 
         <section className="chat">
           <div className="chat__header">
-            <span className="label">チャット</span>
+            {selectedDocumentId ? (
+              <div className="chat__header-left">
+                <button type="button" className="chat__header-action" aria-label="back">
+                  ←
+                </button>
+                <span className="chat__header-title">{activeChatTitle}</span>
+              </div>
+            ) : (
+              <div className="chat__header-left">
+                <span className="chat__header-title">{activeChatTitle}</span>
+              </div>
+            )}
+            <div className="chat__header-actions">
+              {selectedDocumentId ? (
+                <>
+                  <button
+                    type="button"
+                    className="chat__header-action"
+                    aria-label="refresh"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="16"
+                      height="16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                      <path d="M12 8l0 4l2 2" />
+                      <path d="M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    className="chat__header-action"
+                    aria-label="settings"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="16"
+                      height="16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                      <path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065" />
+                      <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    className="chat__header-action"
+                    aria-label="share"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="16"
+                      height="16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                      <path d="M7 7h-1a2 2 0 0 0 -2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2 -2v-1" />
+                      <path d="M20.385 6.585a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3l8.385 -8.415" />
+                      <path d="M16 5l3 3" />
+                    </svg>
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="chat__header-action"
+                  aria-label="settings"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="16"
+                    height="16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                    <path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065" />
+                    <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
+                  </svg>
+                </button>
+              )}
+            </div>
           </div>
-          <div className="chat__messages-wrap">
-            <div className="chat__messages" ref={chatMessagesRef}>
-              {mockMessages.map((msg, index) => (
-                <div key={index} className={`bubble bubble--${msg.role}`}>
-                  <p>{msg.text}</p>
-                  {msg.refs ? (
-                    <div className="refs">
-                      {msg.refs.map((ref) => (
-                        <button
-                          type="button"
-                          key={ref.id}
-                          className="ref"
-                          onClick={() => setActiveHighlightId(ref.id)}
-                        >
-                          {ref.label}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
+                <div className="chat__messages-wrap">
+            <div
+              className={`chat__messages ${selectedDocumentId ? "" : "is-thread-list"}`}
+              ref={chatMessagesRef}
+            >
+              {chatLoading ? (
+                <div className="empty-state">読み込み中...</div>
+              ) : chatError ? (
+                <div className="empty-state">{chatError}</div>
+              ) : !selectedDocumentId ? (
+                allChatThreads.length === 0 ? (
+                  <div className="empty-state">チャットはまだありません</div>
+                ) : (
+                  <div className="chat__thread-list">
+                    {allChatThreads.map((thread) => (
+                      <button
+                        key={thread.id}
+                        type="button"
+                        className="chat__thread-item"
+                        onClick={() =>
+                          handleSelectDocument({
+                            id: thread.documentId,
+                            title: thread.documentTitle ?? "Untitled",
+                          })
+                        }
+                      >
+                        <div className="chat__thread-row">
+                          <div className="chat__thread-title">
+                            {thread.title ?? "新しいチャット"}
+                          </div>
+                          {thread.updatedAt ? (
+                            <span className="chat__thread-time">
+                              {formatRelativeTime(thread.updatedAt)}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="chat__thread-meta">
+                          {thread.documentTitle ?? "Untitled"}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )
+              ) : chatMessages.length === 0 ? (
+                <div className="empty-state">
+                  {selectedDocumentId ? "チャットはまだありません" : "PDFを選択してください"}
                 </div>
-              ))}
+              ) : (
+                chatMessages.map((msg) => (
+                  <div key={msg.id} className={`bubble bubble--${msg.role}`}>
+                    <p>{msg.text}</p>
+                    {msg.refs ? (
+                      <div className="refs">
+                        {msg.refs.map((ref) => (
+                          <button
+                            type="button"
+                            key={ref.id}
+                            className="ref"
+                            onClick={() => setActiveHighlightId(ref.id)}
+                          >
+                            {ref.label}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ))
+              )}
             </div>
 
             <button
@@ -786,7 +1113,7 @@ export default function Home() {
               ↓
             </button>
           </div>
-          <form className="chat__input" onSubmit={(event) => event.preventDefault()}>
+          <form className="chat__input" onSubmit={handleSendMessage}>
             <div className="input-panel">
               <div className="input-panel__top">
                 <textarea
@@ -821,7 +1148,11 @@ export default function Home() {
                     思考
                   </button>
                 </div>
-                <button type="submit" className="send">
+                <button
+                  type="submit"
+                  className="send"
+                  disabled={!selectedDocumentId || !activeChatId}
+                >
                   ↑
                 </button>
               </div>

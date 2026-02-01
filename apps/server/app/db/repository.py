@@ -162,3 +162,155 @@ async def upsert_document_annotations(
             user_id,
             json.dumps(data),
         )
+
+
+async def get_document_chat(
+    pool: asyncpg.Pool,
+    document_id: str,
+    user_id: str,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select data
+            from document_chats
+            where document_id = $1 and user_id = $2
+            """,
+            document_id,
+            user_id,
+        )
+    return dict(row) if row else None
+
+
+async def upsert_document_chat(
+    pool: asyncpg.Pool,
+    document_id: str,
+    user_id: str,
+    data: dict[str, Any],
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            insert into document_chats (document_id, user_id, data)
+            values ($1, $2, $3::jsonb)
+            on conflict (document_id, user_id)
+            do update set data = excluded.data
+            """,
+            document_id,
+            user_id,
+            json.dumps(data),
+        )
+
+
+async def list_document_chat_threads(
+    pool: asyncpg.Pool,
+    document_id: str,
+    user_id: str,
+) -> list[dict[str, Any]]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            select id, title, created_at, updated_at
+            from document_chat_threads
+            where document_id = $1 and user_id = $2
+            order by updated_at desc, created_at desc
+            """,
+            document_id,
+            user_id,
+        )
+    return [dict(row) for row in rows]
+
+
+async def insert_document_chat_thread(
+    pool: asyncpg.Pool,
+    document_id: str,
+    user_id: str,
+    title: str | None = None,
+) -> str:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            insert into document_chat_threads (document_id, user_id, title)
+            values ($1, $2, $3)
+            returning id
+            """,
+            document_id,
+            user_id,
+            title,
+        )
+    return str(row["id"])
+
+
+async def list_document_chat_messages(
+    pool: asyncpg.Pool,
+    chat_id: str,
+    user_id: str,
+) -> list[dict[str, Any]]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            select id, role, content, refs, created_at
+            from document_chat_messages
+            where chat_id = $1 and user_id = $2
+            order by created_at asc
+            """,
+            chat_id,
+            user_id,
+        )
+    return [dict(row) for row in rows]
+
+
+async def insert_document_chat_message(
+    pool: asyncpg.Pool,
+    chat_id: str,
+    user_id: str,
+    role: str,
+    content: str,
+    refs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            update document_chat_threads
+            set updated_at = now()
+            where id = $1 and user_id = $2
+            """,
+            chat_id,
+            user_id,
+        )
+        row = await conn.fetchrow(
+            """
+            insert into document_chat_messages (chat_id, user_id, role, content, refs)
+            values ($1, $2, $3, $4, $5::jsonb)
+            returning id, role, content, refs, created_at
+            """,
+            chat_id,
+            user_id,
+            role,
+            content,
+            json.dumps(refs) if refs is not None else None,
+        )
+    return dict(row)
+
+
+async def list_user_chat_threads(
+    pool: asyncpg.Pool,
+    user_id: str,
+) -> list[dict[str, Any]]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            select
+                threads.id,
+                threads.title,
+                threads.document_id,
+                threads.updated_at,
+                documents.title as document_title
+            from document_chat_threads as threads
+            join documents on documents.id = threads.document_id
+            where threads.user_id = $1
+            order by threads.updated_at desc, threads.created_at desc
+            """,
+            user_id,
+        )
+    return [dict(row) for row in rows]

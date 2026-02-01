@@ -222,3 +222,183 @@ async def upsert_document_annotations(
         annotations,
     )
     return {"status": "ok"}
+
+
+@router.get("/documents/{document_id}/chat")
+async def get_document_chat(
+    request: Request,
+    document_id: str,
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    pool = request.app.state.db_pool
+    row = await repository.get_document(pool, document_id, user.user_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    data_row = await repository.get_document_chat(pool, document_id, user.user_id)
+    data = data_row.get("data") if data_row else {}
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            data = {}
+    if not isinstance(data, dict):
+        data = {}
+    return {"chat": data}
+
+
+@router.put("/documents/{document_id}/chat")
+async def upsert_document_chat(
+    request: Request,
+    document_id: str,
+    payload: dict[str, Any],
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    pool = request.app.state.db_pool
+    row = await repository.get_document(pool, document_id, user.user_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    chat = payload.get("chat")
+    if not isinstance(chat, dict):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="chat must be an object",
+        )
+    await repository.upsert_document_chat(
+        pool,
+        document_id,
+        user.user_id,
+        chat,
+    )
+    return {"status": "ok"}
+
+
+@router.get("/documents/{document_id}/chats")
+async def list_document_chats(
+    request: Request,
+    document_id: str,
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    pool = request.app.state.db_pool
+    row = await repository.get_document(pool, document_id, user.user_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    threads = await repository.list_document_chat_threads(pool, document_id, user.user_id)
+    return {"chats": threads}
+
+
+@router.post("/documents/{document_id}/chats")
+async def create_document_chat(
+    request: Request,
+    document_id: str,
+    payload: dict[str, Any],
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    pool = request.app.state.db_pool
+    row = await repository.get_document(pool, document_id, user.user_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    title = payload.get("title") if isinstance(payload, dict) else None
+    chat_id = await repository.insert_document_chat_thread(
+        pool,
+        document_id,
+        user.user_id,
+        title if isinstance(title, str) else None,
+    )
+    return {"chat_id": chat_id}
+
+
+@router.get("/documents/{document_id}/chats/{chat_id}/messages")
+async def list_document_chat_messages(
+    request: Request,
+    document_id: str,
+    chat_id: str,
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    pool = request.app.state.db_pool
+    row = await repository.get_document(pool, document_id, user.user_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    rows = await repository.list_document_chat_messages(pool, chat_id, user.user_id)
+    messages = []
+    for item in rows:
+        messages.append(
+            {
+                "id": str(item["id"]),
+                "role": item["role"],
+                "text": item["content"],
+                "refs": item.get("refs"),
+                "createdAt": item["created_at"].isoformat()
+                if item.get("created_at")
+                else None,
+            }
+        )
+    return {"messages": messages}
+
+
+@router.post("/documents/{document_id}/chats/{chat_id}/messages")
+async def create_document_chat_message(
+    request: Request,
+    document_id: str,
+    chat_id: str,
+    payload: dict[str, Any],
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    pool = request.app.state.db_pool
+    row = await repository.get_document(pool, document_id, user.user_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    role = payload.get("role")
+    text = payload.get("text")
+    refs = payload.get("refs") if isinstance(payload, dict) else None
+    if role not in {"user", "assistant"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="role must be user or assistant",
+        )
+    if not isinstance(text, str) or not text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="text is required",
+        )
+    row = await repository.insert_document_chat_message(
+        pool,
+        chat_id,
+        user.user_id,
+        role,
+        text,
+        refs if isinstance(refs, list) else None,
+    )
+    return {
+        "message": {
+            "id": str(row["id"]),
+            "role": row["role"],
+            "text": row["content"],
+            "refs": row.get("refs"),
+            "createdAt": row["created_at"].isoformat()
+            if row.get("created_at")
+            else None,
+        }
+    }
+
+
+@router.get("/chats")
+async def list_user_chats(
+    request: Request,
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    pool = request.app.state.db_pool
+    rows = await repository.list_user_chat_threads(pool, user.user_id)
+    chats = []
+    for row in rows:
+        chats.append(
+            {
+                "id": str(row["id"]),
+                "title": row.get("title"),
+                "documentId": str(row["document_id"]),
+                "documentTitle": row.get("document_title"),
+                "updatedAt": row.get("updated_at").isoformat()
+                if row.get("updated_at")
+                else None,
+            }
+        )
+    return {"chats": chats}
