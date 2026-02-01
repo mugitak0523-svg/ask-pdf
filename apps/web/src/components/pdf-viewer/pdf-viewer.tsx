@@ -19,6 +19,7 @@ type PageMeta = {
 
 type WordRect = {
   wordIndex: number;
+  lineId: number | null;
   left: number;
   top: number;
   width: number;
@@ -36,6 +37,7 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
   );
   const wordRectsRef = useRef<Record<number, WordRect[]>>({});
   const selectionRef = useRef<HTMLDivElement | null>(null);
+  const popupRef = useRef<HTMLDivElement | null>(null);
   const selectionStateRef = useRef<{
     pageNumber: number;
     startX: number;
@@ -84,10 +86,17 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
           overlay.className = "pdf-embed__overlay";
           overlay.style.width = `${Math.floor(scaled.width)}px`;
           overlay.style.height = `${Math.floor(scaled.height)}px`;
+          overlay.dataset.pageNumber = String(pageNum);
           overlay.addEventListener("pointermove", handlePointerMove);
           overlay.addEventListener("pointerleave", handlePointerLeave);
           overlay.addEventListener("pointerdown", handlePointerDown);
           overlay.addEventListener("pointerup", handlePointerUp);
+          overlay.addEventListener("pointerdown", () => {
+            if (popupRef.current) {
+              popupRef.current.remove();
+              popupRef.current = null;
+            }
+          });
 
           pageWrapper.appendChild(canvas);
           pageWrapper.appendChild(overlay);
@@ -198,6 +207,19 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
           if (!pageNumber || !Number.isFinite(width) || !Number.isFinite(height)) continue;
           const words = Array.isArray(page.words) ? page.words : [];
           const lines = Array.isArray(page.lines) ? page.lines : [];
+          const wordToLine = new Map<number, number>();
+          lines.forEach((line, index) => {
+            const indexes = Array.isArray(line.word_indexes)
+              ? line.word_indexes
+              : Array.isArray(line.wordIndexes)
+                ? line.wordIndexes
+                : [];
+            for (const wordIndex of indexes) {
+              if (Number.isFinite(wordIndex)) {
+                wordToLine.set(Number(wordIndex), index);
+              }
+            }
+          });
           for (const word of words) {
             if (!Array.isArray(word.polygon)) continue;
             const rect = polygonToRect(word.polygon);
@@ -224,6 +246,7 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
             if (!nextRects[pageNumber]) nextRects[pageNumber] = [];
             const normalized = {
               wordIndex,
+              lineId: wordToLine.get(wordIndex) ?? null,
               left: rect.left / width,
               top: rect.top / height,
               width: rect.width / width,
@@ -249,31 +272,33 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
 
   const handlePointerMove = (event: PointerEvent) => {
     const target = event.currentTarget as HTMLDivElement;
-    const pageNumber = Number(target.parentElement?.dataset.pageNumber);
+    const pageNumber = Number(target.dataset.pageNumber ?? target.parentElement?.dataset.pageNumber);
     if (!pageNumber) return;
-    if (selectionStateRef.current && selectionStateRef.current.pageNumber === pageNumber) {
-      const rect = target.getBoundingClientRect();
+    if (selectionStateRef.current) {
+      const overlay = getOverlayFromPoint(event.clientX, event.clientY) ?? target;
+      const activePageNumber = Number(
+        overlay.dataset.pageNumber ?? overlay.parentElement?.dataset.pageNumber
+      );
+      if (!activePageNumber) return;
+      const rect = overlay.getBoundingClientRect();
       const currentX = event.clientX - rect.left;
       const currentY = event.clientY - rect.top;
-      const startX = selectionStateRef.current.startX;
-      const startY = selectionStateRef.current.startY;
-      const left = Math.min(startX, currentX);
-      const top = Math.min(startY, currentY);
-      const width = Math.abs(currentX - startX);
-      const height = Math.abs(currentY - startY);
-      void left;
-      void top;
-      void width;
-      void height;
-      const meta = pageMetaRef.current[pageNumber];
-      const rects = wordRectsRef.current[pageNumber] || [];
+      const meta = pageMetaRef.current[activePageNumber];
+      const rects = wordRectsRef.current[activePageNumber] || [];
       const startWordIndex = selectionStateRef.current.startWordIndex;
+      const startPageNumber = selectionStateRef.current.pageNumber;
       if (meta && rects.length > 0 && startWordIndex !== null) {
         const currentWordIndex =
           findWordIndexAtPoint(rects, meta, currentX, currentY) ??
           findLastWordIndexBeforePoint(rects, meta, currentX, currentY);
         if (currentWordIndex !== null) {
-          renderHighlightsByIndex(target, rects, meta, startWordIndex, currentWordIndex);
+          renderHighlightsAcrossPages(
+            startPageNumber,
+            startWordIndex,
+            activePageNumber,
+            currentWordIndex,
+            false
+          );
         }
       }
       return;
@@ -310,6 +335,10 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
     const startX = event.clientX - rect.left;
     const startY = event.clientY - rect.top;
     target.querySelectorAll(".pdf-embed__highlight").forEach((node) => node.remove());
+    if (popupRef.current) {
+      popupRef.current.remove();
+      popupRef.current = null;
+    }
     selectionRef.current = null;
     const meta = pageMetaRef.current[pageNumber];
     const rects = wordRectsRef.current[pageNumber] || [];
@@ -326,11 +355,16 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
     if (!selection) return;
     selectionRef.current = null;
     selectionStateRef.current = null;
-    const pageNumber = selection.pageNumber;
-    const targetRect = target.getBoundingClientRect();
+    const startPageNumber = selection.pageNumber;
+    const overlay = getOverlayFromPoint(event.clientX, event.clientY) ?? target;
+    const endPageNumber = Number(
+      overlay.dataset.pageNumber ?? overlay.parentElement?.dataset.pageNumber
+    );
+    if (!endPageNumber) return;
+    const targetRect = overlay.getBoundingClientRect();
 
-    const meta = pageMetaRef.current[pageNumber];
-    const rects = wordRectsRef.current[pageNumber] || [];
+    const meta = pageMetaRef.current[endPageNumber];
+    const rects = wordRectsRef.current[endPageNumber] || [];
     if (!meta || rects.length === 0) return;
 
     const currentX = event.clientX - targetRect.left;
@@ -341,7 +375,13 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
       findWordIndexAtPoint(rects, meta, currentX, currentY) ??
       findLastWordIndexBeforePoint(rects, meta, currentX, currentY);
     if (currentWordIndex === null) return;
-    renderHighlightsByIndex(target, rects, meta, startWordIndex, currentWordIndex);
+    renderHighlightsAcrossPages(
+      startPageNumber,
+      startWordIndex,
+      endPageNumber,
+      currentWordIndex,
+      true
+    );
   };
 
   const renderHighlightsByIndex = (
@@ -349,26 +389,344 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
     rects: WordRect[],
     meta: PageMeta,
     startIndex: number,
-    endIndex: number
+    endIndex: number,
+    showPopupAfter: boolean
   ) => {
     const minIndex = Math.min(startIndex, endIndex);
     const maxIndex = Math.max(startIndex, endIndex);
     target.querySelectorAll(".pdf-embed__highlight").forEach((node) => node.remove());
-    for (const rectItem of rects) {
-      if (rectItem.wordIndex >= minIndex && rectItem.wordIndex <= maxIndex) {
-        const left = rectItem.left * meta.width;
-        const top = rectItem.top * meta.height;
-        const right = (rectItem.left + rectItem.width) * meta.width;
-        const bottom = (rectItem.top + rectItem.height) * meta.height;
-        const highlight = document.createElement("div");
-        highlight.className = "pdf-embed__highlight";
-        highlight.style.left = `${left}px`;
-        highlight.style.top = `${top}px`;
-        highlight.style.width = `${right - left}px`;
-        highlight.style.height = `${bottom - top}px`;
-        target.appendChild(highlight);
+    let bounds: { left: number; top: number; right: number; bottom: number } | null =
+      null;
+    const selected = rects.filter(
+      (rect) => rect.wordIndex >= minIndex && rect.wordIndex <= maxIndex
+    );
+    const groups = groupRectsByLine(selected);
+    for (const group of groups) {
+      const left = group.left * meta.width;
+      const top = group.top * meta.height;
+      const right = (group.left + group.width) * meta.width;
+      const bottom = (group.top + group.height) * meta.height;
+      if (!bounds) {
+        bounds = { left, top, right, bottom };
+      } else {
+        bounds.left = Math.min(bounds.left, left);
+        bounds.top = Math.min(bounds.top, top);
+        bounds.right = Math.max(bounds.right, right);
+        bounds.bottom = Math.max(bounds.bottom, bottom);
+      }
+      const highlight = document.createElement("div");
+      highlight.className = "pdf-embed__highlight";
+      highlight.style.left = `${left}px`;
+      highlight.style.top = `${top}px`;
+      highlight.style.width = `${right - left}px`;
+      highlight.style.height = `${bottom - top}px`;
+      target.appendChild(highlight);
+    }
+    if (bounds && showPopupAfter) {
+      const anchor = getWordAnchor(rects, meta, endIndex);
+      showPopup(target, bounds, anchor ?? undefined);
+    }
+  };
+
+  const renderHighlightsAcrossPages = (
+    startPage: number,
+    startIndex: number,
+    endPage: number,
+    endIndex: number,
+    showPopupAfter: boolean
+  ) => {
+    clearAllHighlights();
+    const pages = Object.keys(wordRectsRef.current)
+      .map((key) => Number(key))
+      .filter((page) => Number.isFinite(page))
+      .sort((a, b) => a - b);
+    if (pages.length === 0) return;
+    const forward = startPage <= endPage;
+    const fromPage = forward ? startPage : endPage;
+    const toPage = forward ? endPage : startPage;
+    for (const pageNumber of pages) {
+      if (pageNumber < fromPage || pageNumber > toPage) continue;
+      const rects = wordRectsRef.current[pageNumber] || [];
+      const meta = pageMetaRef.current[pageNumber];
+      const overlay = getOverlayForPage(pageNumber);
+      if (!rects.length || !meta || !overlay) continue;
+      const [rangeStart, rangeEnd] = getPageSelectionRange(
+        rects,
+        pageNumber,
+        startPage,
+        startIndex,
+        endPage,
+        endIndex
+      );
+      renderHighlightsByIndex(overlay, rects, meta, rangeStart, rangeEnd, false);
+    }
+    if (showPopupAfter) {
+      const targetPage = endPage;
+      const rects = wordRectsRef.current[targetPage] || [];
+      const meta = pageMetaRef.current[targetPage];
+      const overlay = getOverlayForPage(targetPage);
+      if (rects.length && meta && overlay) {
+        const [rangeStart, rangeEnd] = getPageSelectionRange(
+          rects,
+          targetPage,
+          startPage,
+          startIndex,
+          endPage,
+          endIndex
+        );
+        const anchorIndex = rangeEnd;
+        const selected = rects.filter(
+          (rect) => rect.wordIndex >= rangeStart && rect.wordIndex <= rangeEnd
+        );
+        let bounds: { left: number; top: number; right: number; bottom: number } | null =
+          null;
+        const groups = groupRectsByLine(selected);
+        for (const group of groups) {
+          const left = group.left * meta.width;
+          const top = group.top * meta.height;
+          const right = (group.left + group.width) * meta.width;
+          const bottom = (group.top + group.height) * meta.height;
+          if (!bounds) {
+            bounds = { left, top, right, bottom };
+          } else {
+            bounds.left = Math.min(bounds.left, left);
+            bounds.top = Math.min(bounds.top, top);
+            bounds.right = Math.max(bounds.right, right);
+            bounds.bottom = Math.max(bounds.bottom, bottom);
+          }
+        }
+        if (bounds) {
+          const anchor = getWordAnchor(rects, meta, anchorIndex);
+          showPopup(overlay, bounds, anchor ?? undefined);
+        }
       }
     }
+  };
+
+  const showPopup = (
+    target: HTMLDivElement,
+    bounds: { left: number; top: number; right: number; bottom: number },
+    anchor?: { x: number; y: number }
+  ) => {
+    if (popupRef.current) {
+      popupRef.current.remove();
+      popupRef.current = null;
+    }
+    const popup = document.createElement("div");
+    popup.className = "pdf-embed__popup";
+    popup.innerHTML = `
+      <div class="pdf-embed__popup-palette" aria-label="Highlight colors">
+        <button type="button" class="pdf-embed__palette-color is-selected" style="--swatch:#ffd84d">
+          <span class="pdf-embed__palette-check">✓</span>
+        </button>
+        <button type="button" class="pdf-embed__palette-color" style="--swatch:#ffb347"></button>
+        <button type="button" class="pdf-embed__palette-color" style="--swatch:#ff7b7b"></button>
+        <button type="button" class="pdf-embed__palette-color" style="--swatch:#ff8bd1"></button>
+        <button type="button" class="pdf-embed__palette-color" style="--swatch:#b28cff"></button>
+        <button type="button" class="pdf-embed__palette-color" style="--swatch:#7aa9ff"></button>
+        <button type="button" class="pdf-embed__palette-color" style="--swatch:#69d2ff"></button>
+        <button type="button" class="pdf-embed__palette-color" style="--swatch:#65e0a1"></button>
+        <button type="button" class="pdf-embed__palette-color" style="--swatch:#c7ea6b"></button>
+        <button type="button" class="pdf-embed__palette-color" style="--swatch:#ffe4a3"></button>
+      </div>
+      <button type="button" class="pdf-embed__popup-btn">
+        <svg class="pdf-embed__popup-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <g transform="translate(12 12) scale(1.1) translate(-12 -12)">
+            <path
+              d="M4 16.5V20h3.5L18.8 8.7l-3.5-3.5L4 16.5z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M13.8 5.2l3.5 3.5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
+          </g>
+        </svg>
+        Highlight
+        <span class="pdf-embed__popup-shortcut">
+          <span class="pdf-embed__popup-key">⌘</span>
+          <span class="pdf-embed__popup-key">H</span>
+        </span>
+      </button>
+      <button type="button" class="pdf-embed__popup-btn">
+        <svg class="pdf-embed__popup-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <g transform="translate(12 12) scale(1.1) translate(-12 -12)">
+            <path
+              d="M8 4v7a4 4 0 0 0 8 0V4"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
+            <path
+              d="M5 20h14"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
+          </g>
+        </svg>
+        Underline
+        <span class="pdf-embed__popup-shortcut">
+          <span class="pdf-embed__popup-key">⌘</span>
+          <span class="pdf-embed__popup-key">U</span>
+        </span>
+      </button>
+      <button type="button" class="pdf-embed__popup-btn">
+        <svg class="pdf-embed__popup-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <g transform="translate(12 12) scale(1.1) translate(-12 -12)">
+            <rect
+              x="8"
+              y="8"
+              width="10"
+              height="10"
+              rx="2"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            />
+            <path
+              d="M6 16H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
+          </g>
+        </svg>
+        Copy
+        <span class="pdf-embed__popup-shortcut">
+          <span class="pdf-embed__popup-key">⌘</span>
+          <span class="pdf-embed__popup-key">C</span>
+        </span>
+      </button>
+      <button type="button" class="pdf-embed__popup-btn">
+        <svg class="pdf-embed__popup-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <g transform="translate(12 12) scale(1.1) translate(-12 -12)">
+            <path
+              d="M4 8a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H9l-4 3v-3H7a3 3 0 0 1-3-3V8z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M12 9v6M9 12h6"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
+          </g>
+        </svg>
+        Add to chat
+        <span class="pdf-embed__popup-shortcut">
+          <span class="pdf-embed__popup-key">⌘</span>
+          <span class="pdf-embed__popup-key">A</span>
+        </span>
+      </button>
+    `;
+    target.appendChild(popup);
+    const { width: popupWidth, height: popupHeight } = popup.getBoundingClientRect();
+    const maxLeft = Math.max(6, target.clientWidth - popupWidth - 6);
+    const maxTop = Math.max(6, target.clientHeight - popupHeight - 6);
+    const anchorX = anchor ? anchor.x : bounds.right;
+    const anchorY = anchor ? anchor.y : bounds.bottom;
+    const left = Math.max(6, Math.min(anchorX + 8, maxLeft));
+    const top = Math.max(6, Math.min(anchorY + 8, maxTop));
+    popup.style.left = `${left}px`;
+    popup.style.top = `${top}px`;
+    popupRef.current = popup;
+  };
+
+  const getWordAnchor = (rects: WordRect[], meta: PageMeta, wordIndex: number) => {
+    const rect = rects.find((item) => item.wordIndex === wordIndex);
+    if (!rect) return null;
+    return {
+      x: (rect.left + rect.width) * meta.width,
+      y: (rect.top + rect.height) * meta.height,
+    };
+  };
+
+  const getPageSelectionRange = (
+    rects: WordRect[],
+    pageNumber: number,
+    startPage: number,
+    startIndex: number,
+    endPage: number,
+    endIndex: number
+  ) => {
+    const firstIndex = rects[0].wordIndex;
+    const lastIndex = rects[rects.length - 1].wordIndex;
+    if (startPage === endPage) {
+      return [Math.min(startIndex, endIndex), Math.max(startIndex, endIndex)];
+    }
+    if (startPage < endPage) {
+      if (pageNumber === startPage) return [startIndex, lastIndex];
+      if (pageNumber === endPage) return [firstIndex, endIndex];
+      return [firstIndex, lastIndex];
+    }
+    if (pageNumber === startPage) return [firstIndex, startIndex];
+    if (pageNumber === endPage) return [endIndex, lastIndex];
+    return [firstIndex, lastIndex];
+  };
+
+  const clearAllHighlights = () => {
+    if (!containerRef.current) return;
+    containerRef.current
+      .querySelectorAll(".pdf-embed__highlight")
+      .forEach((node) => node.remove());
+  };
+
+  const getOverlayForPage = (pageNumber: number) => {
+    if (!containerRef.current) return null;
+    return containerRef.current.querySelector(
+      `.pdf-embed__overlay[data-page-number="${pageNumber}"]`
+    ) as HTMLDivElement | null;
+  };
+
+  const getOverlayFromPoint = (x: number, y: number) => {
+    const element = document.elementFromPoint(x, y);
+    if (!element) return null;
+    return element.closest(".pdf-embed__overlay") as HTMLDivElement | null;
+  };
+
+  const groupRectsByLine = (rects: WordRect[]) => {
+    if (rects.length === 0) return [];
+    const sorted = [...rects].sort(
+      (a, b) =>
+        (a.lineId ?? 0) - (b.lineId ?? 0) ||
+        a.top - b.top ||
+        a.left - b.left
+    );
+    const groups: WordRect[] = [];
+    let current = { ...sorted[0] };
+    for (let i = 1; i < sorted.length; i += 1) {
+      const rect = sorted[i];
+      const sameLine = rect.lineId !== null && rect.lineId === current.lineId;
+      if (sameLine) {
+        const newLeft = Math.min(current.left, rect.left);
+        const newRight = Math.max(
+          current.left + current.width,
+          rect.left + rect.width
+        );
+        current.left = newLeft;
+        current.width = newRight - newLeft;
+        current.height = Math.max(current.height, rect.height);
+      } else {
+        groups.push(current);
+        current = { ...rect };
+      }
+    }
+    groups.push(current);
+    return groups;
   };
 
   const findWordIndexAtPoint = (

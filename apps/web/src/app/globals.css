@@ -810,6 +810,119 @@ button {
   pointer-events: none;
 }
 
+.pdf-embed__popup {
+  position: absolute;
+  display: grid;
+  gap: 6px;
+  padding: 8px 12px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
+  width: max-content;
+  z-index: 5;
+}
+
+.pdf-embed__popup-palette {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  width: 100%;
+  max-width: 240px;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+  padding: 6px;
+}
+
+.pdf-embed__popup-palette::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.pdf-embed__palette-color {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--swatch);
+  border: none;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.pdf-embed__palette-color:hover {
+  transform: scale(1.06);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.16);
+}
+
+.pdf-embed__palette-color.is-selected {
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.08),
+    0 0 0 4px rgba(0, 0, 0, 0.08),
+    0 4px 10px rgba(0, 0, 0, 0.18);
+}
+
+.pdf-embed__palette-check {
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.pdf-embed__popup-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  padding: 2px 8px;
+  color: var(--text);
+  background: transparent;
+  /* background-color: red; */
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.pdf-embed__popup-btn:hover {
+  background: #f4f4f0;
+  border-radius: 4px;
+}
+
+.pdf-embed__popup-icon {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  /* border: 1px solid var(--line); */
+  border-radius: 6px;
+  color: var(--muted);
+}
+
+.pdf-embed__popup-icon path,
+.pdf-embed__popup-icon rect {
+  stroke: currentColor;
+}
+
+.pdf-embed__popup-shortcut {
+  margin-left: auto;
+  color: var(--muted);
+  display: inline-flex;
+  gap: 6px;
+}
+
+.pdf-embed__popup-key {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 14px;
+  background: #f2f2ef;
+  line-height: 1;
+  color: var(--muted);
+}
+
 
 
 .pdf-embed__error {
