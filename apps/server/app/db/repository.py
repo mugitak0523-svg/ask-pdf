@@ -210,7 +210,19 @@ async def list_document_chat_threads(
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            select id, title, created_at, updated_at
+            select
+                id,
+                title,
+                created_at,
+                updated_at,
+                (
+                    select content
+                    from document_chat_messages
+                    where chat_id = document_chat_threads.id
+                      and user_id = $2
+                    order by created_at desc
+                    limit 1
+                ) as last_message
             from document_chat_threads
             where document_id = $1 and user_id = $2
             order by updated_at desc, created_at desc
@@ -305,7 +317,15 @@ async def list_user_chat_threads(
                 threads.title,
                 threads.document_id,
                 threads.updated_at,
-                documents.title as document_title
+                documents.title as document_title,
+                (
+                    select content
+                    from document_chat_messages
+                    where chat_id = threads.id
+                      and user_id = $1
+                    order by created_at desc
+                    limit 1
+                ) as last_message
             from document_chat_threads as threads
             join documents on documents.id = threads.document_id
             where threads.user_id = $1

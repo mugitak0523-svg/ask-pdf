@@ -60,16 +60,18 @@ export default function Home() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
-  const [chatThreads, setChatThreads] = useState<{ id: string; title: string | null }[]>(
-    []
-  );
+  const [chatThreads, setChatThreads] = useState<
+    { id: string; title: string | null; updatedAt: string | null; lastMessage?: string | null }[]
+  >([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [showThreadList, setShowThreadList] = useState(false);
   const [allChatThreads, setAllChatThreads] = useState<
     {
       id: string;
       title: string | null;
       documentId: string;
       documentTitle: string | null;
+      lastMessage?: string | null;
       updatedAt: string | null;
     }[]
   >([]);
@@ -191,6 +193,12 @@ export default function Home() {
     };
   }, []);
 
+  useEffect(() => {
+    if (showThreadList || !selectedDocumentId || chatMessages.length === 0) {
+      setShowChatJump(false);
+    }
+  }, [showThreadList, selectedDocumentId, chatMessages.length]);
+
   const loadChatMessages = async (
     documentId: string,
     chatId: string,
@@ -230,7 +238,12 @@ export default function Home() {
     }
   };
 
-  const loadChats = async (documentId: string, accessToken: string) => {
+  const loadChats = async (
+    documentId: string,
+    accessToken: string,
+    options: { autoOpen?: boolean } = {}
+  ) => {
+    const { autoOpen = true } = options;
     setChatError(null);
     try {
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
@@ -244,26 +257,34 @@ export default function Home() {
       }
       const payload = await response.json();
       const items = Array.isArray(payload.chats) ? payload.chats : [];
-      const threads = items.map((item: { id: string; title?: string | null }) => ({
-        id: String(item.id),
-        title: item.title ?? null,
-      }));
+      const threads = items.map(
+        (item: {
+          id: string;
+          title?: string | null;
+          updated_at?: string | null;
+          last_message?: string | null;
+        }) => ({
+          id: String(item.id),
+          title: item.title ?? null,
+          updatedAt: item.updated_at ?? null,
+          lastMessage: item.last_message ?? null,
+        })
+      );
       if (threads.length === 0) {
-        const created = await createChat(documentId, accessToken);
-        if (created) {
-          setChatThreads([created]);
-          setActiveChatId(created.id);
-          await loadChatMessages(documentId, created.id, accessToken);
-        } else {
-          setChatThreads([]);
-          setActiveChatId(null);
-          setChatMessages([]);
-        }
+        setChatThreads([]);
+        setActiveChatId(null);
+        setChatMessages([]);
+        setShowThreadList(true);
       } else {
         setChatThreads(threads);
-        const nextChatId = threads[0].id;
-        setActiveChatId(nextChatId);
-        await loadChatMessages(documentId, nextChatId, accessToken);
+        if (autoOpen) {
+          const nextChatId = threads[0].id;
+          setActiveChatId(nextChatId);
+          setShowThreadList(false);
+          await loadChatMessages(documentId, nextChatId, accessToken);
+        } else {
+          setShowThreadList(true);
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load chats";
@@ -289,13 +310,23 @@ export default function Home() {
       const payload = await response.json();
       const items = Array.isArray(payload.chats) ? payload.chats : [];
       setAllChatThreads(
-        items.map((item: { id: string; title?: string | null; documentId: string; documentTitle?: string | null; updatedAt?: string | null }) => ({
-          id: String(item.id),
-          title: item.title ?? null,
-          documentId: String(item.documentId),
-          documentTitle: item.documentTitle ?? null,
-          updatedAt: item.updatedAt ?? null,
-        }))
+        items.map(
+          (item: {
+            id: string;
+            title?: string | null;
+            documentId: string;
+            documentTitle?: string | null;
+            lastMessage?: string | null;
+            updatedAt?: string | null;
+          }) => ({
+            id: String(item.id),
+            title: item.title ?? null,
+            documentId: String(item.documentId),
+            documentTitle: item.documentTitle ?? null,
+            lastMessage: item.lastMessage ?? null,
+            updatedAt: item.updatedAt ?? null,
+          })
+        )
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load chats";
@@ -304,7 +335,11 @@ export default function Home() {
     }
   };
 
-  const createChat = async (documentId: string, accessToken: string) => {
+  const createChat = async (
+    documentId: string,
+    accessToken: string,
+    title: string
+  ) => {
     const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
     const response = await fetch(`${baseUrl}/documents/${documentId}/chats`, {
       method: "POST",
@@ -313,7 +348,7 @@ export default function Home() {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        title: "新しいチャット",
+        title,
       }),
     });
     if (!response.ok) {
@@ -322,7 +357,7 @@ export default function Home() {
     const payload = await response.json();
     const chatId = String(payload.chat_id ?? "");
     if (!chatId) return null;
-    return { id: chatId, title: "新しいチャット" };
+    return { id: chatId, title, updatedAt: new Date().toISOString() };
   };
 
   const loadDocuments = async (accessToken: string) => {
@@ -406,6 +441,7 @@ export default function Home() {
     setChatMessages([]);
     setChatThreads([]);
     setActiveChatId(null);
+    setShowThreadList(false);
     setAllChatThreads([]);
     try {
       const session = await supabase.auth.getSession();
@@ -502,9 +538,11 @@ export default function Home() {
   };
 
   const activeChatTitle = selectedDocumentId
-    ? chatThreads.find((thread) => thread.id === activeChatId)?.title ??
-      (activeChatId ? "新しいチャット" : "チャット")
-    : "チャット一覧";
+    ? showThreadList
+      ? "このPDFのチャット一覧"
+      : chatThreads.find((thread) => thread.id === activeChatId)?.title ??
+        (activeChatId ? "新しいチャット" : "チャット")
+    : "全体チャット一覧";
 
   const formatRelativeTime = (value: string | null) => {
     if (!value) return "";
@@ -536,8 +574,8 @@ export default function Home() {
     return `${Math.max(1, diffYears)}年前`;
   };
 
-  const handleSendMessage = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+
+  const sendMessage = async () => {
     const trimmed = chatInput.trim();
     if (!trimmed) return;
     if (!selectedDocumentId || !activeChatId) return;
@@ -591,6 +629,40 @@ export default function Home() {
         error instanceof Error ? error.message : "Failed to send message";
       setChatError(messageText);
     }
+  };
+
+  const renderLoadingText = (text: string) => (
+    <span className="loading-fade" aria-label={text}>
+      {text.split("").map((char, index) => (
+        <span
+          key={`${char}-${index}`}
+          style={{ ["--fade-delay" as React.CSSProperties["--fade-delay"]]: `${index * 0.08}s` }}
+        >
+          {char}
+        </span>
+      ))}
+    </span>
+  );
+
+  const handleSendMessage = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await sendMessage();
+  };
+
+  const handleCreateChat = async () => {
+    if (!selectedDocumentId) return;
+    const session = await supabase.auth.getSession();
+    const accessToken = session.data.session?.access_token;
+    if (!accessToken) return;
+    const nextIndex = chatThreads.length + 1;
+    const title = `新しいチャット${nextIndex}`;
+    const created = await createChat(selectedDocumentId, accessToken, title);
+    if (!created) return;
+    setChatThreads((prev) => [created, ...prev]);
+    setActiveChatId(created.id);
+    setChatMessages([]);
+    setShowThreadList(false);
+    await loadChatMessages(selectedDocumentId, created.id, accessToken);
   };
 
   return (
@@ -706,10 +778,10 @@ export default function Home() {
         <div className="sidebar__list">
           {isAuthed ? (
             docsLoading ? (
-              <p className="auth-hint">読み込み中...</p>
+              <p className="auth-hint">{renderLoadingText("Loading...")}</p>
             ) : docsError ? (
               <div className="auth-hint">
-                <p>{docsError}</p>
+                <p>エラーが発生しました</p>
               </div>
             ) : documents.length === 0 ? (
               <div className="auth-hint">
@@ -892,9 +964,9 @@ export default function Home() {
           </div>
           <div className="viewer__canvas">
             {viewerLoading ? (
-              <div className="empty-state">読み込み中...</div>
+              <div className="empty-state">{renderLoadingText("Loading...")}</div>
             ) : viewerError ? (
-              <div className="empty-state">{viewerError}</div>
+              <div className="empty-state">エラーが発生しました</div>
             ) : selectedDocumentUrl ? (
               <PdfViewer
                 url={selectedDocumentUrl}
@@ -924,9 +996,23 @@ export default function Home() {
           <div className="chat__header">
             {selectedDocumentId ? (
               <div className="chat__header-left">
-                <button type="button" className="chat__header-action" aria-label="back">
-                  ←
-                </button>
+                {showThreadList ? null : (
+                  <button
+                    type="button"
+                    className="chat__header-action"
+                    aria-label="back"
+                    onClick={async () => {
+                      setShowThreadList(true);
+                      const session = await supabase.auth.getSession();
+                      const accessToken = session.data.session?.access_token;
+                      if (accessToken && selectedDocumentId) {
+                        await loadChats(selectedDocumentId, accessToken, { autoOpen: false });
+                      }
+                    }}
+                  >
+                    ←
+                  </button>
+                )}
                 <span className="chat__header-title">{activeChatTitle}</span>
               </div>
             ) : (
@@ -940,7 +1026,8 @@ export default function Home() {
                   <button
                     type="button"
                     className="chat__header-action"
-                    aria-label="refresh"
+                    aria-label="new thread"
+                    onClick={handleCreateChat}
                   >
                     <svg
                       viewBox="0 0 24 24"
@@ -954,8 +1041,9 @@ export default function Home() {
                       aria-hidden="true"
                     >
                       <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-                      <path d="M12 8l0 4l2 2" />
-                      <path d="M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5" />
+                      <path d="M7 7h-1a2 2 0 0 0 -2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2 -2v-1" />
+                      <path d="M20.385 6.585a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3l8.385 -8.415" />
+                      <path d="M16 5l3 3" />
                     </svg>
                   </button>
                   <button
@@ -979,28 +1067,37 @@ export default function Home() {
                       <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
                     </svg>
                   </button>
-                  <button
-                    type="button"
-                    className="chat__header-action"
-                    aria-label="share"
-                  >
-                    <svg
-                      viewBox="0 0 24 24"
-                      width="16"
-                      height="16"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
+                  {showThreadList ? null : (
+                    <button
+                      type="button"
+                      className="chat__header-action"
+                      aria-label="history"
+                      onClick={async () => {
+                        setShowThreadList(true);
+                        const session = await supabase.auth.getSession();
+                        const accessToken = session.data.session?.access_token;
+                        if (accessToken && selectedDocumentId) {
+                          await loadChats(selectedDocumentId, accessToken, { autoOpen: false });
+                        }
+                      }}
                     >
-                      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-                      <path d="M7 7h-1a2 2 0 0 0 -2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2 -2v-1" />
-                      <path d="M20.385 6.585a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3l8.385 -8.415" />
-                      <path d="M16 5l3 3" />
-                    </svg>
-                  </button>
+                      <svg
+                        viewBox="0 0 24 24"
+                        width="16"
+                        height="16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                        <path d="M12 8l0 4l2 2" />
+                        <path d="M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5" />
+                      </svg>
+                    </button>
+                  )}
                 </>
               ) : (
                 <button
@@ -1029,13 +1126,15 @@ export default function Home() {
           </div>
                 <div className="chat__messages-wrap">
             <div
-              className={`chat__messages ${selectedDocumentId ? "" : "is-thread-list"}`}
+              className={`chat__messages ${
+                !selectedDocumentId || showThreadList ? "is-thread-list" : ""
+              }`}
               ref={chatMessagesRef}
             >
               {chatLoading ? (
-                <div className="empty-state">読み込み中...</div>
+                <div className="empty-state">{renderLoadingText("Loading...")}</div>
               ) : chatError ? (
-                <div className="empty-state">{chatError}</div>
+                <div className="empty-state">エラーが発生しました</div>
               ) : !selectedDocumentId ? (
                 allChatThreads.length === 0 ? (
                   <div className="empty-state">チャットはまだありません</div>
@@ -1065,6 +1164,43 @@ export default function Home() {
                         </div>
                         <div className="chat__thread-meta">
                           {thread.documentTitle ?? "Untitled"}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )
+              ) : showThreadList ? (
+                chatThreads.length === 0 ? (
+                  <div className="empty-state">このPDFのチャットはありません</div>
+                ) : (
+                  <div className="chat__thread-list">
+                    {chatThreads.map((thread) => (
+                      <button
+                        key={thread.id}
+                        type="button"
+                        className="chat__thread-item"
+                        onClick={async () => {
+                          setActiveChatId(thread.id);
+                          setShowThreadList(false);
+                          const session = await supabase.auth.getSession();
+                          const accessToken = session.data.session?.access_token;
+                          if (accessToken && selectedDocumentId) {
+                            await loadChatMessages(selectedDocumentId, thread.id, accessToken);
+                          }
+                        }}
+                      >
+                        <div className="chat__thread-row">
+                          <div className="chat__thread-title">
+                            {thread.title ?? "新しいチャット"}
+                          </div>
+                          {thread.updatedAt ? (
+                            <span className="chat__thread-time">
+                              {formatRelativeTime(thread.updatedAt)}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="chat__thread-meta">
+                          {thread.lastMessage ?? "メッセージはまだありません"}
                         </div>
                       </button>
                     ))}
@@ -1121,6 +1257,16 @@ export default function Home() {
                   rows={1}
                   value={chatInput}
                   onChange={(event) => setChatInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    const isComposing =
+                      event.nativeEvent.isComposing || event.isComposing || false;
+                    const hasModifier =
+                      event.shiftKey || event.metaKey || event.ctrlKey || event.altKey;
+                    if (event.key === "Enter" && !hasModifier && !isComposing) {
+                      event.preventDefault();
+                      void sendMessage();
+                    }
+                  }}
                   ref={chatInputRef}
                 />
               </div>
@@ -1151,7 +1297,7 @@ export default function Home() {
                 <button
                   type="submit"
                   className="send"
-                  disabled={!selectedDocumentId || !activeChatId}
+                  disabled={!selectedDocumentId || !activeChatId || showThreadList}
                 >
                   ↑
                 </button>

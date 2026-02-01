@@ -396,6 +396,7 @@ async def list_user_chats(
                 "title": row.get("title"),
                 "documentId": str(row["document_id"]),
                 "documentTitle": row.get("document_title"),
+                "lastMessage": row.get("last_message"),
                 "updatedAt": row.get("updated_at").isoformat()
                 if row.get("updated_at")
                 else None,
