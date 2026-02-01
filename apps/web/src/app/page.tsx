@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { PdfEmbed } from "@/components/pdf-embed";
+import { PdfViewer } from "@/components/pdf-viewer/pdf-viewer";
 import { supabase } from "@/lib/supabase";
 
 const mockChats = [
@@ -74,6 +74,7 @@ export default function Home() {
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
   const [selectedDocumentUrl, setSelectedDocumentUrl] = useState<string | null>(null);
   const [selectedDocumentTitle, setSelectedDocumentTitle] = useState<string | null>(null);
+  const [selectedDocumentToken, setSelectedDocumentToken] = useState<string | null>(null);
   const [viewerLoading, setViewerLoading] = useState(false);
   const [viewerError, setViewerError] = useState<string | null>(null);
   const [openDocuments, setOpenDocuments] = useState<OpenDocument[]>([]);
@@ -219,6 +220,7 @@ export default function Home() {
       if (!accessToken) {
         throw new Error("Not authenticated");
       }
+      setSelectedDocumentToken(accessToken);
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const response = await fetch(`${baseUrl}/documents/${doc.id}/signed-url`, {
         headers: {
@@ -599,7 +601,11 @@ export default function Home() {
             ) : viewerError ? (
               <div className="empty-state">{viewerError}</div>
             ) : selectedDocumentUrl ? (
-              <PdfEmbed url={selectedDocumentUrl} />
+              <PdfViewer
+                url={selectedDocumentUrl}
+                documentId={selectedDocumentId}
+                accessToken={selectedDocumentToken}
+              />
             ) : (
               <div className="empty-state">PDFがここに表示されます</div>
             )}

@@ -239,6 +239,7 @@ button {
   padding: 0px 8px;
   gap: 0;
   /* background-color: yellow; */
+  border-bottom: 1px solid var(--line);
 }
 
 .app--sidebar-closed .sidebar__header--primary {
@@ -785,6 +786,7 @@ button {
   background: #fff;
   border: 1px solid var(--line);
   width: min(100%, 900px);
+  position: relative;
   display: flex;
   justify-content: center;
 }
@@ -794,6 +796,28 @@ button {
   height: auto;
   display: block;
 }
+
+.pdf-embed__overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: none;
+  pointer-events: auto;
+}
+
+.pdf-embed__selection {
+  position: absolute;
+  border: 1px solid #111;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.pdf-embed__highlight {
+  position: absolute;
+  background: rgba(255, 214, 0, 0.35);
+  pointer-events: none;
+}
+
+
 
 .pdf-embed__error {
   margin-top: 6px;

@@ -33,7 +33,7 @@ ask-pdf/
 │   │   │   ├── app/                # App Router
 │   │   │   ├── components/
 │   │   │   │   ├── sidebar/        # 履歴管理、アップロードボタン
-│   │   │   │   ├── pdf-viewer/     # 自作PDFビューア層（HighlightOverlay含む）
+│   │   │   │   ├── pdf-viewer/     # PDFビューア関連を集約（PdfEmbed/Toolbar/Overlay）
 │   │   │   │   └── chat/           # メッセージリスト、入力欄
 │   │   │   ├── hooks/              # useRAG, usePDFCoordinates
 │   │   │   └── store/              # Zustand (UI状態管理)
