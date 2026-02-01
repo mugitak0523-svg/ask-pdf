@@ -183,6 +183,7 @@ button {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
+  height: 100vh;
 }
 
 .app--sidebar-closed .sidebar {
@@ -199,7 +200,7 @@ button {
   place-items: center;
   font-size: 14px;
   flex-shrink: 0;
-  margin-left: 6px;
+  margin-left: 5px;
 }
 
 .brand {
@@ -207,41 +208,45 @@ button {
 }
 
 .sidebar__list {
-  padding: 2px 6px;
+  padding: 0px 8px;
   display: flex;
   flex-direction: column;
   gap: 0;
   overflow-y: auto;
   flex: 1;
+  /* background-color: red; */
 }
 
 .sidebar__header {
   display: flex;
   flex-direction: column;
+  /* background-color: green; */
 }
 
 .sidebar__header--primary {
   min-height: 52px;
-  padding: 0 6px;
+  padding: 0 8px;
   flex-direction: row;
   align-items: center;
   justify-content: flex-start;
+  /* background-color: #3b82f6; */
 }
 
 .sidebar__header--secondary {
-  padding: 2px 6px;
+  padding: 0px 8px;
   gap: 0;
+  /* background-color: yellow; */
 }
 
 .app--sidebar-closed .sidebar__header--primary {
-  padding: 0 6px;
+  /* padding: 0 6px; */
   justify-content: flex-start;
 }
 
 .app--sidebar-closed .sidebar__header--secondary {
-  padding: 2px 10px;
+  padding: 0px 8px;
   align-items: center;
-  gap: 2px;
+  /* gap: 2px; */
 }
 
 .app--sidebar-closed .sidebar__header--secondary .header-btn {
@@ -290,7 +295,7 @@ button {
 }
 
 .app--sidebar-closed .sidebar {
-  width: 56px;
+  width: 54px;
   background: var(--panel);
 }
 
@@ -302,8 +307,8 @@ button {
   color: var(--text);
   background: transparent;
   border: none;
-  font-size: 13px;
-  padding: 6px 8px;
+  font-size: 14px;
+  padding: 6px 10px;
   height: 32px;
 }
 
@@ -430,8 +435,8 @@ button {
 
 .history-item {
   text-align: left;
-  font-size: 13px;
-  padding: 6px 8px;
+  font-size: 14px;
+  padding: 6px 10px;
   border-radius: 4px;
   color: var(--text);
   background: transparent;
@@ -453,6 +458,8 @@ button {
 .btn-icon {
   flex-shrink: 0;
   margin-right: 6px;
+  /* background: #e02424; */
+  border-radius: 4px;
 }
 
 .history-item:hover {
@@ -461,20 +468,23 @@ button {
 
 .sidebar__footer {
   min-height: 52px;
-  padding: 0 8px;
+  padding: 0 6px;
   display: flex;
   align-items: center;
   border-top: 1px solid var(--line);
+  /* background-color: yellowgreen; */
+  margin-top: auto;
 }
 
 .sidebar__footer .history-item {
   width: 100%;
-  color: #d92d20;
-  padding: 6px 8px;
+  color: red;
+  padding: 6px 10px;
 }
 
 .app--sidebar-closed .sidebar__footer {
   display: flex;
+  padding: 0 9px;
 }
 
 .app--sidebar-closed .sidebar__footer .history-item {
@@ -605,10 +615,15 @@ button {
 }
 
 .icon-btn {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   border-radius: 999px;
-  border: 1px solid var(--line);
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.icon-btn:hover {
+  border-color: var(--line);
   background: var(--panel-soft);
 }
 
