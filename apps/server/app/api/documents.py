@@ -174,3 +174,51 @@ async def get_document_result(
             detail="Document result not found",
         )
     return result
+
+
+@router.get("/documents/{document_id}/annotations")
+async def get_document_annotations(
+    request: Request,
+    document_id: str,
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    pool = request.app.state.db_pool
+    row = await repository.get_document(pool, document_id, user.user_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    data_row = await repository.get_document_annotations(pool, document_id, user.user_id)
+    data = data_row.get("data") if data_row else {}
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            data = {}
+    if not isinstance(data, dict):
+        data = {}
+    return {"annotations": data}
+
+
+@router.put("/documents/{document_id}/annotations")
+async def upsert_document_annotations(
+    request: Request,
+    document_id: str,
+    payload: dict[str, Any],
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    pool = request.app.state.db_pool
+    row = await repository.get_document(pool, document_id, user.user_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    annotations = payload.get("annotations")
+    if not isinstance(annotations, dict):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="annotations must be an object",
+        )
+    await repository.upsert_document_annotations(
+        pool,
+        document_id,
+        user.user_id,
+        annotations,
+    )
+    return {"status": "ok"}

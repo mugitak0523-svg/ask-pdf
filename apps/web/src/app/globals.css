@@ -810,6 +810,11 @@ button {
   pointer-events: none;
 }
 
+.pdf-embed__annotation {
+  position: absolute;
+  pointer-events: none;
+}
+
 .pdf-embed__popup {
   position: absolute;
   display: grid;
@@ -870,6 +875,11 @@ button {
   color: #fff;
   font-size: 12px;
   line-height: 1;
+  opacity: 0;
+}
+
+.pdf-embed__palette-color.is-selected .pdf-embed__palette-check {
+  opacity: 1;
 }
 
 .pdf-embed__popup-btn {
@@ -883,11 +893,31 @@ button {
   /* background-color: red; */
   cursor: pointer;
   transition: background-color 120ms ease, color 120ms ease;
+  width: 100%;
+}
+
+.pdf-embed__popup-btn--danger {
+  color: red;
+}
+
+.pdf-embed__popup-btn--danger .pdf-embed__popup-icon {
+  color: red;
+}
+
+.pdf-embed__popup-btn--danger .pdf-embed__popup-shortcut {
+  color: red;
+}
+
+.pdf-embed__popup-btn--danger .pdf-embed__popup-key {
+  border-color: var(--line);
 }
 
 .pdf-embed__popup-btn:hover {
   background: #f4f4f0;
   border-radius: 4px;
+}
+.pdf-embed__popup-btn--danger:hover {
+  background: rgba(229, 62, 62, 0.12);
 }
 
 .pdf-embed__popup-icon {
@@ -911,6 +941,8 @@ button {
   color: var(--muted);
   display: inline-flex;
   gap: 6px;
+  min-width: 64px;
+  justify-content: flex-end;
 }
 
 .pdf-embed__popup-key {

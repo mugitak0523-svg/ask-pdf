@@ -124,3 +124,41 @@ async def match_documents(
             document_id,
         )
     return [dict(row) for row in rows]
+
+
+async def get_document_annotations(
+    pool: asyncpg.Pool,
+    document_id: str,
+    user_id: str,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select data
+            from document_annotations
+            where document_id = $1 and user_id = $2
+            """,
+            document_id,
+            user_id,
+        )
+    return dict(row) if row else None
+
+
+async def upsert_document_annotations(
+    pool: asyncpg.Pool,
+    document_id: str,
+    user_id: str,
+    data: dict[str, Any],
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            insert into document_annotations (document_id, user_id, data)
+            values ($1, $2, $3::jsonb)
+            on conflict (document_id, user_id)
+            do update set data = excluded.data
+            """,
+            document_id,
+            user_id,
+            json.dumps(data),
+        )

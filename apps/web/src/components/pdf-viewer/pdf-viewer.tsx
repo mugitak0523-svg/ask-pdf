@@ -6,6 +6,7 @@ type PdfViewerProps = {
   url: string;
   documentId: string | null;
   accessToken: string | null;
+  onAddToChat?: (text: string) => void;
 };
 
 type RenderState = "idle" | "loading" | "error";
@@ -26,7 +27,15 @@ type WordRect = {
   height: number;
 };
 
-export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
+type Annotation = {
+  pageNumber: number;
+  wordIndex: number;
+  color: string;
+  mode: "highlight" | "underline";
+  createdAt: string;
+};
+
+export function PdfViewer({ url, documentId, accessToken, onAddToChat }: PdfViewerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [state, setState] = useState<RenderState>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -35,9 +44,26 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
   const [documentResult, setDocumentResult] = useState<Record<string, unknown> | null>(
     null
   );
+  const [annotations, setAnnotations] = useState<
+    Record<number, Record<number, Annotation[]>>
+  >({});
+  const annotationsHydratedRef = useRef(false);
   const wordRectsRef = useRef<Record<number, WordRect[]>>({});
   const selectionRef = useRef<HTMLDivElement | null>(null);
   const popupRef = useRef<HTMLDivElement | null>(null);
+  const selectionDataRef = useRef<{
+    startPage: number;
+    endPage: number;
+    startIndex: number;
+    endIndex: number;
+    color: string;
+    mode: "highlight" | "underline";
+    text: string;
+    highlights: HTMLDivElement[];
+  } | null>(null);
+  const currentColorRef = useRef<string>("#ffd84d");
+  const currentModeRef = useRef<"highlight" | "underline">("highlight");
+  const wordTextRef = useRef<Record<number, { wordIndex: number; text: string }[]>>({});
   const selectionStateRef = useRef<{
     pageNumber: number;
     startX: number;
@@ -91,7 +117,9 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
           overlay.addEventListener("pointerleave", handlePointerLeave);
           overlay.addEventListener("pointerdown", handlePointerDown);
           overlay.addEventListener("pointerup", handlePointerUp);
-          overlay.addEventListener("pointerdown", () => {
+          overlay.addEventListener("pointerdown", (event) => {
+            const target = event.target as HTMLElement | null;
+            if (target && target.closest(".pdf-embed__popup")) return;
             if (popupRef.current) {
               popupRef.current.remove();
               popupRef.current = null;
@@ -149,6 +177,100 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
   }, [pageMeta]);
 
   useEffect(() => {
+    const loadAnnotations = async () => {
+      if (!documentId || !accessToken) {
+        setAnnotations({});
+        annotationsHydratedRef.current = false;
+        return;
+      }
+      annotationsHydratedRef.current = false;
+      try {
+        const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+        const response = await fetch(`${baseUrl}/documents/${documentId}/annotations`, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
+        if (!response.ok) {
+          setAnnotations({});
+          annotationsHydratedRef.current = true;
+          return;
+        }
+        const payload = await response.json();
+        const data = payload?.annotations;
+        if (data && typeof data === "object" && !Array.isArray(data)) {
+          setAnnotations(data as Record<number, Record<number, Annotation[]>>);
+        } else {
+          setAnnotations({});
+        }
+        annotationsHydratedRef.current = true;
+      } catch {
+        setAnnotations({});
+        annotationsHydratedRef.current = true;
+      }
+    };
+    void loadAnnotations();
+  }, [documentId, accessToken]);
+
+  useEffect(() => {
+    const saveAnnotations = async () => {
+      if (!documentId || !accessToken) return;
+      if (!annotationsHydratedRef.current) return;
+      try {
+        const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+        await fetch(`${baseUrl}/documents/${documentId}/annotations`, {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ annotations }),
+        });
+      } catch {
+        return;
+      }
+    };
+    void saveAnnotations();
+  }, [documentId, accessToken, annotations]);
+
+  useEffect(() => {
+    renderAllAnnotations();
+  }, [annotations, pageMeta, documentId]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!selectionDataRef.current) return;
+      if (!popupRef.current) return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
+        return;
+      }
+      if (!event.metaKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "h") {
+        event.preventDefault();
+        void runPopupAction("highlight");
+      } else if (key === "u") {
+        event.preventDefault();
+        void runPopupAction("underline");
+      } else if (key === "c") {
+        event.preventDefault();
+        void runPopupAction("copy");
+      } else if (key === "a") {
+        event.preventDefault();
+        void runPopupAction("add-to-chat");
+      } else if (key === "backspace") {
+        event.preventDefault();
+        void runPopupAction("delete-annotation");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
+
+  useEffect(() => {
     const loadResult = async () => {
       if (!documentId || !accessToken) {
         setDocumentResult(null);
@@ -185,6 +307,7 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
         }
 
         const nextRects: Record<number, WordRect[]> = {};
+        const nextWords: Record<number, { wordIndex: number; text: string }[]> = {};
 
         const polygonToRect = (polygon: number[]) => {
           const xs = [];
@@ -258,11 +381,19 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
             }
             nextRects[pageNumber].push(normalized);
           }
+          nextWords[pageNumber] = words
+            .map((word) => ({
+              wordIndex: Number(word.word_index ?? word.wordIndex ?? word.index ?? -1),
+              text: String(word.content ?? word.text ?? ""),
+            }))
+            .filter((word) => Number.isFinite(word.wordIndex) && word.wordIndex >= 0)
+            .sort((a, b) => a.wordIndex - b.wordIndex);
         }
         for (const key of Object.keys(nextRects)) {
           nextRects[Number(key)].sort((a, b) => a.wordIndex - b.wordIndex);
         }
         wordRectsRef.current = nextRects;
+        wordTextRef.current = nextWords;
       } catch {
         setDocumentResult(null);
       }
@@ -339,6 +470,7 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
       popupRef.current.remove();
       popupRef.current = null;
     }
+    selectionDataRef.current = null;
     selectionRef.current = null;
     const meta = pageMetaRef.current[pageNumber];
     const rects = wordRectsRef.current[pageNumber] || [];
@@ -390,7 +522,9 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
     meta: PageMeta,
     startIndex: number,
     endIndex: number,
-    showPopupAfter: boolean
+    showPopupAfter: boolean,
+    collector?: HTMLDivElement[],
+    styleOverride?: { color: string; mode: "highlight" | "underline" }
   ) => {
     const minIndex = Math.min(startIndex, endIndex);
     const maxIndex = Math.max(startIndex, endIndex);
@@ -420,7 +554,11 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
       highlight.style.top = `${top}px`;
       highlight.style.width = `${right - left}px`;
       highlight.style.height = `${bottom - top}px`;
+      const styleColor = styleOverride?.color ?? currentColorRef.current;
+      const styleMode = styleOverride?.mode ?? currentModeRef.current;
+      applyHighlightStyle(highlight, styleColor, styleMode);
       target.appendChild(highlight);
+      if (collector) collector.push(highlight);
     }
     if (bounds && showPopupAfter) {
       const anchor = getWordAnchor(rects, meta, endIndex);
@@ -436,6 +574,7 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
     showPopupAfter: boolean
   ) => {
     clearAllHighlights();
+    const highlights: HTMLDivElement[] = [];
     const pages = Object.keys(wordRectsRef.current)
       .map((key) => Number(key))
       .filter((page) => Number.isFinite(page))
@@ -458,8 +597,33 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
         endPage,
         endIndex
       );
-      renderHighlightsByIndex(overlay, rects, meta, rangeStart, rangeEnd, false);
+      renderHighlightsByIndex(
+        overlay,
+        rects,
+        meta,
+        rangeStart,
+        rangeEnd,
+        false,
+        highlights,
+        { color: "#6aa9ff", mode: "highlight" }
+      );
     }
+    const selectedText = getSelectedTextAcrossPages(
+      startPage,
+      startIndex,
+      endPage,
+      endIndex
+    );
+    selectionDataRef.current = {
+      startPage,
+      endPage,
+      startIndex,
+      endIndex,
+      color: currentColorRef.current,
+      mode: currentModeRef.current,
+      text: selectedText,
+      highlights,
+    };
     if (showPopupAfter) {
       const targetPage = endPage;
       const rects = wordRectsRef.current[targetPage] || [];
@@ -516,20 +680,38 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
     popup.className = "pdf-embed__popup";
     popup.innerHTML = `
       <div class="pdf-embed__popup-palette" aria-label="Highlight colors">
-        <button type="button" class="pdf-embed__palette-color is-selected" style="--swatch:#ffd84d">
+        <button type="button" class="pdf-embed__palette-color is-selected" style="--swatch:#ffd84d" data-color="#ffd84d">
           <span class="pdf-embed__palette-check">✓</span>
         </button>
-        <button type="button" class="pdf-embed__palette-color" style="--swatch:#ffb347"></button>
-        <button type="button" class="pdf-embed__palette-color" style="--swatch:#ff7b7b"></button>
-        <button type="button" class="pdf-embed__palette-color" style="--swatch:#ff8bd1"></button>
-        <button type="button" class="pdf-embed__palette-color" style="--swatch:#b28cff"></button>
-        <button type="button" class="pdf-embed__palette-color" style="--swatch:#7aa9ff"></button>
-        <button type="button" class="pdf-embed__palette-color" style="--swatch:#69d2ff"></button>
-        <button type="button" class="pdf-embed__palette-color" style="--swatch:#65e0a1"></button>
-        <button type="button" class="pdf-embed__palette-color" style="--swatch:#c7ea6b"></button>
-        <button type="button" class="pdf-embed__palette-color" style="--swatch:#ffe4a3"></button>
+        <button type="button" class="pdf-embed__palette-color" style="--swatch:#ffb347" data-color="#ffb347">
+          <span class="pdf-embed__palette-check">✓</span>
+        </button>
+        <button type="button" class="pdf-embed__palette-color" style="--swatch:#ff7b7b" data-color="#ff7b7b">
+          <span class="pdf-embed__palette-check">✓</span>
+        </button>
+        <button type="button" class="pdf-embed__palette-color" style="--swatch:#ff8bd1" data-color="#ff8bd1">
+          <span class="pdf-embed__palette-check">✓</span>
+        </button>
+        <button type="button" class="pdf-embed__palette-color" style="--swatch:#b28cff" data-color="#b28cff">
+          <span class="pdf-embed__palette-check">✓</span>
+        </button>
+        <button type="button" class="pdf-embed__palette-color" style="--swatch:#7aa9ff" data-color="#7aa9ff">
+          <span class="pdf-embed__palette-check">✓</span>
+        </button>
+        <button type="button" class="pdf-embed__palette-color" style="--swatch:#69d2ff" data-color="#69d2ff">
+          <span class="pdf-embed__palette-check">✓</span>
+        </button>
+        <button type="button" class="pdf-embed__palette-color" style="--swatch:#65e0a1" data-color="#65e0a1">
+          <span class="pdf-embed__palette-check">✓</span>
+        </button>
+        <button type="button" class="pdf-embed__palette-color" style="--swatch:#c7ea6b" data-color="#c7ea6b">
+          <span class="pdf-embed__palette-check">✓</span>
+        </button>
+        <button type="button" class="pdf-embed__palette-color" style="--swatch:#ffe4a3" data-color="#ffe4a3">
+          <span class="pdf-embed__palette-check">✓</span>
+        </button>
       </div>
-      <button type="button" class="pdf-embed__popup-btn">
+      <button type="button" class="pdf-embed__popup-btn" data-action="highlight">
         <svg class="pdf-embed__popup-icon" viewBox="0 0 24 24" aria-hidden="true">
           <g transform="translate(12 12) scale(1.1) translate(-12 -12)">
             <path
@@ -554,7 +736,7 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
           <span class="pdf-embed__popup-key">H</span>
         </span>
       </button>
-      <button type="button" class="pdf-embed__popup-btn">
+      <button type="button" class="pdf-embed__popup-btn" data-action="underline">
         <svg class="pdf-embed__popup-icon" viewBox="0 0 24 24" aria-hidden="true">
           <g transform="translate(12 12) scale(1.1) translate(-12 -12)">
             <path
@@ -579,7 +761,7 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
           <span class="pdf-embed__popup-key">U</span>
         </span>
       </button>
-      <button type="button" class="pdf-embed__popup-btn">
+      <button type="button" class="pdf-embed__popup-btn" data-action="copy">
         <svg class="pdf-embed__popup-icon" viewBox="0 0 24 24" aria-hidden="true">
           <g transform="translate(12 12) scale(1.1) translate(-12 -12)">
             <rect
@@ -607,7 +789,7 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
           <span class="pdf-embed__popup-key">C</span>
         </span>
       </button>
-      <button type="button" class="pdf-embed__popup-btn">
+      <button type="button" class="pdf-embed__popup-btn" data-action="add-to-chat">
         <svg class="pdf-embed__popup-icon" viewBox="0 0 24 24" aria-hidden="true">
           <g transform="translate(12 12) scale(1.1) translate(-12 -12)">
             <path
@@ -632,6 +814,26 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
           <span class="pdf-embed__popup-key">A</span>
         </span>
       </button>
+      <button
+        type="button"
+        class="pdf-embed__popup-btn pdf-embed__popup-btn--danger"
+        data-action="delete-annotation"
+      >
+        <svg class="pdf-embed__popup-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <g transform="translate(12 12) scale(1.1) translate(-12 -12)">
+            <line x1="4" y1="7" x2="20" y2="7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></line>
+            <path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+            <path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+            <line x1="10" y1="11" x2="10" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></line>
+            <line x1="14" y1="11" x2="14" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></line>
+          </g>
+        </svg>
+        Delete annotation
+        <span class="pdf-embed__popup-shortcut">
+          <span class="pdf-embed__popup-key">⌘</span>
+          <span class="pdf-embed__popup-key">⌫</span>
+        </span>
+      </button>
     `;
     target.appendChild(popup);
     const { width: popupWidth, height: popupHeight } = popup.getBoundingClientRect();
@@ -644,6 +846,20 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
     popup.style.left = `${left}px`;
     popup.style.top = `${top}px`;
     popupRef.current = popup;
+    bindPopupActions(popup);
+    popup.addEventListener("pointerdown", (event) => {
+      event.stopPropagation();
+    });
+    const paletteButtons = popup.querySelectorAll<HTMLButtonElement>(
+      ".pdf-embed__palette-color"
+    );
+    paletteButtons.forEach((button) => {
+      if (button.dataset.color === currentColorRef.current) {
+        button.classList.add("is-selected");
+      } else {
+        button.classList.remove("is-selected");
+      }
+    });
   };
 
   const getWordAnchor = (rects: WordRect[], meta: PageMeta, wordIndex: number) => {
@@ -653,6 +869,166 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
       x: (rect.left + rect.width) * meta.width,
       y: (rect.top + rect.height) * meta.height,
     };
+  };
+
+  const applyHighlightStyle = (
+    element: HTMLDivElement,
+    color: string,
+    mode: "highlight" | "underline"
+  ) => {
+    if (mode === "underline") {
+      element.style.background = "transparent";
+      element.style.borderBottom = `2px solid ${color}`;
+    } else {
+      element.style.borderBottom = "none";
+      element.style.background = colorToRgba(color, 0.35);
+    }
+  };
+
+  const colorToRgba = (hex: string, alpha: number) => {
+    const normalized = hex.replace("#", "");
+    if (normalized.length !== 6) return `rgba(255, 214, 0, ${alpha})`;
+    const r = parseInt(normalized.slice(0, 2), 16);
+    const g = parseInt(normalized.slice(2, 4), 16);
+    const b = parseInt(normalized.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  };
+
+  const bindPopupActions = (popup: HTMLDivElement) => {
+    const palettes = Array.from(
+      popup.querySelectorAll<HTMLButtonElement>(".pdf-embed__palette-color")
+    );
+    palettes.forEach((button) => {
+      button.addEventListener("click", () => {
+        const color = button.dataset.color;
+        if (!color) return;
+        currentColorRef.current = color;
+        palettes.forEach((item) => item.classList.remove("is-selected"));
+        button.classList.add("is-selected");
+        if (selectionDataRef.current) {
+          selectionDataRef.current.color = color;
+        }
+      });
+    });
+
+    const buttons = popup.querySelectorAll<HTMLButtonElement>(".pdf-embed__popup-btn");
+    buttons.forEach((button) => {
+      const action = button.dataset.action;
+      if (!action) return;
+      button.addEventListener("click", async () => {
+        await runPopupAction(action);
+      });
+    });
+  };
+
+  const runPopupAction = async (action: string) => {
+    const selection = selectionDataRef.current;
+    if (!selection) return;
+    if (action === "highlight" || action === "underline") {
+      const mode = action === "highlight" ? "highlight" : "underline";
+      const chosenColor = currentColorRef.current;
+      currentModeRef.current = mode;
+      selection.mode = mode;
+      selection.color = chosenColor;
+      selection.highlights.forEach((highlight) => {
+        applyHighlightStyle(highlight, chosenColor, mode);
+      });
+      const updates = getSelectedWordIndicesAcrossPages(
+        selection.startPage,
+        selection.startIndex,
+        selection.endPage,
+        selection.endIndex
+      );
+      const timestamp = new Date().toISOString();
+      setAnnotations((prev) => {
+        const next: Record<number, Record<number, Annotation[]>> = { ...prev };
+        for (const [pageKey, wordIndexes] of Object.entries(updates)) {
+          const pageNumber = Number(pageKey);
+          if (!Number.isFinite(pageNumber)) continue;
+          const pageMap: Record<number, Annotation[]> = { ...(next[pageNumber] ?? {}) };
+          for (const wordIndex of wordIndexes) {
+            const entry: Annotation = {
+              pageNumber,
+              wordIndex,
+              color: chosenColor,
+              mode,
+              createdAt: timestamp,
+            };
+            const existing = pageMap[wordIndex] ?? [];
+            const filtered = existing.filter((item) => item.mode !== mode);
+            pageMap[wordIndex] = [...filtered, entry];
+          }
+          next[pageNumber] = pageMap;
+        }
+        return next;
+      });
+      selection.highlights.forEach((highlight) => highlight.remove());
+      selectionDataRef.current = null;
+      if (popupRef.current) {
+        popupRef.current.remove();
+        popupRef.current = null;
+      }
+      return;
+    }
+    if (action === "copy") {
+      if (selection.text) {
+        await navigator.clipboard.writeText(selection.text);
+      }
+      if (popupRef.current) {
+        popupRef.current.remove();
+        popupRef.current = null;
+      }
+      return;
+    }
+    if (action === "add-to-chat") {
+      if (selection.text && onAddToChat) {
+        onAddToChat(selection.text);
+      }
+      if (popupRef.current) {
+        popupRef.current.remove();
+        popupRef.current = null;
+      }
+      return;
+    }
+    if (action === "delete-annotation") {
+      const updates = getSelectedWordIndicesAcrossPages(
+        selection.startPage,
+        selection.startIndex,
+        selection.endPage,
+        selection.endIndex
+      );
+      setAnnotations((prev) => {
+        const next: Record<number, Record<number, Annotation[]>> = { ...prev };
+        for (const [pageKey, wordIndexes] of Object.entries(updates)) {
+          const pageNumber = Number(pageKey);
+          if (!Number.isFinite(pageNumber)) continue;
+          const pageMap: Record<number, Annotation[]> = { ...(next[pageNumber] ?? {}) };
+          for (const wordIndex of wordIndexes) {
+            const existing = pageMap[wordIndex] ?? [];
+            if (existing.length === 0) continue;
+            const sorted = [...existing].sort(
+              (a, b) => a.createdAt.localeCompare(b.createdAt)
+            );
+            sorted.pop();
+            if (sorted.length === 0) {
+              delete pageMap[wordIndex];
+            } else {
+              pageMap[wordIndex] = sorted;
+            }
+          }
+          if (Object.keys(pageMap).length === 0) {
+            delete next[pageNumber];
+          } else {
+            next[pageNumber] = pageMap;
+          }
+        }
+        return next;
+      });
+      if (popupRef.current) {
+        popupRef.current.remove();
+        popupRef.current = null;
+      }
+    }
   };
 
   const getPageSelectionRange = (
@@ -678,12 +1054,221 @@ export function PdfViewer({ url, documentId, accessToken }: PdfViewerProps) {
     return [firstIndex, lastIndex];
   };
 
+  const getSelectedTextAcrossPages = (
+    startPage: number,
+    startIndex: number,
+    endPage: number,
+    endIndex: number
+  ) => {
+    const pages = Object.keys(wordTextRef.current)
+      .map((key) => Number(key))
+      .filter((page) => Number.isFinite(page))
+      .sort((a, b) => a - b);
+    if (pages.length === 0) return "";
+    const forward = startPage <= endPage;
+    const fromPage = forward ? startPage : endPage;
+    const toPage = forward ? endPage : startPage;
+    const parts: string[] = [];
+    for (const pageNumber of pages) {
+      if (pageNumber < fromPage || pageNumber > toPage) continue;
+      const words = wordTextRef.current[pageNumber] || [];
+      if (words.length === 0) continue;
+      const [rangeStart, rangeEnd] = getPageSelectionRange(
+        words.map((word) => ({ wordIndex: word.wordIndex } as WordRect)),
+        pageNumber,
+        startPage,
+        startIndex,
+        endPage,
+        endIndex
+      );
+      const text = words
+        .filter((word) => word.wordIndex >= rangeStart && word.wordIndex <= rangeEnd)
+        .map((word) => word.text)
+        .join(" ");
+      if (text) parts.push(text);
+    }
+    return parts.join("\n");
+  };
+
+  const getSelectedWordIndicesAcrossPages = (
+    startPage: number,
+    startIndex: number,
+    endPage: number,
+    endIndex: number
+  ) => {
+    const normalized = normalizeSelectionRange(
+      startPage,
+      startIndex,
+      endPage,
+      endIndex
+    );
+    const pages = Object.keys(wordRectsRef.current)
+      .map((key) => Number(key))
+      .filter((page) => Number.isFinite(page))
+      .sort((a, b) => a - b);
+    const result: Record<number, number[]> = {};
+    for (const pageNumber of pages) {
+      if (pageNumber < normalized.startPage || pageNumber > normalized.endPage) continue;
+      const rects = wordRectsRef.current[pageNumber] || [];
+      if (!rects.length) continue;
+      const [rangeStart, rangeEnd] = getPageSelectionRange(
+        rects,
+        pageNumber,
+        normalized.startPage,
+        normalized.startIndex,
+        normalized.endPage,
+        normalized.endIndex
+      );
+      const wordIndexes = rects
+        .filter((rect) => rect.wordIndex >= rangeStart && rect.wordIndex <= rangeEnd)
+        .map((rect) => rect.wordIndex);
+      if (wordIndexes.length) {
+        result[pageNumber] = wordIndexes;
+      }
+    }
+    return result;
+  };
+
+  const normalizeSelectionRange = (
+    startPage: number,
+    startIndex: number,
+    endPage: number,
+    endIndex: number
+  ) => {
+    if (startPage < endPage) {
+      return { startPage, startIndex, endPage, endIndex };
+    }
+    if (startPage > endPage) {
+      return {
+        startPage: endPage,
+        startIndex: endIndex,
+        endPage: startPage,
+        endIndex: startIndex,
+      };
+    }
+    return {
+      startPage,
+      startIndex: Math.min(startIndex, endIndex),
+      endPage,
+      endIndex: Math.max(startIndex, endIndex),
+    };
+  };
+
   const clearAllHighlights = () => {
     if (!containerRef.current) return;
     containerRef.current
       .querySelectorAll(".pdf-embed__highlight")
       .forEach((node) => node.remove());
   };
+
+  const clearAllAnnotations = () => {
+    if (!containerRef.current) return;
+    containerRef.current
+      .querySelectorAll(".pdf-embed__annotation")
+      .forEach((node) => node.remove());
+  };
+
+  const renderAnnotationGroups = (
+    overlay: HTMLDivElement,
+    rects: WordRect[],
+    meta: PageMeta,
+    entries: Record<number, Annotation[]>
+  ) => {
+    const expanded: { rect: WordRect; entry: Annotation }[] = [];
+    for (const rect of rects) {
+      const list = entries[rect.wordIndex];
+      if (!list || list.length === 0) continue;
+      for (const entry of list) {
+        expanded.push({ rect, entry });
+      }
+    }
+    if (!expanded.length) return;
+    const sorted = expanded.sort((a, b) => {
+      const lineA = a.rect.lineId ?? a.rect.top;
+      const lineB = b.rect.lineId ?? b.rect.top;
+      if (lineA !== lineB) return lineA - lineB;
+      if (a.entry.mode !== b.entry.mode) {
+        return a.entry.mode === "highlight" ? -1 : 1;
+      }
+      if (a.entry.color !== b.entry.color) {
+        return a.entry.color.localeCompare(b.entry.color);
+      }
+      return a.rect.left - b.rect.left;
+    });
+    let current = sorted[0];
+    let group = {
+      left: current.rect.left,
+      top: current.rect.top,
+      width: current.rect.width,
+      height: current.rect.height,
+      lineId: current.rect.lineId ?? current.rect.top,
+      color: current.entry.color,
+      mode: current.entry.mode,
+      lastWordIndex: current.rect.wordIndex,
+    };
+    const flush = () => {
+      const left = group.left * meta.width;
+      const top = group.top * meta.height;
+      const right = (group.left + group.width) * meta.width;
+      const bottom = (group.top + group.height) * meta.height;
+      const highlight = document.createElement("div");
+      highlight.className = "pdf-embed__annotation";
+      highlight.style.left = `${left}px`;
+      highlight.style.top = `${top}px`;
+      highlight.style.width = `${right - left}px`;
+      highlight.style.height = `${bottom - top}px`;
+      applyHighlightStyle(highlight, group.color, group.mode);
+      overlay.appendChild(highlight);
+    };
+    for (let i = 1; i < sorted.length; i += 1) {
+      const next = sorted[i];
+      const nextLine = next.rect.lineId ?? next.rect.top;
+      const sameLine = nextLine === group.lineId;
+      const sameStyle = next.entry.color === group.color && next.entry.mode === group.mode;
+      const isAdjacent = next.rect.wordIndex === group.lastWordIndex + 1;
+      if (sameLine && sameStyle && isAdjacent) {
+        const newLeft = Math.min(group.left, next.rect.left);
+        const newRight = Math.max(
+          group.left + group.width,
+          next.rect.left + next.rect.width
+        );
+        group.left = newLeft;
+        group.width = newRight - newLeft;
+        group.height = Math.max(group.height, next.rect.height);
+        group.lastWordIndex = next.rect.wordIndex;
+      } else {
+        flush();
+        group = {
+          left: next.rect.left,
+          top: next.rect.top,
+          width: next.rect.width,
+          height: next.rect.height,
+          lineId: nextLine,
+          color: next.entry.color,
+          mode: next.entry.mode,
+          lastWordIndex: next.rect.wordIndex,
+        };
+      }
+    }
+    flush();
+  };
+
+  function renderAllAnnotations() {
+    if (!containerRef.current) return;
+    clearAllAnnotations();
+    const pages = Object.keys(annotations)
+      .map((key) => Number(key))
+      .filter((page) => Number.isFinite(page))
+      .sort((a, b) => a - b);
+    for (const pageNumber of pages) {
+      const rects = wordRectsRef.current[pageNumber] || [];
+      const meta = pageMetaRef.current[pageNumber];
+      const overlay = getOverlayForPage(pageNumber);
+      if (!rects.length || !meta || !overlay) continue;
+      const entries = annotations[pageNumber] ?? {};
+      renderAnnotationGroups(overlay, rects, meta, entries);
+    }
+  }
 
   const getOverlayForPage = (pageNumber: number) => {
     if (!containerRef.current) return null;

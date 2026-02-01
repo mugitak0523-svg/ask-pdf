@@ -62,6 +62,7 @@ export default function Home() {
   const tabsWrapRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [chatWidth, setChatWidth] = useState(360);
+  const [chatInput, setChatInput] = useState("");
   const [activeHighlightId, setActiveHighlightId] = useState<string | null>(
     "h-12-1"
   );
@@ -605,6 +606,12 @@ export default function Home() {
                 url={selectedDocumentUrl}
                 documentId={selectedDocumentId}
                 accessToken={selectedDocumentToken}
+                onAddToChat={(text) => {
+                  setChatInput((prev) => {
+                    const prefix = prev.trim().length > 0 ? "\n" : "";
+                    return `${prev}${prefix}"${text}"`;
+                  });
+                }}
               />
             ) : (
               <div className="empty-state">PDFがここに表示されます</div>
@@ -642,9 +649,14 @@ export default function Home() {
             ))}
           </div>
 
-          <form className="chat__input">
+          <form className="chat__input" onSubmit={(event) => event.preventDefault()}>
             <div className="input-row">
-              <textarea placeholder="質問してみましょう" rows={2} />
+              <textarea
+                placeholder="質問してみましょう"
+                rows={2}
+                value={chatInput}
+                onChange={(event) => setChatInput(event.target.value)}
+              />
               <button type="submit" className="send">
                 ↑
               </button>
