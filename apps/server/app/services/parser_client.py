@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, AsyncGenerator
+import json
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
+import websockets
 
 
 class ParserClient:
@@ -49,7 +52,62 @@ class ParserClient:
 
     async def embed_text(self, text: str) -> dict[str, Any]:
         response = await self._client.post(
-            f"{self._prefix}/embeddings", json={"input": text}
+            f"{self._prefix}/embeddings", json={"text": text}
         )
         response.raise_for_status()
         return response.json()
+
+    async def create_answer(
+        self,
+        question: str,
+        context: str,
+        model: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"question": question, "context": context}
+        if model:
+            payload["model"] = model
+        response = await self._client.post(f"{self._prefix}/answers", json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    def _ws_url(self, path: str) -> str:
+        base = self._client.base_url
+        parsed = urlparse(str(base))
+        scheme = "wss" if parsed.scheme == "https" else "ws"
+        base_path = parsed.path.rstrip("/")
+        full_path = f"{base_path}{self._prefix}{path}"
+        return urlunparse(
+            (
+                scheme,
+                parsed.netloc,
+                full_path,
+                "",
+                "",
+                "",
+            )
+        )
+
+    async def stream_answer(
+        self,
+        question: str,
+        context: str,
+        model: str | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        url = self._ws_url("/ws/answers")
+        payload: dict[str, Any] = {"question": question, "context": context}
+        if model:
+            payload["model"] = model
+        headers = {"X-API-Key": self._client.headers.get("X-API-Key", "")}
+        try:
+            websocket_ctx = websockets.connect(url, additional_headers=headers)
+        except TypeError:
+            websocket_ctx = websockets.connect(url, extra_headers=headers)
+        async with websocket_ctx as websocket:
+            await websocket.send(json.dumps(payload))
+            async for message in websocket:
+                try:
+                    data = json.loads(message)
+                except Exception:
+                    continue
+                if isinstance(data, dict):
+                    yield data

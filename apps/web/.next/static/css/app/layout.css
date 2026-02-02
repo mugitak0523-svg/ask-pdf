@@ -1270,11 +1270,92 @@ button {
 
 .bubble {
   max-width: 85%;
-  padding: 2px 10px;
+  padding: 16px 12px;
   border-radius: 4px;
   font-size: 12px;
   line-height: 1.5;
   background: #f2f2ef;
+}
+
+.bubble__content {
+  margin: 6px 0;
+}
+
+.bubble__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.bubble__retry {
+  margin-left: auto;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bubble__retry:hover {
+  border-color: #c0c0b8;
+}
+
+.bubble__content:first-child {
+  margin-top: 0;
+}
+
+.bubble__content:last-child {
+  margin-bottom: 0;
+}
+
+.markdown > * {
+  margin: 6px 0;
+}
+
+.markdown > :first-child {
+  margin-top: 0;
+}
+
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown ul,
+.markdown ol {
+  padding-left: 18px;
+}
+
+.markdown li {
+  margin: 2px 0;
+}
+
+.markdown code {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  background: #e7e7e2;
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+.markdown pre {
+  background: #101010;
+  color: #f3f3ed;
+  padding: 8px 10px;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+.markdown pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
 }
 
 .bubble--assistant {

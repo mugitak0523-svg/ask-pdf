@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import Link from "next/link";
 import { PdfViewer } from "@/components/pdf-viewer/pdf-viewer";
 import { supabase } from "@/lib/supabase";
@@ -34,6 +36,7 @@ type ChatMessage = {
   text: string;
   refs?: ChatRef[];
   createdAt: string;
+  status?: "loading" | "error";
 };
 
 type DocumentItem = {
@@ -60,6 +63,7 @@ export default function Home() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [chatSending, setChatSending] = useState(false);
   const [chatThreads, setChatThreads] = useState<
     { id: string; title: string | null; updatedAt: string | null; lastMessage?: string | null }[]
   >([]);
@@ -224,7 +228,11 @@ export default function Home() {
       const messages = items.map((item: ChatMessage) => ({
         id: String(item.id),
         role: item.role === "assistant" ? "assistant" : "user",
-        text: String(item.text ?? ""),
+        text:
+          item.status === "error" && !item.text
+            ? "回答の生成に失敗しました"
+            : String(item.text ?? ""),
+        status: item.status === "error" ? "error" : undefined,
         refs: Array.isArray(item.refs) ? item.refs : undefined,
         createdAt: String(item.createdAt ?? new Date().toISOString()),
       }));
@@ -578,6 +586,7 @@ export default function Home() {
   const sendMessage = async () => {
     const trimmed = chatInput.trim();
     if (!trimmed) return;
+    if (chatSending) return;
     if (!selectedDocumentId || !activeChatId) return;
     const message: ChatMessage = {
       id: crypto.randomUUID(),
@@ -587,6 +596,7 @@ export default function Home() {
     };
     setChatMessages((prev) => [...prev, message]);
     setChatInput("");
+    void requestAssistantReply(trimmed);
     try {
       const session = await supabase.auth.getSession();
       const accessToken = session.data.session?.access_token;
@@ -628,6 +638,139 @@ export default function Home() {
       const messageText =
         error instanceof Error ? error.message : "Failed to send message";
       setChatError(messageText);
+    }
+  };
+
+  const requestAssistantReply = async (
+    question: string,
+    options: { existingId?: string } = {}
+  ) => {
+    if (!selectedDocumentId || !activeChatId) return;
+    const pendingId = options.existingId ?? crypto.randomUUID();
+    const pending: ChatMessage = {
+      id: pendingId,
+      role: "assistant",
+      text: "",
+      createdAt: new Date().toISOString(),
+      status: "loading",
+    };
+    setChatMessages((prev) =>
+      options.existingId
+        ? prev.map((item) => (item.id === pendingId ? pending : item))
+        : [...prev, pending]
+    );
+    setChatSending(true);
+    setChatError(null);
+    try {
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.access_token;
+      if (!accessToken) {
+        throw new Error("Not authenticated");
+      }
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const wsUrl = `${baseUrl.replace(/^http/, "ws")}/documents/${selectedDocumentId}/chats/${activeChatId}/assistant/ws?token=${encodeURIComponent(
+        accessToken
+      )}`;
+      await new Promise<void>((resolve, reject) => {
+        const socket = new WebSocket(wsUrl);
+        const payload = JSON.stringify({
+          message: question,
+          message_id: options.existingId ?? null,
+          mode: chatMode,
+        });
+        socket.addEventListener("open", () => {
+          socket.send(payload);
+        });
+        socket.addEventListener("message", (event) => {
+          let data: any = null;
+          try {
+            data = JSON.parse(String(event.data));
+          } catch {
+            data = null;
+          }
+          if (!data || typeof data !== "object") return;
+          if (data.type === "delta") {
+            const deltaText = String(data.delta ?? "");
+            if (!deltaText) return;
+            setChatMessages((prev) =>
+              prev.map((item) =>
+                item.id === pendingId
+                  ? {
+                      ...item,
+                      text: `${item.text ?? ""}${deltaText}`,
+                    }
+                  : item
+              )
+            );
+          } else if (data.type === "message") {
+            const saved = data.message;
+            if (saved?.id) {
+              const status = saved.status === "error" ? "error" : undefined;
+              const text =
+                status === "error" && !saved.text
+                  ? "回答の生成に失敗しました"
+                  : String(saved.text ?? "");
+              setChatMessages((prev) =>
+                prev.map((item) =>
+                  item.id === pendingId
+                    ? {
+                        id: String(saved.id),
+                        role: "assistant",
+                        text,
+                        status,
+                        refs: Array.isArray(saved.refs) ? saved.refs : undefined,
+                        createdAt: String(saved.createdAt ?? item.createdAt),
+                      }
+                    : item
+                )
+              );
+            }
+          } else if (data.type === "error") {
+            setChatMessages((prev) =>
+              prev.map((item) =>
+                item.id === pendingId
+                  ? {
+                      ...item,
+                      text: "回答の生成に失敗しました",
+                      status: "error",
+                    }
+                  : item
+              )
+            );
+          } else if (data.type === "done") {
+            socket.close();
+            resolve();
+          }
+        });
+        socket.addEventListener("error", () => {
+          socket.close();
+          reject(new Error("WebSocket error"));
+        });
+        socket.addEventListener("close", (event) => {
+          if (event.code !== 1000) {
+            reject(new Error("WebSocket closed"));
+          } else {
+            resolve();
+          }
+        });
+      });
+    } catch (error) {
+      const messageText =
+        error instanceof Error ? error.message : "Failed to generate answer";
+      setChatError(messageText);
+      setChatMessages((prev) =>
+        prev.map((item) =>
+          item.id === pendingId
+            ? {
+                ...item,
+                text: "回答の生成に失敗しました",
+                status: "error",
+              }
+            : item
+        )
+      );
+    } finally {
+      setChatSending(false);
     }
   };
 
@@ -1211,9 +1354,66 @@ export default function Home() {
                   {selectedDocumentId ? "チャットはまだありません" : "PDFを選択してください"}
                 </div>
               ) : (
-                chatMessages.map((msg) => (
+                chatMessages.map((msg, index) => {
+                  const isLatest = index === chatMessages.length - 1;
+                  const previousUserMessage = isLatest
+                    ? [...chatMessages]
+                        .slice(0, index)
+                        .reverse()
+                        .find((item) => item.role === "user")
+                    : undefined;
+                  return (
                   <div key={msg.id} className={`bubble bubble--${msg.role}`}>
-                    <p>{msg.text}</p>
+                    {msg.status === "loading" ? (
+                      msg.text ? (
+                        <div className="bubble__content markdown">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {msg.text}
+                          </ReactMarkdown>
+                        </div>
+                      ) : (
+                        <p>{renderLoadingText("回答中...")}</p>
+                      )
+                    ) : msg.status === "error" ? (
+                      <div className="bubble__row">
+                        <p className="bubble__content">{msg.text}</p>
+                        {isLatest && previousUserMessage?.text ? (
+                          <button
+                            type="button"
+                            className="bubble__retry"
+                            onClick={() =>
+                              requestAssistantReply(previousUserMessage.text, {
+                                existingId: msg.id,
+                              })
+                            }
+                            aria-label="retry"
+                          >
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <polyline points="1 4 1 10 7 10" />
+                              <path d="M3.51 15a9 9 0 1 0 .49-9.36L1 10" />
+                            </svg>
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : msg.role === "assistant" ? (
+                      <div className="bubble__content markdown">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {msg.text}
+                        </ReactMarkdown>
+                      </div>
+                    ) : (
+                      <p className="bubble__content">{msg.text}</p>
+                    )}
                     {msg.refs ? (
                       <div className="refs">
                         {msg.refs.map((ref) => (
@@ -1229,7 +1429,8 @@ export default function Home() {
                       </div>
                     ) : null}
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
 
@@ -1302,7 +1503,9 @@ export default function Home() {
                 <button
                   type="submit"
                   className="send"
-                  disabled={!selectedDocumentId || !activeChatId || showThreadList}
+                  disabled={
+                    !selectedDocumentId || !activeChatId || showThreadList || chatSending
+                  }
                 >
                   ↑
                 </button>

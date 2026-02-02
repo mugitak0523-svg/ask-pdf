@@ -19,6 +19,9 @@ class Settings:
     supabase_jwt_secret: str
     supabase_jwt_aud: str
     supabase_jwks_url: str
+    chat_model_fast: str | None
+    chat_model_standard: str | None
+    chat_model_think: str | None
 
 
 def _require_env(name: str) -> str:
@@ -42,6 +45,9 @@ def get_settings() -> Settings:
         "SUPABASE_JWKS_URL",
         f"{supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json",
     )
+    chat_model_fast = os.getenv("CHAT_MODEL_FAST", "").strip() or None
+    chat_model_standard = os.getenv("CHAT_MODEL_STANDARD", "").strip() or None
+    chat_model_think = os.getenv("CHAT_MODEL_THINK", "").strip() or None
 
     return Settings(
         parser_api_base_url=base_url,
@@ -54,4 +60,7 @@ def get_settings() -> Settings:
         supabase_jwt_secret=supabase_jwt_secret,
         supabase_jwt_aud=supabase_jwt_aud,
         supabase_jwks_url=supabase_jwks_url,
+        chat_model_fast=chat_model_fast,
+        chat_model_standard=chat_model_standard,
+        chat_model_think=chat_model_think,
     )

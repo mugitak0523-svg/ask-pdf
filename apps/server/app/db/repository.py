@@ -261,7 +261,7 @@ async def list_document_chat_messages(
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            select id, role, content, refs, created_at
+            select id, role, content, refs, status, created_at
             from document_chat_messages
             where chat_id = $1 and user_id = $2
             order by created_at asc
@@ -272,12 +272,55 @@ async def list_document_chat_messages(
     return [dict(row) for row in rows]
 
 
+async def list_recent_document_chat_messages(
+    pool: asyncpg.Pool,
+    chat_id: str,
+    user_id: str,
+    limit: int = 4,
+) -> list[dict[str, Any]]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            select id, role, content, refs, status, created_at
+            from document_chat_messages
+            where chat_id = $1 and user_id = $2
+            order by created_at desc
+            limit $3
+            """,
+            chat_id,
+            user_id,
+            limit,
+        )
+    return [dict(row) for row in rows][::-1]
+
+
+async def get_document_chat_thread(
+    pool: asyncpg.Pool,
+    document_id: str,
+    chat_id: str,
+    user_id: str,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select id, title, document_id, user_id
+            from document_chat_threads
+            where id = $1 and document_id = $2 and user_id = $3
+            """,
+            chat_id,
+            document_id,
+            user_id,
+        )
+    return dict(row) if row else None
+
+
 async def insert_document_chat_message(
     pool: asyncpg.Pool,
     chat_id: str,
     user_id: str,
     role: str,
     content: str,
+    status: str | None = None,
     refs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     async with pool.acquire() as conn:
@@ -292,17 +335,47 @@ async def insert_document_chat_message(
         )
         row = await conn.fetchrow(
             """
-            insert into document_chat_messages (chat_id, user_id, role, content, refs)
-            values ($1, $2, $3, $4, $5::jsonb)
-            returning id, role, content, refs, created_at
+            insert into document_chat_messages (chat_id, user_id, role, content, status, refs)
+            values ($1, $2, $3, $4, $5, $6::jsonb)
+            returning id, role, content, status, refs, created_at
             """,
             chat_id,
             user_id,
             role,
             content,
+            status,
             json.dumps(refs) if refs is not None else None,
         )
     return dict(row)
+
+
+async def update_document_chat_message(
+    pool: asyncpg.Pool,
+    chat_id: str,
+    user_id: str,
+    message_id: str,
+    content: str,
+    status: str | None = None,
+    refs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            update document_chat_messages
+            set content = $1,
+                status = $2,
+                refs = $3::jsonb
+            where id = $4 and chat_id = $5 and user_id = $6
+            returning id, role, content, status, refs, created_at
+            """,
+            content,
+            status,
+            json.dumps(refs) if refs is not None else None,
+            message_id,
+            chat_id,
+            user_id,
+        )
+    return dict(row) if row else None
 
 
 async def list_user_chat_threads(
