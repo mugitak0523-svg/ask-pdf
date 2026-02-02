@@ -643,6 +643,150 @@ button {
   position: relative;
 }
 
+.settings {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  background: white;
+  /* border: 1px solid var(--line); */
+  border-radius: 16px;
+  margin: 24px;
+  overflow: hidden;
+}
+
+.settings__nav {
+  /* background: #f4f4f2; */
+  /* border-right: 1px solid var(--line); */
+  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings__profile {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 10px;
+  border-radius: 4px;
+  background: #ffffff;
+  border: 1px solid var(--line);
+}
+
+.settings__avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #e1e4f2;
+  color: #3d4a66;
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+}
+
+.settings__email {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings__plan {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.settings__nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings__nav-item {
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.settings__nav-item:hover {
+  background: #ecece8;
+  color: var(--text);
+}
+
+.settings__nav-item.is-active {
+  background: #e3e7f5;
+  border-color: #c8d2f0;
+  color: #2a3550;
+  font-weight: 600;
+}
+
+.settings__detail {
+  padding: 24px;
+  overflow: auto;
+  /* background: #f9f9f7; */
+}
+
+.settings__title {
+  font-size: 18px;
+  margin-bottom: 16px;
+}
+
+.settings__group {
+  display: grid;
+  grid-gap: 6px;
+  gap: 6px;
+}
+
+.settings__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border-radius: 6px;
+  background: #fbfbfa;
+  border: 1px solid var(--line);
+}
+
+.settings__item-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.settings__item-desc {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.settings__select {
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+  background: #fbfbfa;
+  font-size: 13px;
+}
+
+.settings__btn {
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  padding: 6px 12px;
+  background: #f2f2ef;
+  font-size: 13px;
+}
+
+.settings__btn--danger {
+  background: #f9e9e9;
+  border-color: #f1c1c1;
+  color: #8a2b2b;
+}
+
+.settings__value {
+  font-size: 13px;
+  color: var(--text);
+}
+
 .viewer__tabs-wrap {
   position: relative;
   display: block;

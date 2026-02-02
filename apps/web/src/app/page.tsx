@@ -128,9 +128,16 @@ export default function Home() {
   const [viewerLoading, setViewerLoading] = useState(false);
   const [viewerError, setViewerError] = useState<string | null>(null);
   const [openDocuments, setOpenDocuments] = useState<OpenDocument[]>([]);
+  const [selectedTabId, setSelectedTabId] = useState<string | null>(null);
   const [tabsOverflow, setTabsOverflow] = useState(false);
   const [referenceRequest, setReferenceRequest] = useState<ReferenceRequest | null>(null);
   const [activeRefId, setActiveRefId] = useState<string | null>(null);
+  const [settingsSection, setSettingsSection] = useState<
+    "general" | "ai" | "account" | "messages" | "manual"
+  >("general");
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  const SETTINGS_TAB_ID = "__settings__";
 
   const mainStyle = useMemo(
     () => ({
@@ -184,7 +191,10 @@ export default function Home() {
     supabase.auth.getSession().then(({ data }) => {
       setIsAuthed(Boolean(data.session));
       if (data.session) {
+        setUserEmail(data.session.user?.email ?? null);
         void loadDocuments(data.session.access_token);
+      } else {
+        setUserEmail(null);
       }
     });
     const {
@@ -192,6 +202,7 @@ export default function Home() {
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setIsAuthed(Boolean(session));
       if (session) {
+        setUserEmail(session.user?.email ?? null);
         void loadDocuments(session.access_token);
         if (selectedDocumentId) {
           void loadChats(selectedDocumentId, session.access_token);
@@ -199,6 +210,7 @@ export default function Home() {
           void loadAllChats(session.access_token);
         }
       } else {
+        setUserEmail(null);
         setDocuments([]);
         setChatMessages([]);
         setChatError(null);
@@ -536,6 +548,7 @@ export default function Home() {
   };
 
   const handleSelectDocument = async (doc: DocumentItem) => {
+    setSelectedTabId(doc.id);
     setSelectedDocumentId(doc.id);
     setSelectedDocumentTitle(doc.title);
     setOpenDocuments((prev) => {
@@ -594,6 +607,17 @@ export default function Home() {
   };
 
   const handleSelectTab = (docId: string) => {
+    if (docId === SETTINGS_TAB_ID) {
+      setSelectedTabId(SETTINGS_TAB_ID);
+      setSelectedDocumentId(null);
+      setSelectedDocumentTitle("設定");
+      setSelectedDocumentUrl(null);
+      setViewerError(null);
+      setViewerLoading(false);
+      setReferenceRequest(null);
+      setActiveRefId(null);
+      return;
+    }
     const doc = openDocuments.find((item) => item.id === docId);
     if (!doc) return;
     void handleSelectDocument({ id: doc.id, title: doc.title });
@@ -601,12 +625,13 @@ export default function Home() {
 
   const handleCloseTab = (docId: string) => {
     setOpenDocuments((prev) => prev.filter((item) => item.id !== docId));
-    if (selectedDocumentId === docId) {
+    if (selectedTabId === docId) {
       const remaining = openDocuments.filter((item) => item.id !== docId);
       if (remaining.length > 0) {
         const nextDoc = remaining[remaining.length - 1];
         void handleSelectDocument(nextDoc);
       } else {
+        setSelectedTabId(null);
         setSelectedDocumentId(null);
         setSelectedDocumentTitle(null);
         setSelectedDocumentUrl(null);
@@ -622,6 +647,24 @@ export default function Home() {
         });
       }
     }
+  };
+
+  const handleOpenSettings = () => {
+    setOpenDocuments((prev) => {
+      if (prev.some((item) => item.id === SETTINGS_TAB_ID)) return prev;
+      return [...prev, { id: SETTINGS_TAB_ID, title: "設定" }];
+    });
+    setSettingsSection("general");
+    handleSelectTab(SETTINGS_TAB_ID);
+  };
+
+  const openSettingsSection = (section: string) => {
+    setOpenDocuments((prev) => {
+      if (prev.some((item) => item.id === SETTINGS_TAB_ID)) return prev;
+      return [...prev, { id: SETTINGS_TAB_ID, title: "設定" }];
+    });
+    setSettingsSection(section);
+    handleSelectTab(SETTINGS_TAB_ID);
   };
 
   const scrollTabs = (direction: "left" | "right") => {
@@ -1008,6 +1051,265 @@ export default function Home() {
     </span>
   );
 
+
+  const renderSettingsDetail = () => {
+    if (settingsSection === "general") {
+      return (
+        <>
+          <h2 className="settings__title">一般</h2>
+          <div className="settings__group">
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">起動時の画面</div>
+                <div className="settings__item-desc">最後に開いたタブを復元</div>
+              </div>
+              <select className="settings__select">
+                <option>復元する</option>
+                <option>毎回リセット</option>
+              </select>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">言語</div>
+                <div className="settings__item-desc">UI の表示言語を選択</div>
+              </div>
+              <select className="settings__select">
+                <option>日本語</option>
+                <option>English</option>
+              </select>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">テーマ</div>
+                <div className="settings__item-desc">外観テーマを選択</div>
+              </div>
+              <select className="settings__select">
+                <option>Light</option>
+                <option>Dark</option>
+                <option>System</option>
+              </select>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">時間表記</div>
+                <div className="settings__item-desc">24時間 / 12時間</div>
+              </div>
+              <select className="settings__select">
+                <option>24時間</option>
+                <option>12時間</option>
+              </select>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">通知</div>
+                <div className="settings__item-desc">重要なお知らせのみ表示</div>
+              </div>
+              <button type="button" className="settings__btn">
+                設定
+              </button>
+            </div>
+          </div>
+        </>
+      );
+    }
+    if (settingsSection === "ai") {
+      return (
+        <>
+          <h2 className="settings__title">AI</h2>
+          <div className="settings__group">
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">デフォルトモデル</div>
+                <div className="settings__item-desc">新規チャットの既定モデル</div>
+              </div>
+              <select className="settings__select">
+                <option>fast</option>
+                <option>standard</option>
+                <option>think</option>
+              </select>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">RAG 設定</div>
+                <div className="settings__item-desc">top_k / min_k / 閾値</div>
+              </div>
+              <button type="button" className="settings__btn">
+                開く
+              </button>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">長文回答の制御</div>
+                <div className="settings__item-desc">回答を短くまとめる</div>
+              </div>
+              <select className="settings__select">
+                <option>標準</option>
+                <option>短め</option>
+                <option>非常に短い</option>
+              </select>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">回答スタイル</div>
+                <div className="settings__item-desc">短め / 丁寧 / 箇条書き</div>
+              </div>
+              <select className="settings__select">
+                <option>標準</option>
+                <option>短め</option>
+                <option>丁寧</option>
+                <option>箇条書き</option>
+              </select>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">安全モード</div>
+                <div className="settings__item-desc">引用がない回答を控える</div>
+              </div>
+              <button type="button" className="settings__btn">
+                設定
+              </button>
+            </div>
+          </div>
+        </>
+      );
+    }
+    if (settingsSection === "account") {
+      return (
+        <>
+          <h2 className="settings__title">アカウント</h2>
+          <div className="settings__group">
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">メール</div>
+                <div className="settings__item-desc">現在のログインメール</div>
+              </div>
+              <div className="settings__value">
+                {userEmail ?? "未ログイン"}
+              </div>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">ユーザー名</div>
+                <div className="settings__item-desc">表示名の変更</div>
+              </div>
+              <button type="button" className="settings__btn">
+                変更
+              </button>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">プラン</div>
+                <div className="settings__item-desc">現在のプラン</div>
+              </div>
+              <div className="settings__value">Free Plan</div>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">請求情報</div>
+                <div className="settings__item-desc">支払い方法の管理</div>
+              </div>
+              <button type="button" className="settings__btn">
+                管理
+              </button>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">サインアウト</div>
+                <div className="settings__item-desc">この端末からログアウト</div>
+              </div>
+              <button type="button" className="settings__btn" onClick={handleSignOut}>
+                サインアウト
+              </button>
+            </div>
+          </div>
+        </>
+      );
+    }
+    if (settingsSection === "messages") {
+      return (
+        <>
+          <h2 className="settings__title">メッセージ</h2>
+          <div className="settings__group">
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">参照表示</div>
+                <div className="settings__item-desc">refs の表示を切り替え</div>
+              </div>
+              <button type="button" className="settings__btn">設定</button>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">通知音</div>
+                <div className="settings__item-desc">メッセージ受信音</div>
+              </div>
+              <select className="settings__select">
+                <option>オン</option>
+                <option>オフ</option>
+              </select>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">既読表示</div>
+                <div className="settings__item-desc">送信済み/既読の表示</div>
+              </div>
+              <button type="button" className="settings__btn">
+                設定
+              </button>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">履歴の削除</div>
+                <div className="settings__item-desc">このドキュメントの履歴を消去</div>
+              </div>
+              <button type="button" className="settings__btn settings__btn--danger">
+                削除
+              </button>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">一括エクスポート</div>
+                <div className="settings__item-desc">チャット履歴を書き出し</div>
+              </div>
+              <button type="button" className="settings__btn">
+                エクスポート
+              </button>
+            </div>
+          </div>
+        </>
+      );
+    }
+    return (
+      <>
+        <h2 className="settings__title">使用説明書</h2>
+        <div className="settings__group">
+          <div className="settings__item">
+            <div>
+              <div className="settings__item-title">基本操作</div>
+              <div className="settings__item-desc">
+                PDF を選択 → 質問 → 参照クリックで該当箇所へ
+              </div>
+            </div>
+            <button type="button" className="settings__btn">開く</button>
+          </div>
+          <div className="settings__item">
+            <div>
+              <div className="settings__item-title">ショートカット</div>
+              <div className="settings__item-desc">選択操作のキーバインド</div>
+            </div>
+            <button type="button" className="settings__btn">開く</button>
+          </div>
+          <div className="settings__item">
+            <div>
+              <div className="settings__item-title">FAQ</div>
+              <div className="settings__item-desc">よくある質問と対処</div>
+            </div>
+            <button type="button" className="settings__btn">開く</button>
+          </div>
+        </div>
+      </>
+    );
+  };
+
   const handleSendMessage = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     await sendMessage();
@@ -1212,7 +1514,12 @@ export default function Home() {
           </div>
         </div>
         <div className="viewer__actions">
-          <button type="button" className="icon-btn" aria-label="settings">
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="settings"
+            onClick={handleOpenSettings}
+          >
             <svg
               width="18"
               height="18"
@@ -1228,7 +1535,12 @@ export default function Home() {
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
             </svg>
           </button>
-          <button type="button" className="icon-btn" aria-label="messages">
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="messages"
+            onClick={() => openSettingsSection("messages")}
+          >
             <svg
               width="18"
               height="18"
@@ -1243,7 +1555,12 @@ export default function Home() {
               <path d="M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
             </svg>
           </button>
-          <button type="button" className="icon-btn" aria-label="account">
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="account"
+            onClick={() => openSettingsSection("account")}
+          >
             <svg
               width="18"
               height="18"
@@ -1298,7 +1615,7 @@ export default function Home() {
                   key={doc.id}
                   type="button"
                   className={`viewer__tab ${
-                    doc.id === selectedDocumentId ? "viewer__tab--active" : ""
+                    doc.id === selectedTabId ? "viewer__tab--active" : ""
                   }`}
                   onClick={() => handleSelectTab(doc.id)}
                 >
@@ -1329,6 +1646,47 @@ export default function Home() {
           <div className="viewer__canvas">
             {viewerLoading ? (
               <div className="empty-state">{renderLoadingText("Loading...")}</div>
+            ) : selectedTabId === SETTINGS_TAB_ID ? (
+              <div className="settings">
+                <aside className="settings__nav">
+                  <div className="settings__profile">
+                    <div className="settings__avatar">
+                      {(userEmail?.[0] ?? "U").toUpperCase()}
+                    </div>
+                    <div>
+                      <div className="settings__email">
+                        {userEmail ?? "未ログイン"}
+                      </div>
+                      <div className="settings__plan">Free Plan</div>
+                    </div>
+                  </div>
+                  <div className="settings__nav-group">
+                    {[
+                      { id: "general", label: "一般" },
+                      { id: "ai", label: "AI" },
+                      { id: "account", label: "アカウント" },
+                      { id: "messages", label: "メッセージ" },
+                      { id: "manual", label: "使用説明書" },
+                    ].map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`settings__nav-item ${
+                          settingsSection === item.id ? "is-active" : ""
+                        }`}
+                        onClick={() =>
+                          setSettingsSection(
+                            item.id as "general" | "ai" | "account" | "messages" | "manual"
+                          )
+                        }
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </aside>
+                <div className="settings__detail">{renderSettingsDetail()}</div>
+              </div>
             ) : viewerError ? (
               <div className="empty-state">エラーが発生しました</div>
             ) : selectedDocumentUrl ? (
@@ -1419,6 +1777,7 @@ export default function Home() {
                     type="button"
                     className="chat__header-action"
                     aria-label="settings"
+                    onClick={() => openSettingsSection("ai")}
                   >
                     <svg
                       viewBox="0 0 24 24"
@@ -1473,6 +1832,7 @@ export default function Home() {
                   type="button"
                   className="chat__header-action"
                   aria-label="settings"
+                  onClick={() => openSettingsSection("ai")}
                 >
                   <svg
                     viewBox="0 0 24 24"

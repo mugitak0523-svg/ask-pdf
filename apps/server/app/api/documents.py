@@ -14,6 +14,7 @@ from app.services.storage import StorageClient
 
 router = APIRouter()
 logger = logging.getLogger("askpdf.chat")
+logger.setLevel(logging.INFO)
 
 
 class ChatAnswerRequest(BaseModel):
@@ -21,6 +22,9 @@ class ChatAnswerRequest(BaseModel):
     message_id: str | None = None
     mode: Literal["fast", "standard", "think"] | None = None
     top_k: int | None = None
+
+
+ChatAnswerRequest.model_rebuild()
 
 
 def _build_model(settings, mode: str | None) -> str | None:
@@ -41,42 +45,35 @@ def _resolve_rag_params(settings, payload: ChatAnswerRequest) -> tuple[int, int,
     return top_k, min_k, score_threshold
 
 
-def _filter_matches(
+def _extract_embedding(payload: dict[str, Any]) -> list[float] | None:
+    embedding = payload.get("embedding")
+    if isinstance(embedding, list):
+        return embedding
+    data = payload.get("data")
+    if isinstance(data, dict):
+        embedding = data.get("embedding")
+        if isinstance(embedding, list):
+            return embedding
+        data = data.get("data")
+    if isinstance(data, list):
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            embedding = item.get("embedding")
+            if isinstance(embedding, list):
+                return embedding
+    return None
+
+
+def _split_matches(
     matches: list[dict[str, Any]],
     min_k: int,
     score_threshold: float,
-) -> tuple[list[dict[str, Any]], float]:
-    max_score = max((row.get("similarity") or 0.0) for row in matches) if matches else 0.0
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     filtered = [row for row in matches if (row.get("similarity") or 0.0) >= score_threshold]
     if len(filtered) < min_k:
-        filtered = matches[:min_k]
-    return filtered, max_score
-
-
-async def _classify_question(
-    parser,
-    message: str,
-    settings,
-) -> Literal["pdf", "general"]:
-    model = settings.chat_model_fast or settings.chat_model_standard or None
-    prompt = (
-        "You are a classifier. Decide if the user question needs the PDF document to answer.\n"
-        "Return exactly one token: pdf or general."
-    )
-    try:
-        result = await parser.create_answer(
-            question=message,
-            context=prompt,
-            model=model,
-        )
-        label = str(result.get("answer") or "").strip().lower()
-    except Exception:
-        return "pdf"
-    if label.startswith("general"):
-        return "general"
-    if label.startswith("pdf"):
-        return "pdf"
-    return "pdf"
+        return matches[:min_k], filtered
+    return filtered, filtered
 
 
 @router.post("/documents/index")
@@ -500,10 +497,13 @@ async def create_document_chat_assistant_message(
 
     parser = request.app.state.parser_client
     embed_payload = await parser.embed_text(message)
-    embedding = embed_payload.get("embedding") or embed_payload.get("data")
-    if isinstance(embedding, dict):
-        embedding = embedding.get("embedding")
+    embedding = _extract_embedding(embed_payload)
     if not isinstance(embedding, list):
+        logger.error(
+            "assistant.embed invalid response type=%s keys=%s",
+            type(embed_payload).__name__,
+            list(embed_payload.keys()) if isinstance(embed_payload, dict) else None,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Invalid embedding response",
@@ -517,16 +517,7 @@ async def create_document_chat_assistant_message(
         match_count=top_k,
         document_id=document_id,
     )
-    filtered, max_score = _filter_matches(matches, min_k, score_threshold)
-    if max_score < score_threshold:
-        classification = await _classify_question(parser, message, settings)
-        if classification == "general":
-            matches = []
-        else:
-            fallback_threshold = max(score_threshold * 1, 0.0)
-            matches, _ = _filter_matches(matches, min_k, fallback_threshold)
-    else:
-        matches = filtered
+    context_matches, ref_matches = _split_matches(matches, min_k, score_threshold)
 
     recent_messages = await repository.list_recent_document_chat_messages(
         pool,
@@ -557,26 +548,28 @@ async def create_document_chat_assistant_message(
 
     context_parts: list[str] = []
     refs: list[dict[str, Any]] = []
-    for idx, match in enumerate(matches, start=1):
+    for idx, match in enumerate(context_matches, start=1):
         content = str(match.get("content") or "")
         meta = match.get("metadata") or {}
         page_label = _page_label(meta) if isinstance(meta, dict) else None
         if page_label:
             context_parts.append(f"[{idx}] (page {page_label}) {content}")
-            refs.append(
-                {
-                    "id": f"chunk-{match['id']}",
-                    "label": f"p.{page_label}",
-                }
-            )
+            if match in ref_matches:
+                refs.append(
+                    {
+                        "id": f"chunk-{match['id']}",
+                        "label": f"p.{page_label}",
+                    }
+                )
         else:
             context_parts.append(f"[{idx}] {content}")
-            refs.append(
-                {
-                    "id": f"chunk-{match['id']}",
-                    "label": str(idx),
-                }
-            )
+            if match in ref_matches:
+                refs.append(
+                    {
+                        "id": f"chunk-{match['id']}",
+                        "label": str(idx),
+                    }
+                )
 
     if memory_lines:
         context_parts.insert(
@@ -680,8 +673,10 @@ async def stream_document_chat_assistant_message(
     document_id: str,
     chat_id: str,
 ) -> None:
+    logger.info("assistant.ws connect doc=%s chat=%s", document_id, chat_id)
     token = websocket.query_params.get("token")
     if not token:
+        logger.info("assistant.ws missing token")
         await websocket.close(code=1008)
         return
     await websocket.accept()
@@ -708,11 +703,15 @@ async def stream_document_chat_assistant_message(
 
     try:
         raw = await websocket.receive_text()
+        logger.info("assistant.ws received payload bytes=%s", len(raw))
     except WebSocketDisconnect:
+        logger.info("assistant.ws disconnect before payload")
         return
     try:
-        payload = ChatAnswerRequest(**json.loads(raw))
-    except Exception:
+        decoded = json.loads(raw)
+        payload = ChatAnswerRequest(**decoded)
+    except Exception as exc:
+        logger.info("assistant.ws invalid payload error=%s raw=%s", exc, raw)
         await websocket.close(code=1008)
         return
 
@@ -723,10 +722,13 @@ async def stream_document_chat_assistant_message(
 
     parser = websocket.scope["app"].state.parser_client
     embed_payload = await parser.embed_text(message)
-    embedding = embed_payload.get("embedding") or embed_payload.get("data")
-    if isinstance(embedding, dict):
-        embedding = embedding.get("embedding")
+    embedding = _extract_embedding(embed_payload)
     if not isinstance(embedding, list):
+        logger.error(
+            "assistant.ws embed invalid response type=%s keys=%s",
+            type(embed_payload).__name__,
+            list(embed_payload.keys()) if isinstance(embed_payload, dict) else None,
+        )
         await websocket.close(code=1011)
         return
 
@@ -738,16 +740,7 @@ async def stream_document_chat_assistant_message(
         match_count=top_k,
         document_id=document_id,
     )
-    filtered, max_score = _filter_matches(matches, min_k, score_threshold)
-    if max_score < score_threshold:
-        classification = await _classify_question(parser, message, settings)
-        if classification == "general":
-            matches = []
-        else:
-            fallback_threshold = max(score_threshold * 1, 0.0)
-            matches, _ = _filter_matches(matches, min_k, fallback_threshold)
-    else:
-        matches = filtered
+    context_matches, ref_matches = _split_matches(matches, min_k, score_threshold)
 
     recent_messages = await repository.list_recent_document_chat_messages(
         pool,
@@ -778,26 +771,28 @@ async def stream_document_chat_assistant_message(
 
     context_parts: list[str] = []
     refs: list[dict[str, Any]] = []
-    for idx, match in enumerate(matches, start=1):
+    for idx, match in enumerate(context_matches, start=1):
         content = str(match.get("content") or "")
         meta = match.get("metadata") or {}
         page_label = _page_label(meta) if isinstance(meta, dict) else None
         if page_label:
             context_parts.append(f"[{idx}] (page {page_label}) {content}")
-            refs.append(
-                {
-                    "id": f"chunk-{match['id']}",
-                    "label": f"p.{page_label}",
-                }
-            )
+            if match in ref_matches:
+                refs.append(
+                    {
+                        "id": f"chunk-{match['id']}",
+                        "label": f"p.{page_label}",
+                    }
+                )
         else:
             context_parts.append(f"[{idx}] {content}")
-            refs.append(
-                {
-                    "id": f"chunk-{match['id']}",
-                    "label": str(idx),
-                }
-            )
+            if match in ref_matches:
+                refs.append(
+                    {
+                        "id": f"chunk-{match['id']}",
+                        "label": str(idx),
+                    }
+                )
 
     if memory_lines:
         context_parts.insert(
@@ -819,12 +814,14 @@ async def stream_document_chat_assistant_message(
             len(message),
             len("\n\n".join(context_parts)),
         )
+        logger.info("assistant.ws send question_len=%s", len(message))
         async for event in parser.stream_answer(
             question=message,
             context="\n\n".join(context_parts),
             model=model,
         ):
             event_type = event.get("type")
+            logger.info("assistant.ws event type=%s keys=%s", event_type, list(event.keys()))
             if event_type == "delta":
                 delta = str(event.get("delta") or "")
                 if delta:
@@ -844,6 +841,11 @@ async def stream_document_chat_assistant_message(
 
         answer = "".join(answer_parts).strip()
         if parser_error or not answer:
+            logger.info(
+                "assistant.ws empty answer parser_error=%s answer_len=%s",
+                parser_error,
+                len(answer),
+            )
             raise RuntimeError("Answer generation failed")
         if payload.message_id:
             saved = await repository.update_document_chat_message(
@@ -886,6 +888,7 @@ async def stream_document_chat_assistant_message(
         )
         await websocket.send_text(json.dumps({"type": "done"}))
     except WebSocketDisconnect:
+        logger.info("assistant.ws client disconnected")
         if answer_parts:
             answer = "".join(answer_parts).strip()
             if payload.message_id:
@@ -918,6 +921,12 @@ async def stream_document_chat_assistant_message(
             payload.message_id,
             exc,
         )
+        try:
+            await websocket.send_text(
+                json.dumps({"type": "error", "message": "Answer generation failed"})
+            )
+        except Exception:
+            pass
         if payload.message_id:
             saved = await repository.update_document_chat_message(
                 pool,

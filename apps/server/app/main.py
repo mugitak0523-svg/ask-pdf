@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
+import logging
 
 from app.api import documents, search
 from app.config import get_settings
@@ -11,6 +12,7 @@ from app.services.storage import create_storage_client
 
 
 def create_app() -> FastAPI:
+    logging.basicConfig(level=logging.INFO)
     app = FastAPI(title="AskPDF Backend")
 
     app.add_middleware(
