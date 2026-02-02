@@ -49,6 +49,23 @@ type OpenDocument = {
   title: string;
 };
 
+type ReferenceRequest = {
+  pages: Record<number, number[]>;
+};
+
+const normalizeRefs = (value: unknown): ChatRef[] | undefined => {
+  if (Array.isArray(value)) return value as ChatRef[];
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? (parsed as ChatRef[]) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+};
+
 export default function Home() {
   const containerRef = useRef<HTMLElement | null>(null);
   const tabsRef = useRef<HTMLDivElement | null>(null);
@@ -67,6 +84,7 @@ export default function Home() {
   const chatSocketRef = useRef<WebSocket | null>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
   const isNearBottomRef = useRef(true);
+  const refAbortRef = useRef<AbortController | null>(null);
   const chatMessagesAbortRef = useRef<AbortController | null>(null);
   const chatsAbortRef = useRef<AbortController | null>(null);
   const allChatsAbortRef = useRef<AbortController | null>(null);
@@ -111,6 +129,8 @@ export default function Home() {
   const [viewerError, setViewerError] = useState<string | null>(null);
   const [openDocuments, setOpenDocuments] = useState<OpenDocument[]>([]);
   const [tabsOverflow, setTabsOverflow] = useState(false);
+  const [referenceRequest, setReferenceRequest] = useState<ReferenceRequest | null>(null);
+  const [activeRefId, setActiveRefId] = useState<string | null>(null);
 
   const mainStyle = useMemo(
     () => ({
@@ -268,7 +288,7 @@ export default function Home() {
             : item.status === "stopped"
               ? "stopped"
               : undefined,
-        refs: Array.isArray(item.refs) ? item.refs : undefined,
+        refs: normalizeRefs(item.refs),
         createdAt: String(item.createdAt ?? new Date().toISOString()),
       }));
       setChatMessages(messages);
@@ -525,6 +545,8 @@ export default function Home() {
     setSelectedDocumentUrl(null);
     setViewerError(null);
     setViewerLoading(true);
+    setReferenceRequest(null);
+    setActiveRefId(null);
     setChatMessages([]);
     setChatThreads([]);
     setActiveChatId(null);
@@ -632,6 +654,91 @@ export default function Home() {
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
+  };
+
+  const handleRefClick = async (refId: string) => {
+    if (!selectedDocumentId) return;
+    if (activeRefId === refId) {
+      setReferenceRequest(null);
+      setActiveRefId(null);
+      return;
+    }
+    const chunkId = refId.startsWith("chunk-") ? refId.slice(6) : refId;
+    if (!chunkId) return;
+    try {
+      setActiveRefId(refId);
+      setReferenceRequest(null);
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.access_token;
+      if (!accessToken) {
+        setActiveRefId(null);
+        return;
+      }
+      refAbortRef.current?.abort();
+      const controller = new AbortController();
+      refAbortRef.current = controller;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(
+        `${baseUrl}/documents/${selectedDocumentId}/chunks/${chunkId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+          signal: controller.signal,
+        }
+      );
+      if (!response.ok) {
+        setActiveRefId(null);
+        return;
+      }
+      const payload = await response.json();
+      const rawMetadata = payload?.chunk?.metadata;
+      const metadata =
+        typeof rawMetadata === "string"
+          ? (() => {
+              try {
+                return JSON.parse(rawMetadata);
+              } catch {
+                return null;
+              }
+            })()
+          : rawMetadata;
+      if (!metadata || typeof metadata !== "object") {
+        setActiveRefId(null);
+        return;
+      }
+      const pages = (metadata as Record<string, unknown>).page
+        ?? (metadata as Record<string, unknown>).pages
+        ?? (metadata as Record<string, unknown>).page_number;
+      const wordIndexes =
+        (metadata as Record<string, unknown>).word_indexes
+        ?? (metadata as Record<string, unknown>).wordIndexes;
+      if (!Array.isArray(wordIndexes) || wordIndexes.length === 0) {
+        setActiveRefId(null);
+        return;
+      }
+      const pageList: number[] = Array.isArray(pages)
+        ? pages.filter((value: unknown) => Number.isFinite(Number(value))).map(Number)
+        : Number.isFinite(Number(pages))
+          ? [Number(pages)]
+          : [];
+      if (pageList.length === 0) {
+        setActiveRefId(null);
+        return;
+      }
+      const requestPages: Record<number, number[]> = {};
+      for (const pageNumber of pageList) {
+        requestPages[pageNumber] = wordIndexes
+          .filter((value: unknown) => Number.isFinite(Number(value)))
+          .map(Number);
+      }
+      setReferenceRequest({ pages: requestPages });
+    } catch {
+      setActiveRefId(null);
+      return;
+    } finally {
+      refAbortRef.current = null;
+    }
   };
 
   const activeChatTitle = selectedDocumentId
@@ -809,7 +916,7 @@ export default function Home() {
                         role: "assistant",
                         text,
                         status,
-                        refs: Array.isArray(saved.refs) ? saved.refs : undefined,
+                        refs: normalizeRefs(saved.refs),
                         createdAt: String(saved.createdAt ?? item.createdAt),
                       }
                     : item
@@ -1229,6 +1336,11 @@ export default function Home() {
                 url={selectedDocumentUrl}
                 documentId={selectedDocumentId}
                 accessToken={selectedDocumentToken}
+                referenceRequest={referenceRequest}
+                onClearReferenceRequest={() => {
+                  setReferenceRequest(null);
+                  setActiveRefId(null);
+                }}
                 onAddToChat={(text) => {
                   setChatInput((prev) => {
                     const prefix = prev.trim().length > 0 ? "\n" : "";
@@ -1542,7 +1654,7 @@ export default function Home() {
                             type="button"
                             key={ref.id}
                             className="ref"
-                            onClick={() => setActiveHighlightId(ref.id)}
+                            onClick={() => handleRefClick(ref.id)}
                           >
                             {ref.label}
                           </button>
@@ -1632,7 +1744,9 @@ export default function Home() {
                       handleStopStreaming();
                     }
                   }}
-                  disabled={!selectedDocumentId || !activeChatId || showThreadList}
+                  disabled={
+                    !selectedDocumentId || !activeChatId || showThreadList || chatLoading
+                  }
                   aria-label={chatSending ? "stop" : "send"}
                 >
                   {chatSending ? "■" : "↑"}

@@ -7,6 +7,12 @@ type PdfViewerProps = {
   documentId: string | null;
   accessToken: string | null;
   onAddToChat?: (text: string) => void;
+  onClearReferenceRequest?: () => void;
+  referenceRequest?: {
+    pages: Record<number, number[]>;
+    color?: string;
+    mode?: "highlight" | "underline";
+  } | null;
 };
 
 type RenderState = "idle" | "loading" | "error";
@@ -35,13 +41,21 @@ type Annotation = {
   createdAt: string;
 };
 
-export function PdfViewer({ url, documentId, accessToken, onAddToChat }: PdfViewerProps) {
+export function PdfViewer({
+  url,
+  documentId,
+  accessToken,
+  onAddToChat,
+  onClearReferenceRequest,
+  referenceRequest,
+}: PdfViewerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [state, setState] = useState<RenderState>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [annotationsLoading, setAnnotationsLoading] = useState(false);
   const [annotationsHydrated, setAnnotationsHydrated] = useState(false);
   const annotationsAbortRef = useRef<AbortController | null>(null);
+  const resultAbortRef = useRef<AbortController | null>(null);
   const [pageMeta, setPageMeta] = useState<Record<number, PageMeta>>({});
   const pageMetaRef = useRef<Record<number, PageMeta>>({});
   const [documentResult, setDocumentResult] = useState<Record<string, unknown> | null>(
@@ -67,6 +81,7 @@ export function PdfViewer({ url, documentId, accessToken, onAddToChat }: PdfView
   const currentColorRef = useRef<string>("#ffd84d");
   const currentModeRef = useRef<"highlight" | "underline">("highlight");
   const wordTextRef = useRef<Record<number, { wordIndex: number; text: string }[]>>({});
+  const referenceRequestRef = useRef<PdfViewerProps["referenceRequest"]>(null);
   const selectionStateRef = useRef<{
     pageNumber: number;
     startX: number;
@@ -126,6 +141,10 @@ export function PdfViewer({ url, documentId, accessToken, onAddToChat }: PdfView
             if (popupRef.current) {
               popupRef.current.remove();
               popupRef.current = null;
+            }
+            if (referenceRequestRef.current) {
+              referenceRequestRef.current = null;
+              onClearReferenceRequest?.();
             }
           });
 
@@ -258,6 +277,107 @@ export function PdfViewer({ url, documentId, accessToken, onAddToChat }: PdfView
     renderAllAnnotations();
   }, [annotations, pageMeta, documentId]);
 
+  const clearReferenceHighlights = () => {
+    if (!containerRef.current) return;
+    containerRef.current
+      .querySelectorAll(".pdf-embed__reference")
+      .forEach((node) => node.remove());
+  };
+
+  const renderReferenceHighlights = () => {
+    if (!containerRef.current) return;
+    const request = referenceRequestRef.current;
+    clearReferenceHighlights();
+    if (!request) return;
+    const color = request.color ?? "#6aa9ff";
+    const mode = request.mode ?? "highlight";
+    for (const [pageKey, wordIndexes] of Object.entries(request.pages)) {
+      const pageNumber = Number(pageKey);
+      if (!Number.isFinite(pageNumber)) continue;
+      const rects = wordRectsRef.current[pageNumber] || [];
+      const meta = pageMetaRef.current[pageNumber];
+      const overlay = getOverlayForPage(pageNumber);
+      if (!meta || !overlay) continue;
+      const indexSet = new Set(
+        wordIndexes
+          .filter((value) => Number.isFinite(Number(value)))
+          .map((value) => Number(value))
+      );
+      const filtered = rects.filter((rect) => indexSet.has(rect.wordIndex));
+      if (filtered.length === 0) continue;
+      const sorted = filtered.sort((a, b) => {
+        const lineA = a.lineId ?? a.top;
+        const lineB = b.lineId ?? b.top;
+        if (lineA !== lineB) return lineA - lineB;
+        return a.left - b.left;
+      });
+      let group = {
+        left: sorted[0].left,
+        top: sorted[0].top,
+        width: sorted[0].width,
+        height: sorted[0].height,
+        lineId: sorted[0].lineId ?? sorted[0].top,
+        lastWordIndex: sorted[0].wordIndex,
+      };
+      const flush = () => {
+        const left = group.left * meta.width;
+        const top = group.top * meta.height;
+        const right = (group.left + group.width) * meta.width;
+        const bottom = (group.top + group.height) * meta.height;
+        const highlight = document.createElement("div");
+        highlight.className = "pdf-embed__reference";
+        highlight.style.left = `${left}px`;
+        highlight.style.top = `${top}px`;
+        highlight.style.width = `${right - left}px`;
+        highlight.style.height = `${bottom - top}px`;
+        applyHighlightStyle(highlight, color, mode);
+        overlay.appendChild(highlight);
+      };
+      for (let i = 1; i < sorted.length; i += 1) {
+        const next = sorted[i];
+        const nextLine = next.lineId ?? next.top;
+        const sameLine = nextLine === group.lineId;
+        const isAdjacent = next.wordIndex === group.lastWordIndex + 1;
+        if (sameLine && isAdjacent) {
+          const newLeft = Math.min(group.left, next.left);
+          const newRight = Math.max(group.left + group.width, next.left + next.width);
+          group.left = newLeft;
+          group.width = newRight - newLeft;
+          group.height = Math.max(group.height, next.height);
+          group.lastWordIndex = next.wordIndex;
+        } else {
+          flush();
+          group = {
+            left: next.left,
+            top: next.top,
+            width: next.width,
+            height: next.height,
+            lineId: nextLine,
+            lastWordIndex: next.wordIndex,
+          };
+        }
+      }
+      flush();
+    }
+  };
+
+  useEffect(() => {
+    referenceRequestRef.current = referenceRequest ?? null;
+    renderReferenceHighlights();
+    if (!referenceRequest) return;
+    const pages = Object.keys(referenceRequest.pages)
+      .map((key) => Number(key))
+      .filter((value) => Number.isFinite(value))
+      .sort((a, b) => a - b);
+    if (pages.length === 0 || !containerRef.current) return;
+    const pageNode = containerRef.current.querySelector(
+      `.pdf-embed__page[data-page-number="${pages[0]}"]`
+    ) as HTMLElement | null;
+    if (pageNode) {
+      pageNode.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [referenceRequest, pageMeta, documentId]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!selectionDataRef.current) return;
@@ -298,11 +418,15 @@ export function PdfViewer({ url, documentId, accessToken, onAddToChat }: PdfView
         return;
       }
       try {
+        resultAbortRef.current?.abort();
+        const controller = new AbortController();
+        resultAbortRef.current = controller;
         const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
         const response = await fetch(`${baseUrl}/documents/${documentId}/result`, {
           headers: {
             Authorization: `Bearer ${accessToken}`,
           },
+          signal: controller.signal,
         });
         if (!response.ok) return;
         const result = await response.json();
@@ -415,8 +539,15 @@ export function PdfViewer({ url, documentId, accessToken, onAddToChat }: PdfView
         }
         wordRectsRef.current = nextRects;
         wordTextRef.current = nextWords;
-      } catch {
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
         setDocumentResult(null);
+      } finally {
+        if (resultAbortRef.current) {
+          resultAbortRef.current = null;
+        }
       }
     };
     void loadResult();
@@ -1195,83 +1326,140 @@ export function PdfViewer({ url, documentId, accessToken, onAddToChat }: PdfView
     meta: PageMeta,
     entries: Record<number, Annotation[]>
   ) => {
-    const expanded: { rect: WordRect; entry: Annotation }[] = [];
+    const rectByWord = new Map<number, WordRect>();
     for (const rect of rects) {
-      const list = entries[rect.wordIndex];
-      if (!list || list.length === 0) continue;
-      for (const entry of list) {
-        expanded.push({ rect, entry });
-      }
+      rectByWord.set(rect.wordIndex, rect);
     }
-    if (!expanded.length) return;
-    const sorted = expanded.sort((a, b) => {
-      const lineA = a.rect.lineId ?? a.rect.top;
-      const lineB = b.rect.lineId ?? b.rect.top;
-      if (lineA !== lineB) return lineA - lineB;
-      if (a.entry.mode !== b.entry.mode) {
-        return a.entry.mode === "highlight" ? -1 : 1;
-      }
-      if (a.entry.color !== b.entry.color) {
-        return a.entry.color.localeCompare(b.entry.color);
-      }
-      return a.rect.left - b.rect.left;
-    });
-    let current = sorted[0];
-    let group = {
-      left: current.rect.left,
-      top: current.rect.top,
-      width: current.rect.width,
-      height: current.rect.height,
-      lineId: current.rect.lineId ?? current.rect.top,
-      color: current.entry.color,
-      mode: current.entry.mode,
-      lastWordIndex: current.rect.wordIndex,
-    };
-    const flush = () => {
-      const left = group.left * meta.width;
-      const top = group.top * meta.height;
-      const right = (group.left + group.width) * meta.width;
-      const bottom = (group.top + group.height) * meta.height;
-      const highlight = document.createElement("div");
-      highlight.className = "pdf-embed__annotation";
-      highlight.style.left = `${left}px`;
-      highlight.style.top = `${top}px`;
-      highlight.style.width = `${right - left}px`;
-      highlight.style.height = `${bottom - top}px`;
-      applyHighlightStyle(highlight, group.color, group.mode);
-      overlay.appendChild(highlight);
-    };
-    for (let i = 1; i < sorted.length; i += 1) {
-      const next = sorted[i];
-      const nextLine = next.rect.lineId ?? next.rect.top;
-      const sameLine = nextLine === group.lineId;
-      const sameStyle = next.entry.color === group.color && next.entry.mode === group.mode;
-      const isAdjacent = next.rect.wordIndex === group.lastWordIndex + 1;
-      if (sameLine && sameStyle && isAdjacent) {
-        const newLeft = Math.min(group.left, next.rect.left);
-        const newRight = Math.max(
-          group.left + group.width,
-          next.rect.left + next.rect.width
-        );
-        group.left = newLeft;
-        group.width = newRight - newLeft;
-        group.height = Math.max(group.height, next.rect.height);
-        group.lastWordIndex = next.rect.wordIndex;
+
+    const lineMap = new Map<
+      string,
+      { wordIndexes: number[]; top: number; bottom: number }
+    >();
+    for (const wordKey of Object.keys(entries)) {
+      const wordIndex = Number(wordKey);
+      if (!Number.isFinite(wordIndex)) continue;
+      const rect = rectByWord.get(wordIndex);
+      if (!rect) continue;
+      const lineKey = String(rect.lineId ?? rect.top);
+      const existing = lineMap.get(lineKey);
+      const rectTop = rect.top;
+      const rectBottom = rect.top + rect.height;
+      if (existing) {
+        existing.wordIndexes.push(wordIndex);
+        existing.top = Math.min(existing.top, rectTop);
+        existing.bottom = Math.max(existing.bottom, rectBottom);
       } else {
-        flush();
-        group = {
-          left: next.rect.left,
-          top: next.rect.top,
-          width: next.rect.width,
-          height: next.rect.height,
-          lineId: nextLine,
-          color: next.entry.color,
-          mode: next.entry.mode,
-          lastWordIndex: next.rect.wordIndex,
-        };
+        lineMap.set(lineKey, {
+          wordIndexes: [wordIndex],
+          top: rectTop,
+          bottom: rectBottom,
+        });
       }
     }
-    flush();
+
+    if (lineMap.size === 0) return;
+
+    for (const lineData of lineMap.values()) {
+      lineData.wordIndexes.sort((a, b) => a - b);
+    }
+
+    type Segment = {
+      mode: "highlight" | "underline";
+      color: string;
+      wordIndex: number;
+      left: number;
+      right: number;
+      top: number;
+      height: number;
+      lineKey: string;
+    };
+
+    const segments: Segment[] = [];
+
+    for (const [lineKey, lineData] of lineMap.entries()) {
+      const { wordIndexes, top, bottom } = lineData;
+      for (let i = 0; i < wordIndexes.length; i += 1) {
+        const wordIndex = wordIndexes[i];
+        const rect = rectByWord.get(wordIndex);
+        if (!rect) continue;
+        const left = rect.left;
+        const right = rect.left + rect.width;
+        let leftBound = left;
+        let rightBound = right;
+        const prevIndex = wordIndexes[i - 1];
+        if (prevIndex === wordIndex - 1) {
+          const prevRect = rectByWord.get(prevIndex);
+          if (prevRect) {
+            const prevRight = prevRect.left + prevRect.width;
+            leftBound = (prevRight + left) / 2;
+          }
+        }
+        const nextIndex = wordIndexes[i + 1];
+        if (nextIndex === wordIndex + 1) {
+          const nextRect = rectByWord.get(nextIndex);
+          if (nextRect) {
+            const nextLeft = nextRect.left;
+            rightBound = (right + nextLeft) / 2;
+          }
+        }
+        const list = entries[wordIndex] ?? [];
+        for (const entry of list) {
+          segments.push({
+            mode: entry.mode,
+            color: entry.color,
+            wordIndex,
+            left: leftBound,
+            right: rightBound,
+            top,
+            height: bottom - top,
+            lineKey,
+          });
+        }
+      }
+    }
+
+    const segmentsByKey = new Map<string, Segment[]>();
+    for (const segment of segments) {
+      const key = `${segment.lineKey}|${segment.mode}|${segment.color}`;
+      const list = segmentsByKey.get(key);
+      if (list) {
+        list.push(segment);
+      } else {
+        segmentsByKey.set(key, [segment]);
+      }
+    }
+
+    for (const list of segmentsByKey.values()) {
+      list.sort((a, b) => a.wordIndex - b.wordIndex);
+      let current = list[0];
+      let group = { ...current };
+      const flush = () => {
+        const left = group.left * meta.width;
+        const top = group.top * meta.height;
+        const right = group.right * meta.width;
+        const bottom = (group.top + group.height) * meta.height;
+        const highlight = document.createElement("div");
+        highlight.className = "pdf-embed__annotation";
+        highlight.style.left = `${left}px`;
+        highlight.style.top = `${top}px`;
+        highlight.style.width = `${right - left}px`;
+        highlight.style.height = `${bottom - top}px`;
+        applyHighlightStyle(highlight, group.color, group.mode);
+        overlay.appendChild(highlight);
+      };
+      for (let i = 1; i < list.length; i += 1) {
+        const next = list[i];
+        const isAdjacent = next.wordIndex === group.wordIndex + 1;
+        if (isAdjacent) {
+          group.right = next.right;
+          group.wordIndex = next.wordIndex;
+        } else {
+          flush();
+          group = { ...next };
+        }
+      }
+      flush();
+    }
   };
 
   function renderAllAnnotations() {

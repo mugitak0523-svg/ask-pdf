@@ -20,7 +20,7 @@ class ChatAnswerRequest(BaseModel):
     message: str
     message_id: str | None = None
     mode: Literal["fast", "standard", "think"] | None = None
-    top_k: int = 5
+    top_k: int | None = None
 
 
 def _build_model(settings, mode: str | None) -> str | None:
@@ -31,6 +31,52 @@ def _build_model(settings, mode: str | None) -> str | None:
     if mode == "standard":
         return settings.chat_model_standard
     return None
+
+
+def _resolve_rag_params(settings, payload: ChatAnswerRequest) -> tuple[int, int, float]:
+    top_k = payload.top_k if payload.top_k is not None else settings.rag_top_k
+    top_k = min(max(int(top_k), 1), 20)
+    min_k = min(max(int(settings.rag_min_k), 0), top_k)
+    score_threshold = max(float(settings.rag_score_threshold), 0.0)
+    return top_k, min_k, score_threshold
+
+
+def _filter_matches(
+    matches: list[dict[str, Any]],
+    min_k: int,
+    score_threshold: float,
+) -> tuple[list[dict[str, Any]], float]:
+    max_score = max((row.get("similarity") or 0.0) for row in matches) if matches else 0.0
+    filtered = [row for row in matches if (row.get("similarity") or 0.0) >= score_threshold]
+    if len(filtered) < min_k:
+        filtered = matches[:min_k]
+    return filtered, max_score
+
+
+async def _classify_question(
+    parser,
+    message: str,
+    settings,
+) -> Literal["pdf", "general"]:
+    model = settings.chat_model_fast or settings.chat_model_standard or None
+    prompt = (
+        "You are a classifier. Decide if the user question needs the PDF document to answer.\n"
+        "Return exactly one token: pdf or general."
+    )
+    try:
+        result = await parser.create_answer(
+            question=message,
+            context=prompt,
+            model=model,
+        )
+        label = str(result.get("answer") or "").strip().lower()
+    except Exception:
+        return "pdf"
+    if label.startswith("general"):
+        return "general"
+    if label.startswith("pdf"):
+        return "pdf"
+    return "pdf"
 
 
 @router.post("/documents/index")
@@ -194,6 +240,26 @@ async def get_document_result(
             detail="Document result not found",
         )
     return result
+
+
+@router.get("/documents/{document_id}/chunks/{chunk_id}")
+async def get_document_chunk(
+    request: Request,
+    document_id: str,
+    chunk_id: str,
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    pool = request.app.state.db_pool
+    row = await repository.get_document_chunk(pool, document_id, chunk_id, user.user_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    return {
+        "chunk": {
+            "id": str(row["id"]),
+            "documentId": str(row["document_id"]),
+            "metadata": row.get("metadata"),
+        }
+    }
 
 
 @router.get("/documents/{document_id}/annotations")
@@ -443,13 +509,24 @@ async def create_document_chat_assistant_message(
             detail="Invalid embedding response",
         )
 
-    top_k = min(max(payload.top_k, 1), 8)
+    settings = request.app.state.settings
+    top_k, min_k, score_threshold = _resolve_rag_params(settings, payload)
     matches = await repository.match_documents(
         pool,
         query_embedding=embedding,
         match_count=top_k,
         document_id=document_id,
     )
+    filtered, max_score = _filter_matches(matches, min_k, score_threshold)
+    if max_score < score_threshold:
+        classification = await _classify_question(parser, message, settings)
+        if classification == "general":
+            matches = []
+        else:
+            fallback_threshold = max(score_threshold * 1, 0.0)
+            matches, _ = _filter_matches(matches, min_k, fallback_threshold)
+    else:
+        matches = filtered
 
     recent_messages = await repository.list_recent_document_chat_messages(
         pool,
@@ -497,7 +574,7 @@ async def create_document_chat_assistant_message(
             refs.append(
                 {
                     "id": f"chunk-{match['id']}",
-                    "label": f"ref {idx}",
+                    "label": str(idx),
                 }
             )
 
@@ -653,13 +730,24 @@ async def stream_document_chat_assistant_message(
         await websocket.close(code=1011)
         return
 
-    top_k = min(max(payload.top_k, 1), 8)
+    settings = websocket.scope["app"].state.settings
+    top_k, min_k, score_threshold = _resolve_rag_params(settings, payload)
     matches = await repository.match_documents(
         pool,
         query_embedding=embedding,
         match_count=top_k,
         document_id=document_id,
     )
+    filtered, max_score = _filter_matches(matches, min_k, score_threshold)
+    if max_score < score_threshold:
+        classification = await _classify_question(parser, message, settings)
+        if classification == "general":
+            matches = []
+        else:
+            fallback_threshold = max(score_threshold * 1, 0.0)
+            matches, _ = _filter_matches(matches, min_k, fallback_threshold)
+    else:
+        matches = filtered
 
     recent_messages = await repository.list_recent_document_chat_messages(
         pool,
@@ -707,7 +795,7 @@ async def stream_document_chat_assistant_message(
             refs.append(
                 {
                     "id": f"chunk-{match['id']}",
-                    "label": f"ref {idx}",
+                    "label": str(idx),
                 }
             )
 
@@ -717,7 +805,6 @@ async def stream_document_chat_assistant_message(
             "Conversation (last 2 turns):\n" + "\n".join(memory_lines),
         )
 
-    settings = websocket.scope["app"].state.settings
     model = _build_model(settings, payload.mode)
 
     answer_parts: list[str] = []

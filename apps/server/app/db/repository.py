@@ -407,3 +407,29 @@ async def list_user_chat_threads(
             user_id,
         )
     return [dict(row) for row in rows]
+
+
+async def get_document_chunk(
+    pool: asyncpg.Pool,
+    document_id: str,
+    chunk_id: str,
+    user_id: str,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select
+                document_chunks.id,
+                document_chunks.document_id,
+                document_chunks.metadata
+            from document_chunks
+            join documents on documents.id = document_chunks.document_id
+            where document_chunks.id = $1
+              and document_chunks.document_id = $2
+              and documents.user_id = $3
+            """,
+            chunk_id,
+            document_id,
+            user_id,
+        )
+    return dict(row) if row else None

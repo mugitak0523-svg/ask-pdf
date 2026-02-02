@@ -22,6 +22,9 @@ class Settings:
     chat_model_fast: str | None
     chat_model_standard: str | None
     chat_model_think: str | None
+    rag_top_k: int
+    rag_min_k: int
+    rag_score_threshold: float
 
 
 def _require_env(name: str) -> str:
@@ -48,6 +51,9 @@ def get_settings() -> Settings:
     chat_model_fast = os.getenv("CHAT_MODEL_FAST", "").strip() or None
     chat_model_standard = os.getenv("CHAT_MODEL_STANDARD", "").strip() or None
     chat_model_think = os.getenv("CHAT_MODEL_THINK", "").strip() or None
+    rag_top_k = int(os.getenv("RAG_TOP_K", "5") or "5")
+    rag_min_k = int(os.getenv("RAG_MIN_K", "2") or "2")
+    rag_score_threshold = float(os.getenv("RAG_SCORE_THRESHOLD", "0.2") or "0.2")
 
     return Settings(
         parser_api_base_url=base_url,
@@ -63,4 +69,7 @@ def get_settings() -> Settings:
         chat_model_fast=chat_model_fast,
         chat_model_standard=chat_model_standard,
         chat_model_think=chat_model_think,
+        rag_top_k=rag_top_k,
+        rag_min_k=rag_min_k,
+        rag_score_threshold=rag_score_threshold,
     )
