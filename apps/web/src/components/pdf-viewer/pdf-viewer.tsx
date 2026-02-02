@@ -39,6 +39,9 @@ export function PdfViewer({ url, documentId, accessToken, onAddToChat }: PdfView
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [state, setState] = useState<RenderState>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [annotationsLoading, setAnnotationsLoading] = useState(false);
+  const [annotationsHydrated, setAnnotationsHydrated] = useState(false);
+  const annotationsAbortRef = useRef<AbortController | null>(null);
   const [pageMeta, setPageMeta] = useState<Record<number, PageMeta>>({});
   const pageMetaRef = useRef<Record<number, PageMeta>>({});
   const [documentResult, setDocumentResult] = useState<Record<string, unknown> | null>(
@@ -181,15 +184,23 @@ export function PdfViewer({ url, documentId, accessToken, onAddToChat }: PdfView
       if (!documentId || !accessToken) {
         setAnnotations({});
         annotationsHydratedRef.current = false;
+        setAnnotationsLoading(false);
+        setAnnotationsHydrated(false);
         return;
       }
       annotationsHydratedRef.current = false;
+      setAnnotationsLoading(true);
+      setAnnotationsHydrated(false);
       try {
+        annotationsAbortRef.current?.abort();
+        const controller = new AbortController();
+        annotationsAbortRef.current = controller;
         const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
         const response = await fetch(`${baseUrl}/documents/${documentId}/annotations`, {
           headers: {
             Authorization: `Bearer ${accessToken}`,
           },
+          signal: controller.signal,
         });
         if (!response.ok) {
           setAnnotations({});
@@ -204,9 +215,19 @@ export function PdfViewer({ url, documentId, accessToken, onAddToChat }: PdfView
           setAnnotations({});
         }
         annotationsHydratedRef.current = true;
-      } catch {
+        setAnnotationsHydrated(true);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
         setAnnotations({});
         annotationsHydratedRef.current = true;
+        setAnnotationsHydrated(true);
+      } finally {
+        if (annotationsAbortRef.current) {
+          annotationsAbortRef.current = null;
+        }
+        setAnnotationsLoading(false);
       }
     };
     void loadAnnotations();
@@ -1366,6 +1387,9 @@ export function PdfViewer({ url, documentId, accessToken, onAddToChat }: PdfView
           PDFの表示に失敗しました
           {errorMessage ? <span className="pdf-embed__error">{errorMessage}</span> : null}
         </div>
+      ) : null}
+      {state !== "error" && (annotationsLoading || (!annotationsHydrated && documentId && accessToken)) ? (
+        <div className="pdf-embed__hint">Annotation loading...</div>
       ) : null}
       <div ref={containerRef} className="pdf-embed__pages" />
     </div>

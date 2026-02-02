@@ -459,7 +459,7 @@ async def create_document_chat_assistant_message(
     )
     memory_lines: list[str] = []
     for item in recent_messages:
-        if item.get("status") == "error":
+        if item.get("status") in {"error", "stopped"}:
             continue
         role = "User" if item.get("role") == "user" else "Assistant"
         content = str(item.get("content") or "").strip()
@@ -799,6 +799,28 @@ async def stream_document_chat_assistant_message(
         )
         await websocket.send_text(json.dumps({"type": "done"}))
     except WebSocketDisconnect:
+        if answer_parts:
+            answer = "".join(answer_parts).strip()
+            if payload.message_id:
+                await repository.update_document_chat_message(
+                    pool,
+                    chat_id,
+                    user.user_id,
+                    payload.message_id,
+                    answer,
+                    "stopped",
+                    refs if refs else None,
+                )
+            else:
+                await repository.insert_document_chat_message(
+                    pool,
+                    chat_id,
+                    user.user_id,
+                    "assistant",
+                    answer,
+                    "stopped",
+                    refs if refs else None,
+                )
         return
     except Exception as exc:
         logger.exception(

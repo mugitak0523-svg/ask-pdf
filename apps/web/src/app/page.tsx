@@ -36,7 +36,7 @@ type ChatMessage = {
   text: string;
   refs?: ChatRef[];
   createdAt: string;
-  status?: "loading" | "error";
+  status?: "loading" | "error" | "stopped";
 };
 
 type DocumentItem = {
@@ -64,6 +64,21 @@ export default function Home() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [chatSending, setChatSending] = useState(false);
+  const chatSocketRef = useRef<WebSocket | null>(null);
+  const streamingMessageIdRef = useRef<string | null>(null);
+  const isNearBottomRef = useRef(true);
+  const chatMessagesAbortRef = useRef<AbortController | null>(null);
+  const chatsAbortRef = useRef<AbortController | null>(null);
+  const allChatsAbortRef = useRef<AbortController | null>(null);
+  const documentsAbortRef = useRef<AbortController | null>(null);
+  const signedUrlAbortRef = useRef<AbortController | null>(null);
+
+  const scrollChatToBottom = (behavior: ScrollBehavior = "auto") => {
+    const target = chatMessagesRef.current;
+    if (!target) return;
+    const bottom = Math.max(0, target.scrollHeight - target.clientHeight);
+    target.scrollTo({ top: bottom, behavior });
+  };
   const [chatThreads, setChatThreads] = useState<
     { id: string; title: string | null; updatedAt: string | null; lastMessage?: string | null }[]
   >([]);
@@ -189,6 +204,7 @@ export default function Home() {
       const distance =
         target.scrollHeight - target.scrollTop - target.clientHeight;
       setShowChatJump(distance > threshold);
+      isNearBottomRef.current = distance <= 120;
     };
     onScroll();
     target.addEventListener("scroll", onScroll);
@@ -203,6 +219,16 @@ export default function Home() {
     }
   }, [showThreadList, selectedDocumentId, chatMessages.length]);
 
+  useEffect(() => {
+    if (showThreadList || chatMessages.length === 0) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        scrollChatToBottom("auto");
+        isNearBottomRef.current = true;
+      });
+    });
+  }, [showThreadList, chatMessages.length]);
+
   const loadChatMessages = async (
     documentId: string,
     chatId: string,
@@ -211,6 +237,9 @@ export default function Home() {
     setChatLoading(true);
     setChatError(null);
     try {
+      chatMessagesAbortRef.current?.abort();
+      const controller = new AbortController();
+      chatMessagesAbortRef.current = controller;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const response = await fetch(
         `${baseUrl}/documents/${documentId}/chats/${chatId}/messages`,
@@ -218,6 +247,7 @@ export default function Home() {
           headers: {
             Authorization: `Bearer ${accessToken}`,
           },
+          signal: controller.signal,
         }
       );
       if (!response.ok) {
@@ -232,16 +262,33 @@ export default function Home() {
           item.status === "error" && !item.text
             ? "回答の生成に失敗しました"
             : String(item.text ?? ""),
-        status: item.status === "error" ? "error" : undefined,
+        status:
+          item.status === "error"
+            ? "error"
+            : item.status === "stopped"
+              ? "stopped"
+              : undefined,
         refs: Array.isArray(item.refs) ? item.refs : undefined,
         createdAt: String(item.createdAt ?? new Date().toISOString()),
       }));
       setChatMessages(messages);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          scrollChatToBottom("auto");
+          isNearBottomRef.current = true;
+        });
+      });
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
       const message =
         error instanceof Error ? error.message : "Failed to load chat messages";
       setChatError(message);
     } finally {
+      if (chatMessagesAbortRef.current) {
+        chatMessagesAbortRef.current = null;
+      }
       setChatLoading(false);
     }
   };
@@ -254,11 +301,15 @@ export default function Home() {
     const { autoOpen = true } = options;
     setChatError(null);
     try {
+      chatsAbortRef.current?.abort();
+      const controller = new AbortController();
+      chatsAbortRef.current = controller;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const response = await fetch(`${baseUrl}/documents/${documentId}/chats`, {
         headers: {
           Authorization: `Bearer ${accessToken}`,
         },
+        signal: controller.signal,
       });
       if (!response.ok) {
         throw new Error(`Failed to load chats (${response.status})`);
@@ -295,22 +346,33 @@ export default function Home() {
         }
       }
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
       const message = error instanceof Error ? error.message : "Failed to load chats";
       setChatError(message);
       setChatThreads([]);
       setActiveChatId(null);
       setChatMessages([]);
+    } finally {
+      if (chatsAbortRef.current) {
+        chatsAbortRef.current = null;
+      }
     }
   };
 
   const loadAllChats = async (accessToken: string) => {
     setChatError(null);
     try {
+      allChatsAbortRef.current?.abort();
+      const controller = new AbortController();
+      allChatsAbortRef.current = controller;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const response = await fetch(`${baseUrl}/chats`, {
         headers: {
           Authorization: `Bearer ${accessToken}`,
         },
+        signal: controller.signal,
       });
       if (!response.ok) {
         throw new Error(`Failed to load chats (${response.status})`);
@@ -337,9 +399,16 @@ export default function Home() {
         )
       );
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
       const message = error instanceof Error ? error.message : "Failed to load chats";
       setChatError(message);
       setAllChatThreads([]);
+    } finally {
+      if (allChatsAbortRef.current) {
+        allChatsAbortRef.current = null;
+      }
     }
   };
 
@@ -372,11 +441,15 @@ export default function Home() {
     setDocsLoading(true);
     setDocsError(null);
     try {
+      documentsAbortRef.current?.abort();
+      const controller = new AbortController();
+      documentsAbortRef.current = controller;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const response = await fetch(`${baseUrl}/documents`, {
         headers: {
           Authorization: `Bearer ${accessToken}`,
         },
+        signal: controller.signal,
       });
       if (!response.ok) {
         throw new Error(`Failed to load documents (${response.status})`);
@@ -390,9 +463,15 @@ export default function Home() {
         }))
       );
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
       const message = error instanceof Error ? error.message : "Failed to load documents";
       setDocsError(message);
     } finally {
+      if (documentsAbortRef.current) {
+        documentsAbortRef.current = null;
+      }
       setDocsLoading(false);
     }
   };
@@ -460,10 +539,14 @@ export default function Home() {
       setSelectedDocumentToken(accessToken);
       void loadChats(doc.id, accessToken);
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      signedUrlAbortRef.current?.abort();
+      const controller = new AbortController();
+      signedUrlAbortRef.current = controller;
       const response = await fetch(`${baseUrl}/documents/${doc.id}/signed-url`, {
         headers: {
           Authorization: `Bearer ${accessToken}`,
         },
+        signal: controller.signal,
       });
       if (!response.ok) {
         throw new Error(`Failed to load PDF (${response.status})`);
@@ -475,9 +558,15 @@ export default function Home() {
       }
       setSelectedDocumentUrl(url);
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
       const message = error instanceof Error ? error.message : "Failed to load PDF";
       setViewerError(message);
     } finally {
+      if (signedUrlAbortRef.current) {
+        signedUrlAbortRef.current = null;
+      }
       setViewerLoading(false);
     }
   };
@@ -661,6 +750,7 @@ export default function Home() {
     );
     setChatSending(true);
     setChatError(null);
+    streamingMessageIdRef.current = pendingId;
     try {
       const session = await supabase.auth.getSession();
       const accessToken = session.data.session?.access_token;
@@ -673,6 +763,7 @@ export default function Home() {
       )}`;
       await new Promise<void>((resolve, reject) => {
         const socket = new WebSocket(wsUrl);
+        chatSocketRef.current = socket;
         const payload = JSON.stringify({
           message: question,
           message_id: options.existingId ?? null,
@@ -747,6 +838,8 @@ export default function Home() {
           reject(new Error("WebSocket error"));
         });
         socket.addEventListener("close", (event) => {
+          chatSocketRef.current = null;
+          streamingMessageIdRef.current = null;
           if (event.code !== 1000) {
             reject(new Error("WebSocket closed"));
           } else {
@@ -772,6 +865,27 @@ export default function Home() {
     } finally {
       setChatSending(false);
     }
+  };
+
+  const handleStopStreaming = () => {
+    if (chatSocketRef.current) {
+      chatSocketRef.current.close(1000, "stopped");
+      chatSocketRef.current = null;
+    }
+    const targetId = streamingMessageIdRef.current;
+    if (!targetId) return;
+    setChatMessages((prev) =>
+      prev.map((item) =>
+        item.id === targetId
+          ? {
+              ...item,
+              status: "stopped",
+            }
+          : item
+      )
+    );
+    setChatSending(false);
+    streamingMessageIdRef.current = null;
   };
 
   const renderLoadingText = (text: string) => (
@@ -1323,6 +1437,7 @@ export default function Home() {
                         type="button"
                         className="chat__thread-item"
                         onClick={async () => {
+                          chatsAbortRef.current?.abort();
                           setActiveChatId(thread.id);
                           setShowThreadList(false);
                           const session = await supabase.auth.getSession();
@@ -1374,9 +1489,12 @@ export default function Home() {
                       ) : (
                         <p>{renderLoadingText("回答中...")}</p>
                       )
-                    ) : msg.status === "error" ? (
+                    ) : msg.status === "error" || msg.status === "stopped" ? (
                       <div className="bubble__row">
                         <p className="bubble__content">{msg.text}</p>
+                        {msg.status === "stopped" ? (
+                          <p className="bubble__stopped">（生成をストップしました）</p>
+                        ) : null}
                         {isLatest && previousUserMessage?.text ? (
                           <button
                             type="button"
@@ -1410,6 +1528,9 @@ export default function Home() {
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>
                           {msg.text}
                         </ReactMarkdown>
+                        {msg.status === "stopped" ? (
+                          <p className="bubble__stopped">（生成をストップしました）</p>
+                        ) : null}
                       </div>
                     ) : (
                       <p className="bubble__content">{msg.text}</p>
@@ -1465,7 +1586,9 @@ export default function Home() {
                       event.shiftKey || event.metaKey || event.ctrlKey || event.altKey;
                     if (event.key === "Enter" && !hasModifier && !isComposing) {
                       event.preventDefault();
-                      void sendMessage();
+                      if (!chatSending) {
+                        void sendMessage();
+                      }
                     }
                   }}
                   ref={chatInputRef}
@@ -1503,11 +1626,16 @@ export default function Home() {
                 <button
                   type="submit"
                   className="send"
-                  disabled={
-                    !selectedDocumentId || !activeChatId || showThreadList || chatSending
-                  }
+                  onClick={(event) => {
+                    if (chatSending) {
+                      event.preventDefault();
+                      handleStopStreaming();
+                    }
+                  }}
+                  disabled={!selectedDocumentId || !activeChatId || showThreadList}
+                  aria-label={chatSending ? "stop" : "send"}
                 >
-                  ↑
+                  {chatSending ? "■" : "↑"}
                 </button>
               </div>
             </div>
