@@ -50,8 +50,20 @@ export function PdfViewer({
   referenceRequest,
 }: PdfViewerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const viewerActiveRef = useRef(false);
+  const lastViewerActiveAtRef = useRef(0);
   const [state, setState] = useState<RenderState>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [totalPages, setTotalPages] = useState(0);
+  const [pageInput, setPageInput] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchCount, setSearchCount] = useState(0);
+  const [searchActiveIndex, setSearchActiveIndex] = useState(0);
+  const [searchActiveTotal, setSearchActiveTotal] = useState(0);
+  const lastSearchQueryRef = useRef("");
   const [annotationsLoading, setAnnotationsLoading] = useState(false);
   const [annotationsHydrated, setAnnotationsHydrated] = useState(false);
   const annotationsAbortRef = useRef<AbortController | null>(null);
@@ -88,6 +100,16 @@ export function PdfViewer({
     startY: number;
     startWordIndex: number | null;
   } | null>(null);
+  const searchResultsRef = useRef<
+    { pageNumber: number; wordIndexes: number[] }[]
+  >([]);
+  const searchMatchesRef = useRef<
+    { pageNumber: number; wordIndexes: number[] }[]
+  >([]);
+
+  const minZoom = 0.6;
+  const maxZoom = 2.4;
+  const zoomStep = 0.15;
 
   useEffect(() => {
     let cancelled = false;
@@ -103,6 +125,7 @@ export function PdfViewer({
         const loadingTask = pdfjs.getDocument({ url });
         const pdf = await loadingTask.promise;
         if (cancelled) return;
+        setTotalPages(pdf.numPages);
         const containerWidth = container.clientWidth || 720;
 
         const nextMeta: Record<number, PageMeta> = {};
@@ -111,7 +134,8 @@ export function PdfViewer({
           if (cancelled) return;
 
           const viewport = page.getViewport({ scale: 1 });
-          const pageWidth = Math.min(containerWidth, 900);
+          const baseWidth = Math.min(containerWidth, 900);
+          const pageWidth = Math.max(240, Math.floor(baseWidth * zoom));
           const scale = pageWidth / viewport.width;
           const scaled = page.getViewport({ scale });
 
@@ -174,6 +198,9 @@ export function PdfViewer({
         if (!cancelled) {
           setPageMeta(nextMeta);
           setState("idle");
+          viewerActiveRef.current = true;
+          lastViewerActiveAtRef.current = Date.now();
+          containerRef.current?.focus();
         }
       } catch (error) {
         if (!cancelled) {
@@ -192,7 +219,7 @@ export function PdfViewer({
         containerRef.current.innerHTML = "";
       }
     };
-  }, [url]);
+  }, [url, zoom]);
 
   useEffect(() => {
     pageMetaRef.current = pageMeta;
@@ -253,6 +280,48 @@ export function PdfViewer({
   }, [documentId, accessToken]);
 
   useEffect(() => {
+    setSearchQuery("");
+    setSearchCount(0);
+    setPageInput("");
+    setZoom(1);
+  }, [url]);
+
+  useEffect(() => {
+    if (totalPages > 0 && pageInput === "") {
+      setPageInput("1");
+    }
+  }, [totalPages, pageInput]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const pages = Array.from(
+      container.querySelectorAll<HTMLElement>(".pdf-embed__page")
+    );
+    if (pages.length === 0) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
+        if (visible.length === 0) return;
+        const pageNumber = Number(
+          (visible[0].target as HTMLElement).dataset.pageNumber
+        );
+        if (!Number.isFinite(pageNumber)) return;
+        setCurrentPage(pageNumber);
+        setPageInput(String(pageNumber));
+      },
+      {
+        root: (container.closest(".pdf-embed") as HTMLElement | null) ?? container,
+        threshold: [0.55, 0.7, 0.85],
+      }
+    );
+    pages.forEach((page) => observer.observe(page));
+    return () => observer.disconnect();
+  }, [pageMeta, totalPages]);
+
+  useEffect(() => {
     const saveAnnotations = async () => {
       if (!documentId || !accessToken) return;
       if (!annotationsHydratedRef.current) return;
@@ -272,6 +341,13 @@ export function PdfViewer({
     };
     void saveAnnotations();
   }, [documentId, accessToken, annotations]);
+
+  const clearSearchHighlights = () => {
+    if (!containerRef.current) return;
+    containerRef.current
+      .querySelectorAll(".pdf-embed__search")
+      .forEach((node) => node.remove());
+  };
 
   useEffect(() => {
     renderAllAnnotations();
@@ -379,13 +455,101 @@ export function PdfViewer({
   }, [referenceRequest, pageMeta, documentId]);
 
   useEffect(() => {
+    const normalized = searchQuery.trim().toLowerCase();
+    const shouldScroll = normalized !== lastSearchQueryRef.current;
+    lastSearchQueryRef.current = normalized;
+    runSearch(normalized, shouldScroll);
+  }, [searchQuery, pageMeta]);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (!containerRef.current) return;
+      const target = event.target as Node | null;
+      const isActive = !!(target && containerRef.current.contains(target));
+      viewerActiveRef.current = isActive;
+      if (isActive) {
+        lastViewerActiveAtRef.current = Date.now();
+      }
+    };
+    const onFocusIn = (event: FocusEvent) => {
+      if (!containerRef.current) return;
+      const target = event.target as Node | null;
+      const isActive = !!(target && containerRef.current.contains(target));
+      viewerActiveRef.current = isActive;
+      if (isActive) {
+        lastViewerActiveAtRef.current = Date.now();
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("focusin", onFocusIn);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("focusin", onFocusIn);
+    };
+  }, []);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!selectionDataRef.current) return;
-      if (!popupRef.current) return;
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
         return;
       }
+      const activeElement = document.activeElement as HTMLElement | null;
+      const hasFocus =
+        !!(activeElement && containerRef.current?.contains(activeElement)) ||
+        viewerActiveRef.current;
+      const recentlyActive = Date.now() - lastViewerActiveAtRef.current < 2000;
+      if (!hasFocus && !recentlyActive) {
+        return;
+      }
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        event.stopPropagation();
+        handlePageStep("next");
+        return;
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        event.stopPropagation();
+        handlePageStep("prev");
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        event.stopPropagation();
+        void handleDownload();
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key === "ArrowUp") {
+        event.preventDefault();
+        event.stopPropagation();
+        handleZoomChange(zoomStep);
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key === "ArrowDown") {
+        event.preventDefault();
+        event.stopPropagation();
+        handleZoomChange(-zoomStep);
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        let selected = selectionDataRef.current?.text?.trim() ?? "";
+        if (typeof window !== "undefined") {
+          const windowSelected = window.getSelection()?.toString().trim() ?? "";
+          if (windowSelected) {
+            selected = windowSelected;
+          }
+        }
+        if (selected) {
+          setSearchQuery(selected);
+        }
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+        return;
+      }
+      if (!selectionDataRef.current) return;
+      if (!popupRef.current) return;
       if (!event.metaKey) return;
       const key = event.key.toLowerCase();
       if (key === "h") {
@@ -405,9 +569,9 @@ export function PdfViewer({
         void runPopupAction("delete-annotation");
       }
     };
-    window.addEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onKeyDown, true);
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keydown", onKeyDown, true);
     };
   }, []);
 
@@ -553,6 +717,277 @@ export function PdfViewer({
     void loadResult();
   }, [documentId, accessToken]);
 
+  const runSearch = (normalizedQuery: string, shouldScroll: boolean) => {
+    clearSearchHighlights();
+    if (!normalizedQuery) {
+      searchResultsRef.current = [];
+      searchMatchesRef.current = [];
+      setSearchCount(0);
+      setSearchActiveIndex(0);
+      setSearchActiveTotal(0);
+      return;
+    }
+    const results: { pageNumber: number; wordIndexes: number[] }[] = [];
+    const matches: { pageNumber: number; wordIndexes: number[] }[] = [];
+    let totalHits = 0;
+    for (const [pageKey, words] of Object.entries(wordTextRef.current)) {
+      const pageNumber = Number(pageKey);
+      if (!Number.isFinite(pageNumber)) continue;
+      if (!words.length) continue;
+      const spans: { wordIndex: number; start: number; end: number }[] = [];
+      let pageText = "";
+      for (const word of words) {
+        const text = String(word.text ?? "");
+        const start = pageText.length;
+        pageText += text;
+        const end = pageText.length;
+        spans.push({ wordIndex: word.wordIndex, start, end });
+      }
+      const normalizedText = pageText.toLowerCase();
+      const pageWordIndexes = new Set<number>();
+      let fromIndex = 0;
+      while (fromIndex <= normalizedText.length) {
+        const index = normalizedText.indexOf(normalizedQuery, fromIndex);
+        if (index === -1) break;
+        const matchEnd = index + normalizedQuery.length;
+        const matchedWords: number[] = [];
+        for (const span of spans) {
+          if (span.end > index && span.start < matchEnd) {
+            matchedWords.push(span.wordIndex);
+            pageWordIndexes.add(span.wordIndex);
+          }
+        }
+        if (matchedWords.length > 0) {
+          matches.push({
+            pageNumber,
+            wordIndexes: Array.from(new Set(matchedWords)).sort((a, b) => a - b),
+          });
+          totalHits += 1;
+        }
+        fromIndex = index + 1;
+      }
+      if (pageWordIndexes.size > 0) {
+        results.push({
+          pageNumber,
+          wordIndexes: Array.from(pageWordIndexes).sort((a, b) => a - b),
+        });
+      }
+    }
+    searchResultsRef.current = results;
+    searchMatchesRef.current = matches;
+    setSearchCount(totalHits);
+    setSearchActiveTotal(matches.length);
+    if (matches.length === 0) {
+      setSearchActiveIndex(0);
+      renderSearchHighlights(matches, null);
+      return;
+    }
+    if (shouldScroll) {
+      setSearchActiveIndex(1);
+      focusSearchMatch(0, true);
+    } else {
+      renderSearchHighlights(
+        matches,
+        searchActiveIndex > 0 ? searchActiveIndex - 1 : null
+      );
+    }
+  };
+
+  const renderSearchHighlights = (
+    matches: { pageNumber: number; wordIndexes: number[] }[],
+    activeMatchIndex: number | null
+  ) => {
+    if (!containerRef.current) return;
+    clearSearchHighlights();
+    const activeIndex =
+      Number.isFinite(activeMatchIndex as number) && activeMatchIndex !== null
+        ? activeMatchIndex
+        : null;
+    matches.forEach((match, index) => {
+      const rects = wordRectsRef.current[match.pageNumber] || [];
+      const meta = pageMetaRef.current[match.pageNumber];
+      const overlay = getOverlayForPage(match.pageNumber);
+      if (!rects.length || !meta || !overlay) return;
+      const indexSet = new Set(match.wordIndexes);
+      const filtered = rects.filter((rect) => indexSet.has(rect.wordIndex));
+      if (filtered.length === 0) return;
+      const sorted = filtered.sort((a, b) => {
+        const lineA = a.lineId ?? a.top;
+        const lineB = b.lineId ?? b.top;
+        if (lineA !== lineB) return lineA - lineB;
+        return a.left - b.left;
+      });
+      let group = {
+        left: sorted[0].left,
+        top: sorted[0].top,
+        width: sorted[0].width,
+        height: sorted[0].height,
+        lineId: sorted[0].lineId ?? sorted[0].top,
+        lastWordIndex: sorted[0].wordIndex,
+      };
+      const isActiveMatch = activeIndex === index;
+      const flush = () => {
+        const left = group.left * meta.width;
+        const top = group.top * meta.height;
+        const right = (group.left + group.width) * meta.width;
+        const bottom = (group.top + group.height) * meta.height;
+        const highlight = document.createElement("div");
+        highlight.className = isActiveMatch
+          ? "pdf-embed__search is-active"
+          : "pdf-embed__search";
+        highlight.style.left = `${left}px`;
+        highlight.style.top = `${top}px`;
+        highlight.style.width = `${right - left}px`;
+        highlight.style.height = `${bottom - top}px`;
+        applyHighlightStyle(highlight, "#ffe29b", "highlight");
+        overlay.appendChild(highlight);
+      };
+      for (let i = 1; i < sorted.length; i += 1) {
+        const next = sorted[i];
+        const nextLine = next.lineId ?? next.top;
+        const sameLine = nextLine === group.lineId;
+        const isAdjacent = next.wordIndex === group.lastWordIndex + 1;
+        if (sameLine && isAdjacent) {
+          const newLeft = Math.min(group.left, next.left);
+          const newRight = Math.max(group.left + group.width, next.left + next.width);
+          group.left = newLeft;
+          group.width = newRight - newLeft;
+          group.height = Math.max(group.height, next.height);
+          group.lastWordIndex = next.wordIndex;
+        } else {
+          flush();
+          group = {
+            left: next.left,
+            top: next.top,
+            width: next.width,
+            height: next.height,
+            lineId: nextLine,
+            lastWordIndex: next.wordIndex,
+          };
+        }
+      }
+      flush();
+    });
+  };
+
+  const focusSearchMatch = (index: number, shouldScroll: boolean) => {
+    const matches = searchMatchesRef.current;
+    if (matches.length === 0) return;
+    const clamped = Math.min(Math.max(index, 0), matches.length - 1);
+    const target = matches[clamped];
+    setSearchActiveIndex(clamped + 1);
+    renderSearchHighlights(searchMatchesRef.current, clamped);
+    if (!shouldScroll || !containerRef.current) return;
+    const pageNode = containerRef.current.querySelector(
+      `.pdf-embed__page[data-page-number="${target.pageNumber}"]`
+    ) as HTMLElement | null;
+    if (pageNode) {
+      pageNode.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  };
+
+  const handleSearchNav = (direction: "prev" | "next") => {
+    const matches = searchMatchesRef.current;
+    if (matches.length === 0) return;
+    const current = searchActiveIndex > 0 ? searchActiveIndex - 1 : 0;
+    const next =
+      direction === "next"
+        ? (current + 1) % matches.length
+        : (current - 1 + matches.length) % matches.length;
+    focusSearchMatch(next, true);
+  };
+
+  const handleZoomChange = (delta: number) => {
+    setZoom((prev) => {
+      const next = Math.min(maxZoom, Math.max(minZoom, prev + delta));
+      return Number(next.toFixed(2));
+    });
+  };
+
+  const handleDownload = async () => {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("download failed");
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = "document.pdf";
+      link.rel = "noopener";
+      link.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch {
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "document.pdf";
+      link.rel = "noopener";
+      link.click();
+    }
+  };
+
+  const jumpToPage = (value?: number) => {
+    if (!containerRef.current) return;
+    const pageNodes = Array.from(
+      containerRef.current.querySelectorAll<HTMLElement>(".pdf-embed__page")
+    );
+    const domTotal =
+      pageNodes.length > 0
+        ? Math.max(
+            ...pageNodes
+              .map((node) => Number(node.dataset.pageNumber))
+              .filter((value) => Number.isFinite(value))
+          )
+        : 0;
+    const pageTotal = totalPages > 0 ? totalPages : domTotal;
+    if (pageTotal === 0) return;
+    const numeric =
+      typeof value === "number" ? value : Number.parseInt(pageInput, 10);
+    if (!Number.isFinite(numeric)) return;
+    const clamped = Math.min(Math.max(1, Math.floor(numeric)), pageTotal);
+    setPageInput(String(clamped));
+    const pageNode = containerRef.current.querySelector(
+      `.pdf-embed__page[data-page-number="${clamped}"]`
+    ) as HTMLElement | null;
+    if (pageNode) {
+      pageNode.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  const handlePageStep = (direction: "prev" | "next") => {
+    const getVisiblePageNumber = () => {
+      if (!containerRef.current) return null;
+      const scrollRoot =
+        (containerRef.current.closest(".pdf-embed") as HTMLElement | null) ??
+        containerRef.current;
+      const rootRect = scrollRoot.getBoundingClientRect();
+      const pages = Array.from(
+        containerRef.current.querySelectorAll<HTMLElement>(".pdf-embed__page")
+      );
+      if (pages.length === 0) return null;
+      let bestPage: number | null = null;
+      let bestDelta = Infinity;
+      for (const page of pages) {
+        const pageNumber = Number(page.dataset.pageNumber);
+        if (!Number.isFinite(pageNumber)) continue;
+        const rect = page.getBoundingClientRect();
+        const delta = Math.abs(rect.top - rootRect.top);
+        if (delta < bestDelta) {
+          bestDelta = delta;
+          bestPage = pageNumber;
+        }
+      }
+      return bestPage;
+    };
+    const visiblePage = getVisiblePageNumber();
+    const parsedInput = Number.parseInt(pageInput, 10);
+    const base =
+      visiblePage ??
+      (Number.isFinite(currentPage) ? currentPage : null) ??
+      (Number.isFinite(parsedInput) ? parsedInput : 1);
+    const next = direction === "next" ? base + 1 : base - 1;
+    jumpToPage(next);
+  };
+
   const handlePointerMove = (event: PointerEvent) => {
     const target = event.currentTarget as HTMLDivElement;
     const pageNumber = Number(target.dataset.pageNumber ?? target.parentElement?.dataset.pageNumber);
@@ -614,6 +1049,9 @@ export function PdfViewer({
     const target = event.currentTarget as HTMLDivElement;
     const pageNumber = Number(target.parentElement?.dataset.pageNumber);
     if (!pageNumber) return;
+    viewerActiveRef.current = true;
+    lastViewerActiveAtRef.current = Date.now();
+    containerRef.current?.focus();
     const rect = target.getBoundingClientRect();
     const startX = event.clientX - rect.left;
     const startY = event.clientY - rect.top;
@@ -1579,7 +2017,236 @@ export function PdfViewer({
       {state !== "error" && (annotationsLoading || (!annotationsHydrated && documentId && accessToken)) ? (
         <div className="pdf-embed__hint">Annotation loading...</div>
       ) : null}
-      <div ref={containerRef} className="pdf-embed__pages" />
+      <div
+        ref={containerRef}
+        className="pdf-embed__pages"
+        tabIndex={0}
+        onPointerDown={() => {
+          viewerActiveRef.current = true;
+          containerRef.current?.focus();
+        }}
+        onFocus={() => {
+          viewerActiveRef.current = true;
+        }}
+        onBlur={() => {
+          viewerActiveRef.current = false;
+        }}
+      />
+      <div className="pdf-embed__toolbar" role="toolbar" aria-label="PDF controls">
+        <div className="pdf-embed__toolbar-group">
+          <svg
+            className="pdf-embed__toolbar-icon"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input
+            className="pdf-embed__toolbar-input"
+            type="search"
+            placeholder="検索 ⌘ F"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                handleSearchNav(event.shiftKey ? "prev" : "next");
+              }
+            }}
+            aria-label="search in pdf"
+            ref={searchInputRef}
+          />
+          {searchActiveTotal > 0 ? (
+            <div className="pdf-embed__toolbar-search-nav" aria-label="search navigation">
+              <button
+                type="button"
+                className="pdf-embed__toolbar-btn"
+                onClick={() => handleSearchNav("prev")}
+                aria-label="previous match"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <polyline points="8 14 12 10 16 14" />
+                </svg>
+              </button>
+              <span className="pdf-embed__toolbar-search-count">
+                {searchActiveIndex}/{searchActiveTotal}
+              </span>
+              <button
+                type="button"
+                className="pdf-embed__toolbar-btn"
+                onClick={() => handleSearchNav("next")}
+                aria-label="next match"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <polyline points="8 10 12 14 16 10" />
+                </svg>
+              </button>
+            </div>
+          ) : null}
+        </div>
+        <span className="pdf-embed__toolbar-divider" />
+        <div className="pdf-embed__toolbar-group">
+          <button
+            type="button"
+            className="pdf-embed__toolbar-btn"
+            onClick={() => handleZoomChange(-zoomStep)}
+            aria-label="zoom out"
+            data-tooltip="縮小 ⌘⇧↓"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+          <span className="pdf-embed__toolbar-zoom">{Math.round(zoom * 100)}%</span>
+          <button
+            type="button"
+            className="pdf-embed__toolbar-btn"
+            onClick={() => handleZoomChange(zoomStep)}
+            aria-label="zoom in"
+            data-tooltip="拡大 ⌘⇧↑"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        </div>
+        <span className="pdf-embed__toolbar-divider" />
+        <div className="pdf-embed__toolbar-group">
+          <button
+            type="button"
+            className="pdf-embed__toolbar-btn"
+            onClick={() => handlePageStep("prev")}
+            aria-label="previous page"
+            data-tooltip="前へ ←"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="15 6 9 12 15 18" />
+            </svg>
+          </button>
+          <input
+            className="pdf-embed__toolbar-page"
+            type="number"
+            min={1}
+            max={totalPages || 1}
+            value={pageInput}
+            onChange={(event) => setPageInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                jumpToPage();
+              }
+            }}
+            onBlur={() => jumpToPage()}
+            aria-label="page number"
+          />
+          <span className="pdf-embed__toolbar-total">
+            / {totalPages > 0 ? totalPages : "--"}
+          </span>
+          <button
+            type="button"
+            className="pdf-embed__toolbar-btn"
+            onClick={() => handlePageStep("next")}
+            aria-label="next page"
+            data-tooltip="次へ →"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="9 6 15 12 9 18" />
+            </svg>
+          </button>
+        </div>
+        <span className="pdf-embed__toolbar-divider" />
+        <button
+          type="button"
+          className="pdf-embed__toolbar-btn"
+          onClick={handleDownload}
+          aria-label="download pdf"
+          data-tooltip="ダウンロード ⌘S"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+        </button>
+      </div>
     </div>
   );
 }

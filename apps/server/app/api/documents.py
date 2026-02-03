@@ -673,10 +673,8 @@ async def stream_document_chat_assistant_message(
     document_id: str,
     chat_id: str,
 ) -> None:
-    logger.info("assistant.ws connect doc=%s chat=%s", document_id, chat_id)
     token = websocket.query_params.get("token")
     if not token:
-        logger.info("assistant.ws missing token")
         await websocket.close(code=1008)
         return
     await websocket.accept()
@@ -703,15 +701,12 @@ async def stream_document_chat_assistant_message(
 
     try:
         raw = await websocket.receive_text()
-        logger.info("assistant.ws received payload bytes=%s", len(raw))
     except WebSocketDisconnect:
-        logger.info("assistant.ws disconnect before payload")
         return
     try:
         decoded = json.loads(raw)
         payload = ChatAnswerRequest(**decoded)
     except Exception as exc:
-        logger.info("assistant.ws invalid payload error=%s raw=%s", exc, raw)
         await websocket.close(code=1008)
         return
 
@@ -724,11 +719,6 @@ async def stream_document_chat_assistant_message(
     embed_payload = await parser.embed_text(message)
     embedding = _extract_embedding(embed_payload)
     if not isinstance(embedding, list):
-        logger.error(
-            "assistant.ws embed invalid response type=%s keys=%s",
-            type(embed_payload).__name__,
-            list(embed_payload.keys()) if isinstance(embed_payload, dict) else None,
-        )
         await websocket.close(code=1011)
         return
 
@@ -814,14 +804,12 @@ async def stream_document_chat_assistant_message(
             len(message),
             len("\n\n".join(context_parts)),
         )
-        logger.info("assistant.ws send question_len=%s", len(message))
         async for event in parser.stream_answer(
             question=message,
             context="\n\n".join(context_parts),
             model=model,
         ):
             event_type = event.get("type")
-            logger.info("assistant.ws event type=%s keys=%s", event_type, list(event.keys()))
             if event_type == "delta":
                 delta = str(event.get("delta") or "")
                 if delta:
@@ -841,11 +829,6 @@ async def stream_document_chat_assistant_message(
 
         answer = "".join(answer_parts).strip()
         if parser_error or not answer:
-            logger.info(
-                "assistant.ws empty answer parser_error=%s answer_len=%s",
-                parser_error,
-                len(answer),
-            )
             raise RuntimeError("Answer generation failed")
         if payload.message_id:
             saved = await repository.update_document_chat_message(
@@ -888,7 +871,6 @@ async def stream_document_chat_assistant_message(
         )
         await websocket.send_text(json.dumps({"type": "done"}))
     except WebSocketDisconnect:
-        logger.info("assistant.ws client disconnected")
         if answer_parts:
             answer = "".join(answer_parts).strip()
             if payload.message_id:
