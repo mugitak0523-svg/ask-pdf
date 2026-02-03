@@ -1392,12 +1392,27 @@ export default function Home() {
                 className="settings__select"
                 value={locale}
                 onChange={(event) => {
-                  const value = event.target.value === "en" ? "en" : "ja";
-                  router.replace(pathname, { locale: value });
+                  const value = event.target.value;
+                  if (
+                    value === "ja" ||
+                    value === "en" ||
+                    value === "es" ||
+                    value === "fr" ||
+                    value === "de" ||
+                    value === "ko" ||
+                    value === "zh"
+                  ) {
+                    router.replace(pathname, { locale: value });
+                  }
                 }}
               >
                 <option value="ja">{t("languageJa")}</option>
                 <option value="en">{t("languageEn")}</option>
+                <option value="es">{t("languageEs")}</option>
+                <option value="fr">{t("languageFr")}</option>
+                <option value="de">{t("languageDe")}</option>
+                <option value="ko">{t("languageKo")}</option>
+                <option value="zh">{t("languageZh")}</option>
               </select>
             </div>
             <div className="settings__item">

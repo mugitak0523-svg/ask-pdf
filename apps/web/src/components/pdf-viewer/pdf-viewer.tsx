@@ -42,6 +42,18 @@ type Annotation = {
   createdAt: string;
 };
 
+const PDF_STATE_KEY = "askpdf.pdfState.v1";
+
+type PdfPersistState = {
+  zoom?: number;
+  scrollTop?: number;
+  page?: number;
+  updatedAt?: number;
+};
+
+const clamp = (value: number, min: number, max: number) =>
+  Math.min(Math.max(value, min), max);
+
 export function PdfViewer({
   url,
   documentId,
@@ -108,10 +120,43 @@ export function PdfViewer({
   const searchMatchesRef = useRef<
     { pageNumber: number; wordIndexes: number[] }[]
   >([]);
+  const pendingRestoreRef = useRef<PdfPersistState | null>(null);
+  const canPersistRef = useRef(false);
+  const isRestoringRef = useRef(false);
+  const scrollTopRef = useRef(0);
+  const saveRafRef = useRef<number | null>(null);
+  const currentPageRef = useRef(1);
+  const zoomRef = useRef(1);
 
   const minZoom = 0.6;
   const maxZoom = 2.4;
   const zoomStep = 0.15;
+
+  const readPdfState = () => {
+    if (typeof window === "undefined") return {};
+    try {
+      const raw = window.localStorage.getItem(PDF_STATE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return {};
+      return parsed as Record<string, PdfPersistState>;
+    } catch {
+      return {};
+    }
+  };
+
+  const writePdfState = (next: Partial<PdfPersistState>) => {
+    if (!documentId) return;
+    if (typeof window === "undefined") return;
+    const store = readPdfState();
+    const current = store[documentId] ?? {};
+    store[documentId] = {
+      ...current,
+      ...next,
+      updatedAt: Date.now(),
+    };
+    window.localStorage.setItem(PDF_STATE_KEY, JSON.stringify(store));
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -228,6 +273,14 @@ export function PdfViewer({
   }, [pageMeta]);
 
   useEffect(() => {
+    currentPageRef.current = currentPage;
+  }, [currentPage]);
+
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
+
+  useEffect(() => {
     const loadAnnotations = async () => {
       if (!documentId || !accessToken) {
         setAnnotations({});
@@ -282,11 +335,25 @@ export function PdfViewer({
   }, [documentId, accessToken]);
 
   useEffect(() => {
+    canPersistRef.current = false;
+    pendingRestoreRef.current = null;
     setSearchQuery("");
     setSearchCount(0);
     setPageInput("");
-    setZoom(1);
-  }, [url]);
+    if (!documentId) {
+      setZoom(1);
+      return;
+    }
+    const store = readPdfState();
+    const saved = store[documentId];
+    if (saved && Number.isFinite(saved.zoom)) {
+      pendingRestoreRef.current = saved;
+      setZoom(clamp(saved.zoom as number, minZoom, maxZoom));
+    } else {
+      setZoom(1);
+      canPersistRef.current = true;
+    }
+  }, [documentId, url]);
 
   useEffect(() => {
     if (totalPages > 0 && pageInput === "") {
@@ -322,6 +389,82 @@ export function PdfViewer({
     pages.forEach((page) => observer.observe(page));
     return () => observer.disconnect();
   }, [pageMeta, totalPages]);
+
+  useEffect(() => {
+    if (!documentId) return;
+    if (state !== "idle") return;
+    const saved = pendingRestoreRef.current;
+    if (!saved) {
+      canPersistRef.current = true;
+      return;
+    }
+    const container = containerRef.current;
+    if (!container) return;
+    const scrollRoot =
+      (container.closest(".pdf-embed") as HTMLElement | null) ?? container;
+    if (!scrollRoot) return;
+    pendingRestoreRef.current = null;
+    isRestoringRef.current = true;
+    requestAnimationFrame(() => {
+      if (saved.scrollTop !== undefined && saved.scrollTop !== null) {
+        scrollRoot.scrollTop = saved.scrollTop;
+      } else if (saved.page) {
+        const pageNode = container.querySelector(
+          `.pdf-embed__page[data-page-number="${saved.page}"]`
+        ) as HTMLElement | null;
+        pageNode?.scrollIntoView({ behavior: "auto", block: "start" });
+      }
+      if (saved.page) {
+        setPageInput(String(saved.page));
+        setCurrentPage(saved.page);
+      }
+      scrollTopRef.current = scrollRoot.scrollTop;
+      isRestoringRef.current = false;
+      canPersistRef.current = true;
+    });
+  }, [documentId, pageMeta, state]);
+
+  useEffect(() => {
+    if (!documentId) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const scrollRoot =
+      (container.closest(".pdf-embed") as HTMLElement | null) ?? container;
+    if (!scrollRoot) return;
+    const handleScroll = () => {
+      scrollTopRef.current = scrollRoot.scrollTop;
+      if (!canPersistRef.current || isRestoringRef.current) return;
+      if (saveRafRef.current !== null) {
+        cancelAnimationFrame(saveRafRef.current);
+      }
+      saveRafRef.current = requestAnimationFrame(() => {
+        writePdfState({
+          scrollTop: scrollTopRef.current,
+          page: currentPageRef.current,
+          zoom: zoomRef.current,
+        });
+        saveRafRef.current = null;
+      });
+    };
+    scrollRoot.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      scrollRoot.removeEventListener("scroll", handleScroll);
+      if (saveRafRef.current !== null) {
+        cancelAnimationFrame(saveRafRef.current);
+        saveRafRef.current = null;
+      }
+    };
+  }, [documentId, state]);
+
+  useEffect(() => {
+    if (!documentId) return;
+    if (!canPersistRef.current || isRestoringRef.current) return;
+    writePdfState({
+      scrollTop: scrollTopRef.current,
+      page: currentPage,
+      zoom,
+    });
+  }, [currentPage, documentId, zoom]);
 
   useEffect(() => {
     const saveAnnotations = async () => {
