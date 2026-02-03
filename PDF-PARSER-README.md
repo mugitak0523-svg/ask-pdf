@@ -4,6 +4,7 @@ PDFをアップロードして Azure Document Intelligence で解析し、正規
 結果返却後はPDF/結果/ジョブを即削除します。
 
 ## 特徴
+
 - 非同期解析（ジョブ状態を取得可能）
 - 同時解析数をセマフォで制限
 - 結果はワンショット返却 → 即削除
@@ -53,9 +54,13 @@ curl -s http://localhost:8000/api/v1/documents/<doc_id>/result
 ```
 
 レスポンス例（抜粋）:
+
 ```json
 {
   "doc_id": "uuid",
+"usage": {
+    "pages": 10
+  },
   "parser_version": "1.0.0",
   "source": {
     "adi_model": "prebuilt-layout"
@@ -116,6 +121,7 @@ curl -s -X POST http://localhost:8000/api/v1/embeddings \
 ```
 
 レスポンス例:
+
 ```json
 {
   "embedding": [0.01, 0.02],
@@ -135,6 +141,7 @@ curl -s -X POST http://localhost:8000/api/v1/answers \
 ```
 
 レスポンス例:
+
 ```json
 {
   "answer": "...",
@@ -155,6 +162,7 @@ curl -s -X POST http://localhost:8000/api/v1/answers \
 ```
 
 イベント例:
+
 ```json
 {"type":"delta","delta":"回答の一部"}
 {"type":"usage","usage":{"input_tokens":120,"output_tokens":80,"total_tokens":200}}
@@ -168,6 +176,7 @@ curl -s http://localhost:8000/api/v1/system
 ```
 
 レスポンス例:
+
 ```json
 {
   "parser_version": "1.0.0",
@@ -263,6 +272,7 @@ curl -s -X POST http://localhost:8000/api/v1/answers \
 3. `railway up` でデプロイ
 
 CLI 例:
+
 ```bash
 railway login
 railway init
@@ -287,6 +297,7 @@ uvicorn app.main:app --host 0.0.0.0 --port $PORT
 ```
 
 参考:
+
 ```
 https://docs.railway.com/guides/fastapi
 https://docs.railway.com/guides/cli

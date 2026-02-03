@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 
 type PdfViewerProps = {
   url: string;
@@ -49,6 +50,7 @@ export function PdfViewer({
   onClearReferenceRequest,
   referenceRequest,
 }: PdfViewerProps) {
+  const t = useTranslations("app.pdf");
   const containerRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const viewerActiveRef = useRef(false);
@@ -878,11 +880,32 @@ export function PdfViewer({
     setSearchActiveIndex(clamped + 1);
     renderSearchHighlights(searchMatchesRef.current, clamped);
     if (!shouldScroll || !containerRef.current) return;
+    const scrollRoot =
+      (containerRef.current.closest(".pdf-embed") as HTMLElement | null) ??
+      containerRef.current;
     const pageNode = containerRef.current.querySelector(
       `.pdf-embed__page[data-page-number="${target.pageNumber}"]`
     ) as HTMLElement | null;
-    if (pageNode) {
+    if (!pageNode) return;
+    const wordIndex = target.wordIndexes[0];
+    const rects = wordRectsRef.current[target.pageNumber] || [];
+    const meta = pageMetaRef.current[target.pageNumber];
+    const word = rects.find((item) => item.wordIndex === wordIndex) ?? null;
+    if (!word || !meta) {
       pageNode.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    const rootRect = scrollRoot.getBoundingClientRect();
+    const pageRect = pageNode.getBoundingClientRect();
+    const wordTop = pageRect.top - rootRect.top + scrollRoot.scrollTop + word.top * meta.height;
+    const wordBottom = pageRect.top - rootRect.top + scrollRoot.scrollTop +
+      (word.top + word.height) * meta.height;
+    const viewTop = scrollRoot.scrollTop;
+    const viewBottom = viewTop + scrollRoot.clientHeight;
+    const padding = 80;
+    if (wordTop < viewTop + padding || wordBottom > viewBottom - padding) {
+      const targetTop = Math.max(wordTop - padding, 0);
+      scrollRoot.scrollTo({ top: targetTop, behavior: "smooth" });
     }
   };
 
@@ -2118,8 +2141,8 @@ export function PdfViewer({
             type="button"
             className="pdf-embed__toolbar-btn"
             onClick={() => handleZoomChange(-zoomStep)}
-            aria-label="zoom out"
-            data-tooltip="縮小 ⌘⇧↓"
+            aria-label={t("zoomOut")}
+            data-tooltip={t("zoomOutTooltip")}
           >
             <svg
               width="16"
@@ -2140,8 +2163,8 @@ export function PdfViewer({
             type="button"
             className="pdf-embed__toolbar-btn"
             onClick={() => handleZoomChange(zoomStep)}
-            aria-label="zoom in"
-            data-tooltip="拡大 ⌘⇧↑"
+            aria-label={t("zoomIn")}
+            data-tooltip={t("zoomInTooltip")}
           >
             <svg
               width="16"
@@ -2165,8 +2188,8 @@ export function PdfViewer({
             type="button"
             className="pdf-embed__toolbar-btn"
             onClick={() => handlePageStep("prev")}
-            aria-label="previous page"
-            data-tooltip="前へ ←"
+            aria-label={t("prevPage")}
+            data-tooltip={t("prevPageTooltip")}
           >
             <svg
               width="16"
@@ -2204,8 +2227,8 @@ export function PdfViewer({
             type="button"
             className="pdf-embed__toolbar-btn"
             onClick={() => handlePageStep("next")}
-            aria-label="next page"
-            data-tooltip="次へ →"
+            aria-label={t("nextPage")}
+            data-tooltip={t("nextPageTooltip")}
           >
             <svg
               width="16"
@@ -2227,8 +2250,8 @@ export function PdfViewer({
           type="button"
           className="pdf-embed__toolbar-btn"
           onClick={handleDownload}
-          aria-label="download pdf"
-          data-tooltip="ダウンロード ⌘S"
+          aria-label={t("download")}
+          data-tooltip={t("downloadTooltip")}
         >
           <svg
             width="16"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 
 import asyncpg
@@ -407,6 +408,87 @@ async def list_user_chat_threads(
             user_id,
         )
     return [dict(row) for row in rows]
+
+
+async def insert_usage_log(
+    pool: asyncpg.Pool,
+    user_id: str,
+    operation: str,
+    document_id: str | None = None,
+    chat_id: str | None = None,
+    message_id: str | None = None,
+    model: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    total_tokens: int | None = None,
+    pages: int | None = None,
+    raw_usage: dict[str, Any] | None = None,
+    raw_request: dict[str, Any] | None = None,
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            insert into usage_logs (
+                user_id,
+                operation,
+                document_id,
+                chat_id,
+                message_id,
+                model,
+                input_tokens,
+                output_tokens,
+                total_tokens,
+                pages,
+                raw_usage,
+                raw_request
+            )
+            values ($1, $2, $3::uuid, $4::uuid, $5::uuid, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb)
+            """,
+            user_id,
+            operation,
+            document_id,
+            chat_id,
+            message_id,
+            model,
+            input_tokens,
+            output_tokens,
+            total_tokens,
+            pages,
+            json.dumps(raw_usage) if raw_usage is not None else None,
+            json.dumps(raw_request) if raw_request is not None else None,
+        )
+
+
+async def get_usage_summary(
+    pool: asyncpg.Pool,
+    user_id: str,
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+) -> dict[str, Any]:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select
+                coalesce(sum(input_tokens), 0) as input_tokens,
+                coalesce(sum(output_tokens), 0) as output_tokens,
+                coalesce(sum(total_tokens), 0) as total_tokens,
+                coalesce(sum(pages), 0) as pages,
+                coalesce(sum(total_tokens) filter (where operation = 'answer'), 0) as answer_tokens,
+                coalesce(sum(total_tokens) filter (where operation = 'embed'), 0) as embed_tokens,
+                coalesce(sum(pages) filter (where operation = 'parse'), 0) as parse_pages,
+                count(*) filter (where operation = 'answer') as answer_count,
+                count(*) filter (where operation = 'embed') as embed_count,
+                count(*) filter (where operation = 'parse') as parse_count
+            from usage_logs
+            where user_id = $1
+              and ($2::timestamptz is null or created_at >= $2::timestamptz)
+              and ($3::timestamptz is null or created_at < $3::timestamptz)
+            """,
+            user_id,
+            start_at,
+            end_at,
+        )
+    return dict(row) if row else {}
 
 
 async def get_document_chunk(

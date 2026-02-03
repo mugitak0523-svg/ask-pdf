@@ -11,6 +11,7 @@ from app.db import repository
 from app.services.auth import AuthDependency, AuthUser, get_user_from_token_app
 from app.services.indexer import Indexer
 from app.services.storage import StorageClient
+from app.services.usage import extract_usage
 
 router = APIRouter()
 logger = logging.getLogger("askpdf.chat")
@@ -74,6 +75,40 @@ def _split_matches(
     if len(filtered) < min_k:
         return matches[:min_k], filtered
     return filtered, filtered
+
+
+async def _record_usage(
+    pool,
+    *,
+    user_id: str,
+    operation: str,
+    payload: dict[str, Any] | None = None,
+    document_id: str | None = None,
+    chat_id: str | None = None,
+    message_id: str | None = None,
+    model: str | None = None,
+) -> None:
+    if payload is None:
+        return
+    input_tokens, output_tokens, total_tokens, raw_usage = extract_usage(payload)
+    if raw_usage is None and total_tokens is None:
+        return
+    try:
+        await repository.insert_usage_log(
+            pool,
+            user_id=user_id,
+            operation=operation,
+            document_id=document_id,
+            chat_id=chat_id,
+            message_id=message_id,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            raw_usage=raw_usage,
+        )
+    except Exception:
+        logger.exception("usage_log failed operation=%s", operation)
 
 
 @router.post("/documents/index")
@@ -497,6 +532,14 @@ async def create_document_chat_assistant_message(
 
     parser = request.app.state.parser_client
     embed_payload = await parser.embed_text(message)
+    await _record_usage(
+        pool,
+        user_id=user.user_id,
+        operation="embed",
+        payload=embed_payload if isinstance(embed_payload, dict) else None,
+        document_id=document_id,
+        chat_id=chat_id,
+    )
     embedding = _extract_embedding(embed_payload)
     if not isinstance(embedding, list):
         logger.error(
@@ -614,6 +657,16 @@ async def create_document_chat_assistant_message(
                 "ok",
                 refs if refs else None,
             )
+        await _record_usage(
+            pool,
+            user_id=user.user_id,
+            operation="answer",
+            payload=answer_payload if isinstance(answer_payload, dict) else None,
+            document_id=document_id,
+            chat_id=chat_id,
+            message_id=str(saved["id"]),
+            model=model,
+        )
         return {
             "message": {
                 "id": str(saved["id"]),
@@ -717,6 +770,14 @@ async def stream_document_chat_assistant_message(
 
     parser = websocket.scope["app"].state.parser_client
     embed_payload = await parser.embed_text(message)
+    await _record_usage(
+        pool,
+        user_id=user.user_id,
+        operation="embed",
+        payload=embed_payload if isinstance(embed_payload, dict) else None,
+        document_id=document_id,
+        chat_id=chat_id,
+    )
     embedding = _extract_embedding(embed_payload)
     if not isinstance(embedding, list):
         await websocket.close(code=1011)
@@ -866,6 +927,16 @@ async def stream_document_chat_assistant_message(
             if saved.get("created_at")
             else None,
         }
+        await _record_usage(
+            pool,
+            user_id=user.user_id,
+            operation="answer",
+            payload={"usage": usage} if isinstance(usage, dict) else None,
+            document_id=document_id,
+            chat_id=chat_id,
+            message_id=str(saved["id"]),
+            model=model,
+        )
         await websocket.send_text(
             json.dumps({"type": "message", "message": message_payload, "usage": usage})
         )

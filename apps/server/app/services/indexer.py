@@ -8,6 +8,7 @@ import anyio
 
 from app.db import repository
 from app.services.parser_client import ParserClient
+from app.services.usage import extract_pages
 from app.services.storage import StorageClient
 
 
@@ -55,6 +56,20 @@ class Indexer:
             user_id=user_id,
         )
         inserted = await repository.insert_chunks(pool, document_id, chunks)
+
+        pages = extract_pages(result_payload)
+        if pages is not None:
+            try:
+                await repository.insert_usage_log(
+                    pool,
+                    user_id=user_id,
+                    operation="parse",
+                    document_id=document_id,
+                    pages=pages,
+                    raw_request={"parser_doc_id": parser_doc_id},
+                )
+            except Exception:
+                pass
 
         return {
             "document_id": document_id,

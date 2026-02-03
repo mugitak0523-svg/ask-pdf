@@ -9,11 +9,12 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@supabase/supabase-js": "2.45.4",
     "next": "14.2.5",
+    "next-intl": "^4.8.2",
+    "pdfjs-dist": "4.6.82",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "@supabase/supabase-js": "2.45.4",
-    "pdfjs-dist": "4.6.82",
     "react-markdown": "9.0.1",
     "remark-gfm": "4.0.0"
   },

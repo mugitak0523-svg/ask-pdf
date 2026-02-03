@@ -5,6 +5,7 @@
 
 :root {
   --bg: #f5f5f3;
+  --bg-2: #f0f0ed;
   --panel: #ffffff;
   --panel-soft: #f7f7f6;
   --panel-strong: #f0f0ee;
@@ -14,6 +15,42 @@
   --accent: #111111;
   --accent-2: #3b82f6;
   --shadow: none;
+  --scrollbar-thumb: #d9d9d3;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #0f1111;
+  --bg-2: #141616;
+  --panel: #181a1a;
+  --panel-soft: #1f2222;
+  --panel-strong: #242828;
+  --line: #2b2f2f;
+  --text: #f1f1ef;
+  --muted: #b2b2aa;
+  --accent: #f1f1ef;
+  --accent-2: #8ab4ff;
+  --shadow: none;
+  --scrollbar-thumb: #2f3333;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #0f1111;
+    --bg-2: #141616;
+    --panel: #181a1a;
+    --panel-soft: #1f2222;
+    --panel-strong: #242828;
+    --line: #2b2f2f;
+    --text: #f1f1ef;
+    --muted: #b2b2aa;
+    --accent: #f1f1ef;
+    --accent-2: #8ab4ff;
+    --shadow: none;
+    --scrollbar-thumb: #2f3333;
+    color-scheme: dark;
+  }
 }
 
 * {
@@ -24,9 +61,9 @@ body {
   margin: 0;
   font-family: "Plus Jakarta Sans", system-ui, sans-serif;
   color: var(--text);
-  background: linear-gradient(180deg, #f7f7f5 0%, #f0f0ed 100%);
+  background: linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
   min-height: 100vh;
-  scrollbar-color: #cfcfca transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
   scrollbar-width: thin;
 }
 
@@ -52,7 +89,7 @@ body {
 }
 
 *::-webkit-scrollbar-thumb {
-  background-color: #d9d9d3;
+  background-color: var(--scrollbar-thumb);
   border-radius: 999px;
   border: 3px solid transparent;
   background-clip: content-box;
@@ -580,6 +617,7 @@ button {
 
 .chat {
   border-left: none;
+  overflow: visible;
 }
 
 .resizer {
@@ -620,6 +658,7 @@ button {
 .viewer__actions {
   display: flex;
   gap: 6px;
+  overflow: visible;
 }
 
 .icon-btn {
@@ -628,11 +667,68 @@ button {
   border-radius: 999px;
   border: 1px solid transparent;
   background: transparent;
+  position: relative;
 }
 
 .icon-btn:hover {
   border-color: var(--line);
   background: var(--panel-soft);
+}
+
+.icon-btn[data-tooltip]:hover::after,
+.chat__header-action[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(calc(-50% + var(--tooltip-shift, 0px)));
+  background: #111;
+  color: #fff;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 100;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+}
+
+.icon-btn[data-tooltip]:hover::before,
+.chat__header-action[data-tooltip]:hover::before {
+  content: "";
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: 50%;
+  transform: translateX(calc(-50% + var(--tooltip-shift, 0px)));
+  border: 6px solid transparent;
+  border-top-color: #111;
+  pointer-events: none;
+  z-index: 100;
+}
+
+.topbar .icon-btn[data-tooltip]:hover::after {
+  bottom: auto;
+  top: calc(100% + 8px);
+}
+
+.topbar .icon-btn[data-tooltip]:hover::before {
+  bottom: auto;
+  top: calc(100% + 2px);
+  border-top-color: transparent;
+  border-bottom-color: #111;
+}
+
+.chat__header .chat__header-action[data-tooltip]:hover::after {
+  bottom: auto;
+  top: calc(100% + 8px);
+}
+
+.chat__header .chat__header-action[data-tooltip]:hover::before {
+  bottom: auto;
+  top: calc(100% + 2px);
+  border-top-color: transparent;
+  border-bottom-color: #111;
 }
 
 .viewer__canvas {
@@ -1539,6 +1635,9 @@ button {
   border-bottom: 1px solid var(--line);
   background: transparent;
   font-size: 12px;
+  position: relative;
+  overflow: visible;
+  z-index: 2;
 }
 
 .chat__header-left {
@@ -1562,6 +1661,9 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
+  overflow: visible;
+  position: relative;
+  z-index: 2;
 }
 
 .chat__header-action {
@@ -1578,6 +1680,8 @@ button {
   line-height: 0;
   cursor: pointer;
   transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+  position: relative;
+  overflow: visible;
 }
 
 .chat__header-action svg {
