@@ -144,7 +144,6 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!isHydrated) return;
     if (typeof window === "undefined") return;
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -379,6 +378,7 @@ export default function Home() {
   }, [locale, selectedTabId]);
 
   useEffect(() => {
+    if (!isHydrated) return;
     if (typeof window === "undefined") return;
     const payload = {
       theme,
@@ -416,6 +416,20 @@ export default function Home() {
     const restore = restoreRef.current;
     const docMap = new Map(documents.map((doc) => [doc.id, doc.title]));
     const rawOpenDocs = Array.isArray(restore.openDocuments) ? restore.openDocuments : [];
+    const restoreSelectedTabId =
+      typeof restore.selectedTabId === "string" ? restore.selectedTabId : null;
+    const restoreSelectedDocumentId =
+      typeof restore.selectedDocumentId === "string" ? restore.selectedDocumentId : null;
+    const targetDocId = restoreSelectedDocumentId ?? restoreSelectedTabId;
+    const wantsDocRestore = rawOpenDocs.some(
+      (item: any) => item && typeof item.id === "string" && item.id !== SETTINGS_TAB_ID
+    );
+
+    // Wait for documents to load if a doc-based tab is expected.
+    if ((targetDocId || wantsDocRestore) && documents.length === 0) {
+      return;
+    }
+
     const normalizedOpenDocs = rawOpenDocs
       .filter((item: any) => item && typeof item.id === "string")
       .filter((item: any) => item.id === SETTINGS_TAB_ID || docMap.has(item.id))
@@ -440,10 +454,6 @@ export default function Home() {
       restore.settingsSection === "manual"
         ? restore.settingsSection
         : "general";
-    const restoreSelectedTabId =
-      typeof restore.selectedTabId === "string" ? restore.selectedTabId : null;
-    const restoreSelectedDocumentId =
-      typeof restore.selectedDocumentId === "string" ? restore.selectedDocumentId : null;
     const restoreActiveChatId =
       typeof restore.activeChatId === "string" ? restore.activeChatId : null;
 
@@ -454,7 +464,6 @@ export default function Home() {
       return;
     }
 
-    const targetDocId = restoreSelectedDocumentId ?? restoreSelectedTabId;
     if (targetDocId && docMap.has(targetDocId)) {
       const doc = { id: targetDocId, title: docMap.get(targetDocId) ?? t("common.untitled") };
       void handleSelectDocument(doc, {
