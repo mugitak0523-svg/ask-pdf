@@ -120,6 +120,28 @@ export default function Home() {
     measure.style.whiteSpace = "nowrap";
     measure.style.fontFamily = "inherit";
     document.body.appendChild(measure);
+    let portal: HTMLDivElement | null = null;
+    const ensurePortal = () => {
+      if (portal) return portal;
+      const node = document.createElement("div");
+      node.className = "app-tooltip";
+      node.style.position = "fixed";
+      node.style.top = "0";
+      node.style.left = "0";
+      node.style.transform = "translate(-9999px, -9999px)";
+      node.style.pointerEvents = "none";
+      node.style.zIndex = "9999";
+      document.body.appendChild(node);
+      portal = node;
+      return node;
+    };
+
+    const hidePortal = () => {
+      if (!portal) return;
+      portal.style.opacity = "0";
+      portal.style.transform = "translate(-9999px, -9999px)";
+    };
+
     const handleOver = (event: MouseEvent) => {
       const target = (event.target as HTMLElement | null)?.closest?.(
         "[data-tooltip]"
@@ -142,9 +164,22 @@ export default function Home() {
         shift = window.innerWidth - padding - right;
       }
       const clampedLeft = Math.max(padding, Math.min(window.innerWidth - padding, center + shift));
-      target.style.setProperty("--tooltip-shift", `${shift}px`);
-      target.style.setProperty("--tooltip-left", `${clampedLeft}px`);
-      target.style.setProperty("--tooltip-top", `${rect.bottom + 8}px`);
+      const usePortal = target.getAttribute("data-tooltip-portal") === "true";
+      if (usePortal) {
+        const node = ensurePortal();
+        node.textContent = text;
+        node.style.opacity = "1";
+        node.style.transform = "translate(-9999px, -9999px)";
+        const width = node.getBoundingClientRect().width;
+        const height = node.getBoundingClientRect().height;
+        const leftPos = Math.max(padding, Math.min(window.innerWidth - padding, clampedLeft));
+        const topPos = rect.bottom + 8;
+        node.style.transform = `translate(${leftPos - width / 2}px, ${topPos}px)`;
+      } else {
+        target.style.setProperty("--tooltip-shift", `${shift}px`);
+        target.style.setProperty("--tooltip-left", `${clampedLeft}px`);
+        target.style.setProperty("--tooltip-top", `${rect.bottom + 8}px`);
+      }
     };
     const handleMove = (event: MouseEvent) => {
       const target = (event.target as HTMLElement | null)?.closest?.(
@@ -166,18 +201,35 @@ export default function Home() {
         shift = window.innerWidth - padding - right;
       }
       const clampedLeft = Math.max(padding, Math.min(window.innerWidth - padding, center + shift));
-      target.style.setProperty("--tooltip-shift", `${shift}px`);
-      target.style.setProperty("--tooltip-left", `${clampedLeft}px`);
-      target.style.setProperty("--tooltip-top", `${rect.bottom + 8}px`);
+      const usePortal = target.getAttribute("data-tooltip-portal") === "true";
+      if (usePortal) {
+        const node = ensurePortal();
+        node.textContent = target.getAttribute("data-tooltip") ?? "";
+        node.style.opacity = "1";
+        const width = node.getBoundingClientRect().width;
+        const height = node.getBoundingClientRect().height;
+        const leftPos = Math.max(padding, Math.min(window.innerWidth - padding, clampedLeft));
+        const topPos = rect.bottom + 8;
+        node.style.transform = `translate(${leftPos - width / 2}px, ${topPos}px)`;
+      } else {
+        target.style.setProperty("--tooltip-shift", `${shift}px`);
+        target.style.setProperty("--tooltip-left", `${clampedLeft}px`);
+        target.style.setProperty("--tooltip-top", `${rect.bottom + 8}px`);
+      }
     };
     const handleOut = (event: MouseEvent) => {
       const target = (event.target as HTMLElement | null)?.closest?.(
         "[data-tooltip]"
       ) as HTMLElement | null;
       if (!target) return;
-      target.style.removeProperty("--tooltip-shift");
-      target.style.removeProperty("--tooltip-left");
-      target.style.removeProperty("--tooltip-top");
+      const usePortal = target.getAttribute("data-tooltip-portal") === "true";
+      if (usePortal) {
+        hidePortal();
+      } else {
+        target.style.removeProperty("--tooltip-shift");
+        target.style.removeProperty("--tooltip-left");
+        target.style.removeProperty("--tooltip-top");
+      }
     };
     document.addEventListener("mouseover", handleOver, true);
     document.addEventListener("mousemove", handleMove, true);
@@ -187,6 +239,10 @@ export default function Home() {
       document.removeEventListener("mousemove", handleMove, true);
       document.removeEventListener("mouseout", handleOut, true);
       measure.remove();
+      if (portal) {
+        portal.remove();
+        portal = null;
+      }
     };
   }, []);
 
@@ -2466,6 +2522,7 @@ export default function Home() {
               onClick={() => setChatOpen((prev) => !prev)}
               aria-label={chatOpen ? "Collapse chat" : "Expand chat"}
               data-tooltip={chatOpen ? t("tooltip.chatCollapse") : t("tooltip.chatExpand")}
+              data-tooltip-portal="true"
             >
               <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
                 {chatOpen ? (

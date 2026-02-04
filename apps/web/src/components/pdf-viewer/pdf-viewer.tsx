@@ -2502,6 +2502,7 @@ export function PdfViewer({
             onClick={() => setShowThumbs((prev) => !prev)}
             aria-label={showThumbs ? "Hide thumbnails" : "Show thumbnails"}
             data-tooltip={showThumbs ? t("thumbsHide") : t("thumbsShow")}
+            data-tooltip-portal="true"
             data-tooltip-position="bottom"
           >
             <svg

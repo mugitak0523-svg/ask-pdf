@@ -20,8 +20,8 @@
       "exportAction": "Export"
     },
     "pdf": {
-      "thumbsHide": "Hide thumbnails",
-      "thumbsShow": "Show thumbnails",
+      "thumbsHide": "Hide thumbnails ⌘B",
+      "thumbsShow": "Show thumbnails ⌘B",
       "zoomOut": "Zoom out",
       "zoomOutTooltip": "Zoom out ⌘⇧↓",
       "zoomIn": "Zoom in",
@@ -155,8 +155,8 @@
       "chatHistory": "Chat history",
       "newChat": "New chat",
       "aiSettings": "AI settings",
-      "chatCollapse": "Collapse chat",
-      "chatExpand": "Expand chat",
+      "chatCollapse": "Collapse chat ⌘⇧B",
+      "chatExpand": "Expand chat ⌘⇧B",
       "rename": "Rename"
     },
     "viewer": {
