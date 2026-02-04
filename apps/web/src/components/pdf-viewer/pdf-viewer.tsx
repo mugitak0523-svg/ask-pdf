@@ -43,6 +43,45 @@ type Annotation = {
 };
 
 const PDF_STATE_KEY = "askpdf.pdfState.v1";
+const PDF_CACHE_MAX = 3;
+const pdfBufferCache = new Map<string, { buffer: ArrayBuffer; ts: number }>();
+
+const cloneBuffer = (buffer: ArrayBuffer) => buffer.slice(0);
+
+const getCachedPdfBuffer = (key: string) => {
+  const entry = pdfBufferCache.get(key);
+  if (!entry) return null;
+  entry.ts = Date.now();
+  return entry.buffer;
+};
+
+const getSafePdfBuffer = async (cacheKey: string, url: string) => {
+  const cached = getCachedPdfBuffer(cacheKey);
+  if (cached) {
+    try {
+      return cached;
+    } catch {
+      pdfBufferCache.delete(cacheKey);
+    }
+  }
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error("failed to fetch pdf");
+  }
+  const buffer = await response.arrayBuffer();
+  setCachedPdfBuffer(cacheKey, buffer);
+  return buffer;
+};
+
+const setCachedPdfBuffer = (key: string, buffer: ArrayBuffer) => {
+  pdfBufferCache.set(key, { buffer, ts: Date.now() });
+  if (pdfBufferCache.size <= PDF_CACHE_MAX) return;
+  const entries = Array.from(pdfBufferCache.entries()).sort((a, b) => a[1].ts - b[1].ts);
+  while (entries.length > PDF_CACHE_MAX) {
+    const [oldestKey] = entries.shift()!;
+    pdfBufferCache.delete(oldestKey);
+  }
+};
 
 type PdfPersistState = {
   zoom?: number;
@@ -293,8 +332,7 @@ export function PdfViewer({
         }
       });
       const list = Array.from(perLine.values())
-        .sort((a, b) => a.item.wordIndex - b.item.wordIndex)
-        .slice(0, 12);
+        .sort((a, b) => a.item.wordIndex - b.item.wordIndex);
       const pageOffset = node.offsetTop;
       list.forEach(({ item, rect }) => {
         const annotationTop = pageOffset + rect.top * meta.height;
@@ -405,7 +443,9 @@ export function PdfViewer({
       try {
         const pdfjs = await import("pdfjs-dist/legacy/build/pdf");
         pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-        const loadingTask = pdfjs.getDocument({ url });
+        const cacheKey = documentId ?? url;
+        const pdfData = await getSafePdfBuffer(cacheKey, url);
+        const loadingTask = pdfjs.getDocument({ data: cloneBuffer(pdfData) });
         const pdf = await loadingTask.promise;
         if (cancelled) return;
         setTotalPages(pdf.numPages);
@@ -1373,9 +1413,24 @@ export function PdfViewer({
 
   const handleDownload = async () => {
     try {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error("download failed");
-      const blob = await response.blob();
+      const cacheKey = documentId ?? url;
+      let blob: Blob | null = null;
+      const cached = getCachedPdfBuffer(cacheKey);
+      if (cached) {
+        try {
+          blob = new Blob([cloneBuffer(cached)], { type: "application/pdf" });
+        } catch {
+          pdfBufferCache.delete(cacheKey);
+        }
+      }
+      if (!blob) {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error("download failed");
+        const fetchedBlob = await response.blob();
+        const buffer = await fetchedBlob.arrayBuffer();
+        setCachedPdfBuffer(cacheKey, buffer);
+        blob = fetchedBlob;
+      }
       const objectUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = objectUrl;

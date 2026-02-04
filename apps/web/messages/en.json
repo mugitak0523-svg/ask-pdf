@@ -86,6 +86,9 @@
     "planPro": "Pro",
     "usageThisMonth": "Usage this month",
     "usageThisMonthDesc": "Tokens / Pages",
+    "usageTab": "Usage",
+    "usageAllTime": "All-time usage",
+    "usageAllTimeDesc": "Total tokens / pages",
     "usageCost": "Cost this month",
     "usageCostDesc": "Pricing not configured",
     "billing": "Billing",
@@ -157,7 +160,9 @@
       "aiSettings": "AI settings",
       "chatCollapse": "Collapse chat ⌘⇧B",
       "chatExpand": "Expand chat ⌘⇧B",
-      "rename": "Rename"
+      "rename": "Rename",
+      "delete": "Delete",
+      "menu": "More"
     },
     "viewer": {
       "noDocument": "No PDF selected",

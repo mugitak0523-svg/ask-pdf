@@ -107,6 +107,24 @@ async def update_document_title(
     return dict(row) if row else None
 
 
+async def delete_document(
+    pool: asyncpg.Pool,
+    document_id: str,
+    user_id: str,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            delete from documents
+            where id = $1 and user_id = $2
+            returning id
+            """,
+            document_id,
+            user_id,
+        )
+    return dict(row) if row else None
+
+
 async def insert_chunks(
     pool: asyncpg.Pool,
     document_id: str,
@@ -418,6 +436,26 @@ async def update_document_chat_thread_title(
             chat_id,
             user_id,
             title,
+        )
+    return dict(row) if row else None
+
+
+async def delete_document_chat_thread(
+    pool: asyncpg.Pool,
+    document_id: str,
+    chat_id: str,
+    user_id: str,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            delete from document_chat_threads
+            where id = $1 and document_id = $2 and user_id = $3
+            returning id
+            """,
+            chat_id,
+            document_id,
+            user_id,
         )
     return dict(row) if row else None
 

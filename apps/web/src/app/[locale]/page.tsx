@@ -272,6 +272,7 @@ export default function Home() {
         parsed.settingsSection === "general" ||
         parsed.settingsSection === "ai" ||
         parsed.settingsSection === "account" ||
+        parsed.settingsSection === "usage" ||
         parsed.settingsSection === "messages" ||
         parsed.settingsSection === "manual"
       ) {
@@ -312,6 +313,10 @@ export default function Home() {
   const [showThreadList, setShowThreadList] = useState(false);
   const [editingChatTitle, setEditingChatTitle] = useState(false);
   const [chatTitleDraft, setChatTitleDraft] = useState("");
+  const [openChatMenuId, setOpenChatMenuId] = useState<string | null>(null);
+  const [pendingRenameChatId, setPendingRenameChatId] = useState<string | null>(null);
+  const [editingChatListId, setEditingChatListId] = useState<string | null>(null);
+  const [chatListTitleDraft, setChatListTitleDraft] = useState("");
   const [allChatThreads, setAllChatThreads] = useState<
     {
       id: string;
@@ -342,10 +347,11 @@ export default function Home() {
   const [tabsOverflow, setTabsOverflow] = useState(false);
   const [editingDocumentId, setEditingDocumentId] = useState<string | null>(null);
   const [documentTitleDraft, setDocumentTitleDraft] = useState("");
+  const [openDocMenuId, setOpenDocMenuId] = useState<string | null>(null);
   const [referenceRequest, setReferenceRequest] = useState<ReferenceRequest | null>(null);
   const [activeRefId, setActiveRefId] = useState<string | null>(null);
   const [settingsSection, setSettingsSection] = useState<
-    "general" | "ai" | "account" | "messages" | "manual"
+    "general" | "ai" | "account" | "usage" | "messages" | "manual"
   >("general");
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
@@ -613,6 +619,7 @@ export default function Home() {
       restore.settingsSection === "general" ||
       restore.settingsSection === "ai" ||
       restore.settingsSection === "account" ||
+      restore.settingsSection === "usage" ||
       restore.settingsSection === "messages" ||
       restore.settingsSection === "manual"
         ? restore.settingsSection
@@ -641,7 +648,7 @@ export default function Home() {
   }, [documents, docsLoading, isAuthed, isHydrated, locale]);
 
   useEffect(() => {
-    if (!isAuthed || settingsSection !== "account") {
+    if (!isAuthed || (settingsSection !== "account" && settingsSection !== "usage")) {
       return;
     }
     let active = true;
@@ -971,6 +978,199 @@ export default function Home() {
       setDocsLoading(false);
     }
   };
+
+  useEffect(() => {
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(".history-item__menu") || target?.closest(".history-item__menu-trigger")) {
+        return;
+      }
+      setOpenDocMenuId(null);
+    };
+    document.addEventListener("click", handleClick);
+    return () => document.removeEventListener("click", handleClick);
+  }, []);
+
+  useEffect(() => {
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(".chat__thread-menu") || target?.closest(".chat__thread-menu-trigger")) {
+        return;
+      }
+      setOpenChatMenuId(null);
+    };
+    document.addEventListener("click", handleClick);
+    return () => document.removeEventListener("click", handleClick);
+  }, []);
+
+  const handleDownloadDocument = async (documentId: string) => {
+    try {
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.access_token;
+      if (!accessToken) return;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/documents/${documentId}/signed-url`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to get signed url (${response.status})`);
+      }
+      const payload = await response.json();
+      const url = String(payload.signed_url ?? "");
+      if (!url) return;
+      const fileResponse = await fetch(url);
+      if (!fileResponse.ok) {
+        throw new Error(`Failed to download PDF (${fileResponse.status})`);
+      }
+      const blob = await fileResponse.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = "document.pdf";
+      link.rel = "noopener";
+      link.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to download PDF";
+      setDocsError(message);
+    }
+  };
+
+  const handleDeleteDocument = async (documentId: string) => {
+    if (!documentId) return;
+    try {
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.access_token;
+      if (!accessToken) return;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/documents/${documentId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to delete document (${response.status})`);
+      }
+      setDocuments((prev) => prev.filter((doc) => doc.id !== documentId));
+      setOpenDocuments((prev) => prev.filter((doc) => doc.id !== documentId));
+      if (selectedDocumentId === documentId) {
+        setChatThreads([]);
+      }
+      setAllChatThreads((prev) => prev.filter((thread) => thread.documentId !== documentId));
+      if (selectedDocumentId === documentId) {
+        handleCloseTab(documentId);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to delete document";
+      setDocsError(message);
+    }
+  };
+
+  const handleDeleteChatThread = async (documentId: string, chatId: string) => {
+    if (!documentId || !chatId) return;
+    try {
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.access_token;
+      if (!accessToken) return;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(
+        `${baseUrl}/documents/${documentId}/chats/${chatId}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
+      );
+      if (!response.ok) {
+        throw new Error(`Failed to delete chat (${response.status})`);
+      }
+      setChatThreads((prev) => prev.filter((thread) => thread.id !== chatId));
+      setAllChatThreads((prev) => prev.filter((thread) => thread.id !== chatId));
+      if (activeChatId === chatId) {
+        setActiveChatId(null);
+        setChatMessages([]);
+        setShowThreadList(true);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to delete chat";
+      setChatError(message);
+    }
+  };
+
+  const startEditChatFromList = (threadId: string, title: string | null) => {
+    setEditingChatListId(threadId);
+    setChatListTitleDraft(title?.trim() || t("chat.newChat"));
+  };
+
+  const cancelEditChatFromList = () => {
+    setEditingChatListId(null);
+    setChatListTitleDraft("");
+  };
+
+  const saveChatTitleFromList = async (documentId: string, threadId: string) => {
+    const nextTitle = chatListTitleDraft.trim();
+    if (!nextTitle) {
+      cancelEditChatFromList();
+      return;
+    }
+    try {
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.access_token;
+      if (!accessToken) {
+        throw new Error("Not authenticated");
+      }
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(
+        `${baseUrl}/documents/${documentId}/chats/${threadId}`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ title: nextTitle }),
+        }
+      );
+      if (!response.ok) {
+        throw new Error(`Failed to update chat title (${response.status})`);
+      }
+      setChatThreads((prev) =>
+        prev.map((thread) =>
+          thread.id === threadId ? { ...thread, title: nextTitle } : thread
+        )
+      );
+      setAllChatThreads((prev) =>
+        prev.map((thread) =>
+          thread.id === threadId ? { ...thread, title: nextTitle } : thread
+        )
+      );
+      if (activeChatId === threadId) {
+        setChatTitleDraft(nextTitle);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to update chat title";
+      setChatError(message);
+    } finally {
+      cancelEditChatFromList();
+    }
+  };
+
+  const handleRenameChatFromList = async (
+    threadId: string,
+    documentId?: string | null
+  ) => {
+    if (!threadId) return;
+    startEditChatFromList(threadId, null);
+  };
+
+  useEffect(() => {
+    if (!pendingRenameChatId) return;
+    setPendingRenameChatId(null);
+  }, [pendingRenameChatId]);
 
   const loadPlan = async (accessToken: string) => {
     try {
@@ -1844,6 +2044,67 @@ export default function Home() {
         </>
       );
     }
+    if (settingsSection === "usage") {
+      const currentUsage = usageSummary?.current;
+      const allTimeUsage = usageSummary?.allTime;
+      const usageValue = usageLoading
+        ? t("common.loading")
+        : usageError
+          ? t("common.fetchFailed")
+          : currentUsage
+            ? t("usage.summary", {
+                tokens: formatNumber(currentUsage.totalTokens),
+                pages: formatNumber(currentUsage.pages),
+              })
+            : t("common.noData");
+      const allTimeValue = usageLoading
+        ? t("common.loading")
+        : usageError
+          ? t("common.fetchFailed")
+          : allTimeUsage
+            ? t("usage.summary", {
+                tokens: formatNumber(allTimeUsage.totalTokens),
+                pages: formatNumber(allTimeUsage.pages),
+              })
+            : t("common.noData");
+      const usageCost = usageLoading
+        ? t("common.loading")
+        : usageError
+          ? t("common.fetchFailed")
+          : currentUsage
+            ? currentUsage.costYen === null
+              ? currentUsage.costNote ?? t("common.unset")
+              : t("common.yen", { value: formatNumber(currentUsage.costYen) })
+            : t("common.noData");
+      return (
+        <>
+          <h2 className="settings__title">{t("usageTab")}</h2>
+          <div className="settings__group">
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">{t("usageThisMonth")}</div>
+                <div className="settings__item-desc">{t("usageThisMonthDesc")}</div>
+              </div>
+              <div className="settings__value">{usageValue}</div>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">{t("usageAllTime")}</div>
+                <div className="settings__item-desc">{t("usageAllTimeDesc")}</div>
+              </div>
+              <div className="settings__value">{allTimeValue}</div>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">{t("usageCost")}</div>
+                <div className="settings__item-desc">{t("usageCostDesc")}</div>
+              </div>
+              <div className="settings__value">{usageCost}</div>
+            </div>
+          </div>
+        </>
+      );
+    }
     if (settingsSection === "messages") {
       return (
         <>
@@ -2240,24 +2501,123 @@ export default function Home() {
                     <>
                       <span className="label">{doc.title}</span>
                       {sidebarOpen ? (
-                        <span
-                          className="history-item__action"
-                          role="button"
-                          tabIndex={0}
+                        <button
+                          type="button"
+                          className="history-item__menu-trigger"
                           onClick={(event) => {
                             event.stopPropagation();
-                            startRenameDocument(doc);
+                            setOpenDocMenuId((prev) => (prev === doc.id ? null : doc.id));
                           }}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                              event.preventDefault();
-                              startRenameDocument(doc);
-                            }
-                          }}
-                          data-tooltip={t("tooltip.rename")}
+                          aria-label={t("tooltip.menu")}
+                          data-tooltip={t("tooltip.menu")}
                         >
-                          ✎
-                        </span>
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="18"
+                            height="18"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                            <path d="M4 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                            <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                            <path d="M18 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                          </svg>
+                        </button>
+                      ) : null}
+                      {sidebarOpen && openDocMenuId === doc.id ? (
+                        <div className="history-item__menu" onClick={(event) => event.stopPropagation()}>
+                          <button
+                            type="button"
+                            className="history-item__menu-item"
+                            onClick={() => {
+                              setOpenDocMenuId(null);
+                              startRenameDocument(doc);
+                            }}
+                          >
+                            <span className="menu-item__icon" aria-hidden="true">
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                                <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+                                <path d="M13.5 6.5l4 4" />
+                              </svg>
+                            </span>
+                            <span className="menu-item__label">{t("tooltip.rename")}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="history-item__menu-item"
+                            onClick={() => {
+                              setOpenDocMenuId(null);
+                              void handleDownloadDocument(doc.id);
+                            }}
+                          >
+                            <span className="menu-item__icon" aria-hidden="true">
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                                <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2" />
+                                <path d="M7 11l5 5l5 -5" />
+                                <path d="M12 4l0 12" />
+                              </svg>
+                            </span>
+                            <span className="menu-item__label">{t("pdf.download")}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="history-item__menu-item history-item__menu-item--danger"
+                            onClick={() => {
+                              setOpenDocMenuId(null);
+                              void handleDeleteDocument(doc.id);
+                            }}
+                          >
+                            <span className="menu-item__icon" aria-hidden="true">
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                                <path d="M4 7l16 0" />
+                                <path d="M10 11l0 6" />
+                                <path d="M14 11l0 6" />
+                                <path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12" />
+                                <path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" />
+                              </svg>
+                            </span>
+                            <span className="menu-item__label">{t("common.delete")}</span>
+                          </button>
+                        </div>
                       ) : null}
                     </>
                   )}
@@ -2472,6 +2832,7 @@ export default function Home() {
                       { id: "general", label: t("general") },
                       { id: "ai", label: t("ai") },
                       { id: "account", label: t("account") },
+                      { id: "usage", label: t("usageTab") },
                       { id: "messages", label: t("messages.title") },
                       { id: "manual", label: t("manual.title") },
                     ].map((item) => (
@@ -2752,23 +3113,138 @@ export default function Home() {
                         key={thread.id}
                         type="button"
                         className="chat__thread-item"
-                        onClick={() =>
+                        onClick={() => {
+                          if (editingChatListId === thread.id) return;
                           handleSelectDocument({
                             id: thread.documentId,
                             title: thread.documentTitle ?? t("common.untitled"),
-                          })
-                        }
+                          });
+                        }}
                       >
                         <div className="chat__thread-row">
-                          <div className="chat__thread-title">
-                            {thread.title ?? t("chat.newChat")}
-                          </div>
+                          {editingChatListId === thread.id ? (
+                            <input
+                              className="chat__thread-input"
+                              value={chatListTitleDraft}
+                              onChange={(event) => setChatListTitleDraft(event.target.value)}
+                              onClick={(event) => event.stopPropagation()}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  void saveChatTitleFromList(thread.documentId, thread.id);
+                                }
+                                if (event.key === "Escape") {
+                                  event.preventDefault();
+                                  cancelEditChatFromList();
+                                }
+                              }}
+                              onBlur={() => void saveChatTitleFromList(thread.documentId, thread.id)}
+                              aria-label={t("aria.renameChat")}
+                              autoFocus
+                            />
+                          ) : (
+                            <div className="chat__thread-title">
+                              {thread.title ?? t("chat.newChat")}
+                            </div>
+                          )}
                           {thread.updatedAt ? (
                             <span className="chat__thread-time">
                               {formatRelativeTime(thread.updatedAt)}
                             </span>
                           ) : null}
+                          <button
+                            type="button"
+                            className="chat__thread-menu-trigger"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setOpenChatMenuId((prev) => (prev === thread.id ? null : thread.id));
+                            }}
+                            aria-label={t("tooltip.menu")}
+                            data-tooltip={t("tooltip.menu")}
+                          >
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              width="18"
+                              height="18"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                              <path d="M4 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                              <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                              <path d="M18 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                            </svg>
+                          </button>
                         </div>
+                        {openChatMenuId === thread.id ? (
+                          <div
+                            className="chat__thread-menu"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              className="chat__thread-menu-item"
+                              onClick={() => {
+                                setOpenChatMenuId(null);
+                                startEditChatFromList(thread.id, thread.title ?? null);
+                              }}
+                            >
+                              <span className="menu-item__icon" aria-hidden="true">
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  width="24"
+                                  height="24"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                                  <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+                                  <path d="M13.5 6.5l4 4" />
+                                </svg>
+                              </span>
+                              <span className="menu-item__label">{t("tooltip.rename")}</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="chat__thread-menu-item chat__thread-menu-item--danger"
+                              onClick={() => {
+                                setOpenChatMenuId(null);
+                                void handleDeleteChatThread(thread.documentId, thread.id);
+                              }}
+                            >
+                              <span className="menu-item__icon" aria-hidden="true">
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  width="24"
+                                  height="24"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                                  <path d="M4 7l16 0" />
+                                  <path d="M10 11l0 6" />
+                                  <path d="M14 11l0 6" />
+                                  <path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12" />
+                                  <path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" />
+                                </svg>
+                              </span>
+                              <span className="menu-item__label">{t("common.delete")}</span>
+                            </button>
+                          </div>
+                        ) : null}
                         <div className="chat__thread-meta">
                           {thread.documentTitle ?? t("common.untitled")}
                         </div>
@@ -2792,6 +3268,7 @@ export default function Home() {
                         type="button"
                         className="chat__thread-item"
                         onClick={async () => {
+                          if (editingChatListId === thread.id) return;
                           chatsAbortRef.current?.abort();
                           setActiveChatId(thread.id);
                           setShowThreadList(false);
@@ -2803,15 +3280,137 @@ export default function Home() {
                         }}
                       >
                         <div className="chat__thread-row">
-                          <div className="chat__thread-title">
-                            {thread.title ?? t("chat.newChat")}
-                          </div>
+                          {editingChatListId === thread.id ? (
+                            <input
+                              className="chat__thread-input"
+                              value={chatListTitleDraft}
+                              onChange={(event) => setChatListTitleDraft(event.target.value)}
+                              onClick={(event) => event.stopPropagation()}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  if (selectedDocumentId) {
+                                    void saveChatTitleFromList(selectedDocumentId, thread.id);
+                                  }
+                                }
+                                if (event.key === "Escape") {
+                                  event.preventDefault();
+                                  cancelEditChatFromList();
+                                }
+                              }}
+                              onBlur={() => {
+                                if (selectedDocumentId) {
+                                  void saveChatTitleFromList(selectedDocumentId, thread.id);
+                                }
+                              }}
+                              aria-label={t("aria.renameChat")}
+                              autoFocus
+                            />
+                          ) : (
+                            <div className="chat__thread-title">
+                              {thread.title ?? t("chat.newChat")}
+                            </div>
+                          )}
                           {thread.updatedAt ? (
                             <span className="chat__thread-time">
                               {formatRelativeTime(thread.updatedAt)}
                             </span>
                           ) : null}
+                          <button
+                            type="button"
+                            className="chat__thread-menu-trigger"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setOpenChatMenuId((prev) => (prev === thread.id ? null : thread.id));
+                            }}
+                            aria-label={t("tooltip.menu")}
+                            data-tooltip={t("tooltip.menu")}
+                          >
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              width="18"
+                              height="18"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                              <path d="M4 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                              <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                              <path d="M18 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                            </svg>
+                          </button>
                         </div>
+                        {openChatMenuId === thread.id ? (
+                          <div
+                            className="chat__thread-menu"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              className="chat__thread-menu-item"
+                              onClick={() => {
+                                setOpenChatMenuId(null);
+                                startEditChatFromList(thread.id, thread.title ?? null);
+                              }}
+                            >
+                              <span className="menu-item__icon" aria-hidden="true">
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  width="24"
+                                  height="24"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                                  <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+                                  <path d="M13.5 6.5l4 4" />
+                                </svg>
+                              </span>
+                              <span className="menu-item__label">{t("tooltip.rename")}</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="chat__thread-menu-item chat__thread-menu-item--danger"
+                              onClick={() => {
+                                setOpenChatMenuId(null);
+                                if (selectedDocumentId) {
+                                  void handleDeleteChatThread(selectedDocumentId, thread.id);
+                                }
+                              }}
+                            >
+                              <span className="menu-item__icon" aria-hidden="true">
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  width="24"
+                                  height="24"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                                  <path d="M4 7l16 0" />
+                                  <path d="M10 11l0 6" />
+                                  <path d="M14 11l0 6" />
+                                  <path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12" />
+                                  <path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" />
+                                </svg>
+                              </span>
+                              <span className="menu-item__label">{t("common.delete")}</span>
+                            </button>
+                          </div>
+                        ) : null}
                         <div className="chat__thread-meta">
                           {thread.lastMessage ?? t("chat.noMessages")}
                         </div>

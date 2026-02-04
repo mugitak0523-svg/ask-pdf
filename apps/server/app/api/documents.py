@@ -219,6 +219,19 @@ async def update_document(
     return {"id": str(row["id"]), "title": row.get("title")}
 
 
+@router.delete("/documents/{document_id}")
+async def delete_document(
+    request: Request,
+    document_id: str,
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    pool = request.app.state.db_pool
+    row = await repository.delete_document(pool, document_id, user.user_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    return {"id": str(row["id"])}
+
+
 @router.get("/documents/{document_id}/signed-url")
 async def get_document_signed_url(
     request: Request,
@@ -531,6 +544,22 @@ async def update_document_chat(
     if not saved:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     return {"id": str(saved["id"]), "title": saved.get("title")}
+
+
+@router.delete("/documents/{document_id}/chats/{chat_id}")
+async def delete_document_chat(
+    request: Request,
+    document_id: str,
+    chat_id: str,
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    pool = request.app.state.db_pool
+    row = await repository.delete_document_chat_thread(
+        pool, document_id, chat_id, user.user_id
+    )
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    return {"id": str(row["id"])}
 
 
 @router.get("/documents/{document_id}/chats/{chat_id}/messages")

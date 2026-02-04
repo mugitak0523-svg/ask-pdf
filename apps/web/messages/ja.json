@@ -86,6 +86,9 @@
     "planPro": "Pro",
     "usageThisMonth": "今月の利用量",
     "usageThisMonthDesc": "トークン / ページ",
+    "usageTab": "利用量",
+    "usageAllTime": "累計利用量",
+    "usageAllTimeDesc": "トークン / ページ",
     "usageCost": "今月の利用料",
     "usageCostDesc": "料金プラン未設定のため参考",
     "billing": "請求情報",
@@ -157,7 +160,9 @@
       "aiSettings": "AI設定",
       "chatCollapse": "チャットを閉じる ⌘⇧B",
       "chatExpand": "チャットを開く ⌘⇧B",
-      "rename": "名前を変更"
+      "rename": "名前を変更",
+      "delete": "削除",
+      "menu": "その他"
     },
     "viewer": {
       "noDocument": "PDF未選択",
