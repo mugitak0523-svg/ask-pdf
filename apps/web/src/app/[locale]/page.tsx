@@ -274,7 +274,9 @@ export default function Home() {
         parsed.settingsSection === "account" ||
         parsed.settingsSection === "usage" ||
         parsed.settingsSection === "messages" ||
-        parsed.settingsSection === "manual"
+        parsed.settingsSection === "manual" ||
+        parsed.settingsSection === "service" ||
+        parsed.settingsSection === "faq"
       ) {
         setSettingsSection(parsed.settingsSection);
       }
@@ -351,7 +353,7 @@ export default function Home() {
   const [referenceRequest, setReferenceRequest] = useState<ReferenceRequest | null>(null);
   const [activeRefId, setActiveRefId] = useState<string | null>(null);
   const [settingsSection, setSettingsSection] = useState<
-    "general" | "ai" | "account" | "usage" | "messages" | "manual"
+    "general" | "ai" | "account" | "usage" | "messages" | "manual" | "service" | "faq"
   >("general");
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
@@ -621,7 +623,9 @@ export default function Home() {
       restore.settingsSection === "account" ||
       restore.settingsSection === "usage" ||
       restore.settingsSection === "messages" ||
-      restore.settingsSection === "manual"
+      restore.settingsSection === "manual" ||
+      restore.settingsSection === "service" ||
+      restore.settingsSection === "faq"
         ? restore.settingsSection
         : "general";
     const restoreActiveChatId =
@@ -1097,6 +1101,34 @@ export default function Home() {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to delete chat";
+      setChatError(message);
+    }
+  };
+
+  const handleReloadDocuments = async () => {
+    try {
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.access_token;
+      if (!accessToken) return;
+      await loadDocuments(accessToken);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to reload documents";
+      setDocsError(message);
+    }
+  };
+
+  const handleReloadChatsList = async () => {
+    try {
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.access_token;
+      if (!accessToken) return;
+      if (!selectedDocumentId) {
+        await loadAllChats(accessToken);
+        return;
+      }
+      await loadChats(selectedDocumentId, accessToken, { autoOpen: false });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to reload chats";
       setChatError(message);
     }
   };
@@ -1807,16 +1839,6 @@ export default function Home() {
           <div className="settings__group">
             <div className="settings__item">
               <div>
-                <div className="settings__item-title">{t("startScreen")}</div>
-                <div className="settings__item-desc">{t("startScreenDesc")}</div>
-              </div>
-              <select className="settings__select">
-                <option>{t("settings.restore")}</option>
-                <option>{t("settings.resetEveryTime")}</option>
-              </select>
-            </div>
-            <div className="settings__item">
-              <div>
                 <div className="settings__item-title">{t("language")}</div>
                 <div className="settings__item-desc">{t("languageDesc")}</div>
               </div>
@@ -1865,25 +1887,6 @@ export default function Home() {
                 <option value="system">{t("themeSystem")}</option>
               </select>
             </div>
-            <div className="settings__item">
-              <div>
-                <div className="settings__item-title">{t("timeFormat")}</div>
-                <div className="settings__item-desc">{t("timeFormatDesc")}</div>
-              </div>
-              <select className="settings__select">
-                <option>{t("time24h")}</option>
-                <option>{t("time12h")}</option>
-              </select>
-            </div>
-            <div className="settings__item">
-              <div>
-                <div className="settings__item-title">{t("notifications")}</div>
-                <div className="settings__item-desc">{t("notificationsDesc")}</div>
-              </div>
-              <button type="button" className="settings__btn">
-                {t("settingsOpen")}
-              </button>
-            </div>
           </div>
         </>
       );
@@ -1895,26 +1898,8 @@ export default function Home() {
           <div className="settings__group">
             <div className="settings__item">
               <div>
-                <div className="settings__item-title">{t("defaultModel")}</div>
-                <div className="settings__item-desc">{t("defaultModelDesc")}</div>
-              </div>
-              <select
-                className="settings__select"
-                value={chatMode}
-                onChange={(event) => {
-                  const value = event.target.value as "fast" | "standard" | "think";
-                  setChatMode(value);
-                }}
-              >
-                <option value="fast">fast</option>
-                <option value="standard">standard</option>
-                <option value="think">think</option>
-              </select>
-            </div>
-            <div className="settings__item">
-              <div>
-                <div className="settings__item-title">{t("ragSettings")}</div>
-                <div className="settings__item-desc">{t("ragSettingsDesc")}</div>
+                <div className="settings__item-title">{t("aiTuning")}</div>
+                <div className="settings__item-desc">{t("aiTuningDesc")}</div>
               </div>
               <button type="button" className="settings__btn">
                 {t("open")}
@@ -1922,34 +1907,11 @@ export default function Home() {
             </div>
             <div className="settings__item">
               <div>
-                <div className="settings__item-title">{t("longAnswer")}</div>
-                <div className="settings__item-desc">{t("longAnswerDesc")}</div>
-              </div>
-              <select className="settings__select">
-                <option>{t("answerLength.standard")}</option>
-                <option>{t("answerLength.short")}</option>
-                <option>{t("answerLength.veryShort")}</option>
-              </select>
-            </div>
-            <div className="settings__item">
-              <div>
-                <div className="settings__item-title">{t("answerStyle")}</div>
-                <div className="settings__item-desc">{t("answerStyleDesc")}</div>
-              </div>
-              <select className="settings__select">
-                <option>{t("answerStyleOption.standard")}</option>
-                <option>{t("answerStyleOption.short")}</option>
-                <option>{t("answerStyleOption.polite")}</option>
-                <option>{t("answerStyleOption.bullets")}</option>
-              </select>
-            </div>
-            <div className="settings__item">
-              <div>
-                <div className="settings__item-title">{t("safetyMode")}</div>
-                <div className="settings__item-desc">{t("safetyModeDesc")}</div>
+                <div className="settings__item-title">{t("aiPersonalize")}</div>
+                <div className="settings__item-desc">{t("aiPersonalizeDesc")}</div>
               </div>
               <button type="button" className="settings__btn">
-                {t("settingsOpen")}
+                {t("open")}
               </button>
             </div>
           </div>
@@ -1957,26 +1919,6 @@ export default function Home() {
       );
     }
     if (settingsSection === "account") {
-      const currentUsage = usageSummary?.current;
-      const usageValue = usageLoading
-        ? t("common.loading")
-        : usageError
-          ? t("common.fetchFailed")
-          : currentUsage
-            ? t("usage.summary", {
-                tokens: formatNumber(currentUsage.totalTokens),
-                pages: formatNumber(currentUsage.pages),
-              })
-            : t("common.noData");
-      const usageCost = usageLoading
-        ? t("common.loading")
-        : usageError
-          ? t("common.fetchFailed")
-          : currentUsage
-            ? currentUsage.costYen === null
-              ? currentUsage.costNote ?? t("common.unset")
-              : t("common.yen", { value: formatNumber(currentUsage.costYen) })
-            : t("common.noData");
       return (
         <>
           <h2 className="settings__title">{t("account")}</h2>
@@ -2007,20 +1949,6 @@ export default function Home() {
               <div className="settings__value">
                 {planLabel}
               </div>
-            </div>
-            <div className="settings__item">
-              <div>
-                <div className="settings__item-title">{t("usageThisMonth")}</div>
-                <div className="settings__item-desc">{t("usageThisMonthDesc")}</div>
-              </div>
-              <div className="settings__value">{usageValue}</div>
-            </div>
-            <div className="settings__item">
-              <div>
-                <div className="settings__item-title">{t("usageCost")}</div>
-                <div className="settings__item-desc">{t("usageCostDesc")}</div>
-              </div>
-              <div className="settings__value">{usageCost}</div>
             </div>
             <div className="settings__item">
               <div>
@@ -2112,17 +2040,17 @@ export default function Home() {
           <div className="settings__group">
             <div className="settings__item">
               <div>
-                <div className="settings__item-title">{t("messages.refsTitle")}</div>
-                <div className="settings__item-desc">{t("messages.refsDesc")}</div>
+                <div className="settings__item-title">{t("messages.noticeTitle")}</div>
+                <div className="settings__item-desc">{t("messages.noticeDesc")}</div>
               </div>
               <button type="button" className="settings__btn">
-                {t("settingsOpen")}
+                {t("open")}
               </button>
             </div>
             <div className="settings__item">
               <div>
-                <div className="settings__item-title">{t("messages.soundTitle")}</div>
-                <div className="settings__item-desc">{t("messages.soundDesc")}</div>
+                <div className="settings__item-title">{t("messages.feedbackTitle")}</div>
+                <div className="settings__item-desc">{t("messages.feedbackDesc")}</div>
               </div>
               <select className="settings__select">
                 <option>{t("common.on")}</option>
@@ -2131,29 +2059,56 @@ export default function Home() {
             </div>
             <div className="settings__item">
               <div>
-                <div className="settings__item-title">{t("messages.readReceiptTitle")}</div>
-                <div className="settings__item-desc">{t("messages.readReceiptDesc")}</div>
+                <div className="settings__item-title">{t("messages.contactTitle")}</div>
+                <div className="settings__item-desc">{t("messages.contactDesc")}</div>
               </div>
               <button type="button" className="settings__btn">
-                {t("settingsOpen")}
+                {t("open")}
+              </button>
+            </div>
+          </div>
+        </>
+      );
+    }
+    if (settingsSection === "service") {
+      return (
+        <>
+          <h2 className="settings__title">{t("serviceTitle")}</h2>
+          <div className="settings__group">
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">{t("servicePlanTitle")}</div>
+                <div className="settings__item-desc">{t("servicePlanDesc")}</div>
+              </div>
+              <button type="button" className="settings__btn">
+                {t("open")}
               </button>
             </div>
             <div className="settings__item">
               <div>
-                <div className="settings__item-title">{t("messages.clearHistoryTitle")}</div>
-                <div className="settings__item-desc">{t("messages.clearHistoryDesc")}</div>
-              </div>
-              <button type="button" className="settings__btn settings__btn--danger">
-                {t("common.delete")}
-              </button>
-            </div>
-            <div className="settings__item">
-              <div>
-                <div className="settings__item-title">{t("messages.exportTitle")}</div>
-                <div className="settings__item-desc">{t("messages.exportDesc")}</div>
+                <div className="settings__item-title">{t("servicePolicyTitle")}</div>
+                <div className="settings__item-desc">{t("servicePolicyDesc")}</div>
               </div>
               <button type="button" className="settings__btn">
-                {t("messages.exportAction")}
+                {t("open")}
+              </button>
+            </div>
+          </div>
+        </>
+      );
+    }
+    if (settingsSection === "faq") {
+      return (
+        <>
+          <h2 className="settings__title">{t("faqTitle")}</h2>
+          <div className="settings__group">
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">{t("faqGeneralTitle")}</div>
+                <div className="settings__item-desc">{t("faqGeneralDesc")}</div>
+              </div>
+              <button type="button" className="settings__btn">
+                {t("open")}
               </button>
             </div>
           </div>
@@ -2169,22 +2124,6 @@ export default function Home() {
               <div className="settings__item-title">{t("manual.basicsTitle")}</div>
               <div className="settings__item-desc">
                 {t("manual.basicsDesc")}
-              </div>
-            </div>
-            <button type="button" className="settings__btn">{t("open")}</button>
-          </div>
-          <div className="settings__item">
-            <div>
-              <div className="settings__item-title">{t("manual.shortcutsTitle")}</div>
-              <div className="settings__item-desc">{t("manual.shortcutsDesc")}</div>
-            </div>
-            <button type="button" className="settings__btn">{t("open")}</button>
-          </div>
-          <div className="settings__item">
-            <div>
-              <div className="settings__item-title">FAQ</div>
-              <div className="settings__item-desc">
-                {t("manual.faqDesc")}
               </div>
             </div>
             <button type="button" className="settings__btn">{t("open")}</button>
@@ -2457,7 +2396,33 @@ export default function Home() {
         <div className="sidebar__list">
           {isAuthed ? (
             docsLoading ? (
-              <p className="auth-hint">{renderLoadingText(t("common.loading"))}</p>
+              <div className="auth-hint auth-hint--inline">
+                <p>{renderLoadingText(t("common.loading"))}</p>
+                <button
+                  type="button"
+                  className="list-reload"
+                  onClick={handleReloadDocuments}
+                  aria-label={t("common.reload")}
+                  data-tooltip={t("common.reload")}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                    <path d="M19.933 13.041a8 8 0 1 1 -9.925 -8.788c3.899 -1 7.935 1.007 9.425 4.747" />
+                    <path d="M20 4v5h-5" />
+                  </svg>
+                </button>
+              </div>
             ) : docsError ? (
               <div className="auth-hint">
                 <p>{t("common.errorOccurred")}</p>
@@ -2835,6 +2800,8 @@ export default function Home() {
                       { id: "usage", label: t("usageTab") },
                       { id: "messages", label: t("messages.title") },
                       { id: "manual", label: t("manual.title") },
+                      { id: "service", label: t("serviceTitle") },
+                      { id: "faq", label: t("faqTitle") },
                     ].map((item) => (
                       <button
                         key={item.id}
@@ -3100,7 +3067,35 @@ export default function Home() {
               ref={chatMessagesRef}
             >
               {chatLoading ? (
-                <div className="empty-state">{renderLoadingText(t("common.loading"))}</div>
+                <div className="empty-state">
+                  <div className="empty-state__row">
+                    {renderLoadingText(t("common.loading"))}
+                    <button
+                      type="button"
+                      className="list-reload"
+                      onClick={handleReloadChatsList}
+                      aria-label={t("common.reload")}
+                      data-tooltip={t("common.reload")}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                        <path d="M19.933 13.041a8 8 0 1 1 -9.925 -8.788c3.899 -1 7.935 1.007 9.425 4.747" />
+                        <path d="M20 4v5h-5" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
               ) : chatError ? (
                 <div className="empty-state">{t("common.errorOccurred")}</div>
               ) : !selectedDocumentId ? (

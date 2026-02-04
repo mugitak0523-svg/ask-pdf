@@ -439,6 +439,36 @@ button {
   font-size: 13px;
 }
 
+.auth-hint--inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.empty-state__row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.list-reload {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.list-reload:hover {
+  color: var(--text);
+  background: var(--panel-soft);
+}
+
 .auth-link {
   text-align: center;
   display: block;
