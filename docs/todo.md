@@ -6,6 +6,7 @@
 
 ## PDF Viewer
 - PDFビューアの機能拡張
+-annotation loading ...
 
 ## Chat / Account
 - AI返信の接続

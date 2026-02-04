@@ -82,6 +82,7 @@ export function PdfViewer({
   const [searchActiveTotal, setSearchActiveTotal] = useState(0);
   const lastSearchQueryRef = useRef("");
   const [showThumbs, setShowThumbs] = useState(true);
+  const [showReloadButton, setShowReloadButton] = useState(false);
   const [annotationsLoading, setAnnotationsLoading] = useState(false);
   const [annotationsHydrated, setAnnotationsHydrated] = useState(false);
   const annotationsAbortRef = useRef<AbortController | null>(null);
@@ -554,6 +555,22 @@ export function PdfViewer({
   useEffect(() => {
     void reloadAnnotations();
   }, [reloadAnnotations]);
+
+  const showAnnotationsHint =
+    state !== "error" &&
+    (annotationsLoading || (!annotationsHydrated && documentId && accessToken));
+
+  useEffect(() => {
+    if (!showAnnotationsHint) {
+      setShowReloadButton(false);
+      return;
+    }
+    setShowReloadButton(false);
+    const timer = window.setTimeout(() => {
+      setShowReloadButton(true);
+    }, 10000);
+    return () => window.clearTimeout(timer);
+  }, [showAnnotationsHint]);
 
   useEffect(() => {
     canPersistRef.current = false;
@@ -2462,33 +2479,35 @@ export function PdfViewer({
           {errorMessage ? <span className="pdf-embed__error">{errorMessage}</span> : null}
         </div>
       ) : null}
-      {state !== "error" && (annotationsLoading || (!annotationsHydrated && documentId && accessToken)) ? (
+      {state !== "error" && showAnnotationsHint ? (
         <div className="pdf-embed__hint">
           {renderLoadingText("Annotation loading...")}
-          <button
-            type="button"
-            className="pdf-embed__hint-action"
-            onClick={() => void reloadAnnotations()}
-            aria-label={t("annotationsReload")}
-            data-tooltip={t("annotationsReload")}
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
+          {showReloadButton ? (
+            <button
+              type="button"
+              className="pdf-embed__hint-action"
+              onClick={() => void reloadAnnotations()}
+              aria-label={t("annotationsReload")}
+              data-tooltip={t("annotationsReload")}
             >
-              <polyline points="1 4 1 10 7 10" />
-              <path d="M3.5 15a9 9 0 0 0 14.13 3.36" />
-              <path d="M20.5 9a9 9 0 0 0-14.13-3.36" />
-              <polyline points="23 20 23 14 17 14" />
-            </svg>
-          </button>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path d="M19.933 13.041a8 8 0 1 1 -9.925 -8.788c3.899 -1 7.935 1.007 9.425 4.747" />
+                <path d="M20 4v5h-5" />
+              </svg>
+            </button>
+          ) : null}
         </div>
       ) : null}
       <div className={`pdf-embed__layout ${showThumbs ? "" : "is-thumbs-collapsed"}`}>
