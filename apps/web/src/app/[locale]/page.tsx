@@ -103,6 +103,7 @@ export default function Home() {
   const [chatWidth, setChatWidth] = useState(360);
   const [chatInput, setChatInput] = useState("");
   const [chatMode, setChatMode] = useState<"fast" | "standard" | "think">("standard");
+  const [chatOpen, setChatOpen] = useState(true);
   const chatMessagesRef = useRef<HTMLDivElement | null>(null);
   const [showChatJump, setShowChatJump] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -204,6 +205,9 @@ export default function Home() {
       }
       if (Number.isFinite(parsed.chatWidth)) {
         setChatWidth(parsed.chatWidth);
+      }
+      if (typeof parsed.chatOpen === "boolean") {
+        setChatOpen(parsed.chatOpen);
       }
       if (typeof parsed.sidebarOpen === "boolean") {
         setSidebarOpen(parsed.sidebarOpen);
@@ -322,15 +326,19 @@ export default function Home() {
 
   const mainStyle = useMemo(
     () => ({
-      gridTemplateColumns: `minmax(0, 1fr) 6px ${chatWidth}px`,
+      gridTemplateColumns: chatOpen
+        ? `minmax(0, 1fr) 6px ${chatWidth}px`
+        : "minmax(0, 1fr) 0px 0px",
     }),
-    [chatWidth]
+    [chatOpen, chatWidth]
   );
   const topbarStyle = useMemo(
     () => ({
-      gridTemplateColumns: `minmax(0, 1fr) 6px ${chatWidth}px`,
+      gridTemplateColumns: chatOpen
+        ? `minmax(0, 1fr) 6px ${chatWidth}px`
+        : "minmax(0, 1fr) 0px 0px",
     }),
-    [chatWidth]
+    [chatOpen, chatWidth]
   );
 
   const handleResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -416,6 +424,45 @@ export default function Home() {
   }, [chatInput]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new Event("askpdf:layout"));
+  }, [chatOpen]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raf = requestAnimationFrame(() => {
+      window.dispatchEvent(new Event("askpdf:layout"));
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [chatWidth]);
+
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (!event.metaKey || !event.shiftKey || event.key.toLowerCase() !== "b") return;
+      event.preventDefault();
+      setChatOpen((prev) => !prev);
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
+
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      const isModifier = event.metaKey || event.ctrlKey;
+      if (!isModifier || event.key.toLowerCase() !== "k") return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, [contenteditable='true']")) return;
+      event.preventDefault();
+      setChatOpen(true);
+      requestAnimationFrame(() => {
+        chatInputRef.current?.focus();
+      });
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
+
+  useEffect(() => {
     const root = document.documentElement;
     if (theme === "system") {
       root.removeAttribute("data-theme");
@@ -442,6 +489,7 @@ export default function Home() {
       theme,
       chatMode,
       chatWidth,
+      chatOpen,
       sidebarOpen,
       settingsSection,
       showThreadList,
@@ -456,6 +504,7 @@ export default function Home() {
     theme,
     chatMode,
     chatWidth,
+    chatOpen,
     sidebarOpen,
     settingsSection,
     showThreadList,
@@ -1119,7 +1168,7 @@ export default function Home() {
       resizeObserver.disconnect();
       window.removeEventListener("resize", updateOverflow);
     };
-  }, [openDocuments.length, chatWidth]);
+  }, [openDocuments.length, chatWidth, chatOpen]);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -2411,17 +2460,48 @@ export default function Home() {
             ) : (
               <div className="empty-state">{t("viewer.empty")}</div>
             )}
+            <button
+              type="button"
+              className="viewer__chat-toggle"
+              onClick={() => setChatOpen((prev) => !prev)}
+              aria-label={chatOpen ? "Collapse chat" : "Expand chat"}
+              data-tooltip={chatOpen ? t("tooltip.chatCollapse") : t("tooltip.chatExpand")}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                {chatOpen ? (
+                  <polyline
+                    points="9 6 15 12 9 18"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                ) : (
+                  <polyline
+                    points="15 6 9 12 15 18"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                )}
+              </svg>
+            </button>
           </div>
         </section>
 
-        <div
-          className="resizer"
-          role="separator"
-          aria-orientation="vertical"
-          onPointerDown={handleResizeStart}
-        />
+        {chatOpen ? (
+          <div
+            className="resizer"
+            role="separator"
+            aria-orientation="vertical"
+            onPointerDown={handleResizeStart}
+          />
+        ) : null}
 
-        <section className="chat">
+        <section className={`chat ${chatOpen ? "" : "chat--collapsed"}`}>
           <div className="chat__header">
             {selectedDocumentId ? (
               <div className="chat__header-left">
@@ -2641,7 +2721,12 @@ export default function Home() {
                 )
               ) : showThreadList ? (
                 chatThreads.length === 0 ? (
-                  <div className="empty-state">{t("chat.noDocumentChats")}</div>
+                  <div className="empty-state">
+                    <div>{t("chat.noDocumentChats")}</div>
+                    <button type="button" className="primary" onClick={handleCreateChat}>
+                      {t("chat.newChat")}
+                    </button>
+                  </div>
                 ) : (
                   <div className="chat__thread-list">
                     {chatThreads.map((thread) => (

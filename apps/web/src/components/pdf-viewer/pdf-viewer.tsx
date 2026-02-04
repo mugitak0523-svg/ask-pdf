@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 
 type PdfViewerProps = {
@@ -48,6 +48,7 @@ type PdfPersistState = {
   zoom?: number;
   scrollTop?: number;
   page?: number;
+  showThumbs?: boolean;
   updatedAt?: number;
 };
 
@@ -80,6 +81,7 @@ export function PdfViewer({
   const [searchActiveIndex, setSearchActiveIndex] = useState(0);
   const [searchActiveTotal, setSearchActiveTotal] = useState(0);
   const lastSearchQueryRef = useRef("");
+  const [showThumbs, setShowThumbs] = useState(true);
   const [annotationsLoading, setAnnotationsLoading] = useState(false);
   const [annotationsHydrated, setAnnotationsHydrated] = useState(false);
   const annotationsAbortRef = useRef<AbortController | null>(null);
@@ -129,10 +131,82 @@ export function PdfViewer({
   const saveRafRef = useRef<number | null>(null);
   const currentPageRef = useRef(1);
   const zoomRef = useRef(1);
+  const markerRafRef = useRef<number | null>(null);
+  const markerSizeRef = useRef<{ height: number; scrollHeight: number; stable: number }>({
+    height: 0,
+    scrollHeight: 0,
+    stable: 0,
+  });
 
   const minZoom = 0.6;
   const maxZoom = 2.4;
   const zoomStep = 0.15;
+
+  const renderLoadingText = (text: string) => (
+    <span className="loading-fade" aria-label={text}>
+      {text.split("").map((char, index) => (
+        <span
+          key={`${char}-${index}`}
+          style={{
+            ["--fade-delay" as React.CSSProperties["--fade-delay"]]: `${index * 0.08}s`,
+          }}
+        >
+          {char}
+        </span>
+      ))}
+    </span>
+  );
+
+  const reloadAnnotations = useCallback(async () => {
+    if (!documentId || !accessToken) {
+      setAnnotations({});
+      annotationsHydratedRef.current = false;
+      setAnnotationsLoading(false);
+      setAnnotationsHydrated(false);
+      return;
+    }
+    annotationsHydratedRef.current = false;
+    setAnnotationsLoading(true);
+    setAnnotationsHydrated(false);
+    try {
+      annotationsAbortRef.current?.abort();
+      const controller = new AbortController();
+      annotationsAbortRef.current = controller;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/documents/${documentId}/annotations`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        setAnnotations({});
+        annotationsHydratedRef.current = true;
+        return;
+      }
+      const payload = await response.json();
+      const data = payload?.annotations;
+      if (data && typeof data === "object" && !Array.isArray(data)) {
+        setAnnotations(data as Record<number, Record<number, Annotation[]>>);
+      } else {
+        setAnnotations({});
+      }
+      annotationsHydratedRef.current = true;
+      setAnnotationsHydrated(true);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
+      setAnnotations({});
+      annotationsHydratedRef.current = true;
+      setAnnotationsHydrated(true);
+    } finally {
+      if (annotationsAbortRef.current) {
+        annotationsAbortRef.current = null;
+      }
+      setAnnotationsLoading(false);
+    }
+  }, [accessToken, documentId]);
 
   const readPdfState = () => {
     if (typeof window === "undefined") return {};
@@ -164,10 +238,8 @@ export function PdfViewer({
     const markers = markersRef.current;
     const container = containerRef.current;
     if (!markers || !container) return;
-    markers.innerHTML = "";
     const scrollHeight = container.scrollHeight;
     const clientHeight = container.clientHeight;
-    if (scrollHeight <= clientHeight) return;
 
     const pageNodes = new Map<number, HTMLElement>();
     container
@@ -192,6 +264,16 @@ export function PdfViewer({
         (item): item is { page: number; items: Annotation[] } => Boolean(item)
       )
       .sort((a, b) => a.page - b.page);
+
+    if (annotatedPages.length === 0) {
+      return;
+    }
+
+    if (clientHeight === 0 || scrollHeight <= clientHeight) {
+      return;
+    }
+
+    markers.innerHTML = "";
 
     annotatedPages.forEach(({ page, items }) => {
       const node = pageNodes.get(page);
@@ -235,6 +317,52 @@ export function PdfViewer({
       });
     });
   };
+
+  const scheduleMarkerRefresh = () => {
+    if (markerRafRef.current !== null) {
+      cancelAnimationFrame(markerRafRef.current);
+    }
+    const start = performance.now();
+    const tick = () => {
+      const container = containerRef.current;
+      if (!container) {
+        markerRafRef.current = null;
+        return;
+      }
+      const height = container.clientHeight;
+      const scrollHeight = container.scrollHeight;
+      if (
+        height > 0 &&
+        scrollHeight > 0 &&
+        height === markerSizeRef.current.height &&
+        scrollHeight === markerSizeRef.current.scrollHeight
+      ) {
+        markerSizeRef.current.stable += 1;
+      } else {
+        markerSizeRef.current.height = height;
+        markerSizeRef.current.scrollHeight = scrollHeight;
+        markerSizeRef.current.stable = 0;
+      }
+      if (markerSizeRef.current.stable >= 1 || performance.now() - start > 500) {
+        updateAnnotationMarkers();
+        markerRafRef.current = null;
+        markerSizeRef.current.stable = 0;
+        return;
+      }
+      markerRafRef.current = requestAnimationFrame(tick);
+    };
+    markerRafRef.current = requestAnimationFrame(tick);
+  };
+
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (!event.metaKey || event.shiftKey || event.key.toLowerCase() !== "b") return;
+      event.preventDefault();
+      setShowThumbs((prev) => !prev);
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
 
   const getFirstAnnotationOffset = (pageNumber: number) => {
     const container = containerRef.current;
@@ -424,58 +552,8 @@ export function PdfViewer({
   }, [zoom]);
 
   useEffect(() => {
-    const loadAnnotations = async () => {
-      if (!documentId || !accessToken) {
-        setAnnotations({});
-        annotationsHydratedRef.current = false;
-        setAnnotationsLoading(false);
-        setAnnotationsHydrated(false);
-        return;
-      }
-      annotationsHydratedRef.current = false;
-      setAnnotationsLoading(true);
-      setAnnotationsHydrated(false);
-      try {
-        annotationsAbortRef.current?.abort();
-        const controller = new AbortController();
-        annotationsAbortRef.current = controller;
-        const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
-        const response = await fetch(`${baseUrl}/documents/${documentId}/annotations`, {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-          signal: controller.signal,
-        });
-        if (!response.ok) {
-          setAnnotations({});
-          annotationsHydratedRef.current = true;
-          return;
-        }
-        const payload = await response.json();
-        const data = payload?.annotations;
-        if (data && typeof data === "object" && !Array.isArray(data)) {
-          setAnnotations(data as Record<number, Record<number, Annotation[]>>);
-        } else {
-          setAnnotations({});
-        }
-        annotationsHydratedRef.current = true;
-        setAnnotationsHydrated(true);
-      } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return;
-        }
-        setAnnotations({});
-        annotationsHydratedRef.current = true;
-        setAnnotationsHydrated(true);
-      } finally {
-        if (annotationsAbortRef.current) {
-          annotationsAbortRef.current = null;
-        }
-        setAnnotationsLoading(false);
-      }
-    };
-    void loadAnnotations();
-  }, [documentId, accessToken]);
+    void reloadAnnotations();
+  }, [reloadAnnotations]);
 
   useEffect(() => {
     canPersistRef.current = false;
@@ -485,10 +563,16 @@ export function PdfViewer({
     setPageInput("");
     if (!documentId) {
       setZoom(1);
+      setShowThumbs(true);
       return;
     }
     const store = readPdfState();
     const saved = store[documentId];
+    if (typeof saved?.showThumbs === "boolean") {
+      setShowThumbs(saved.showThumbs);
+    } else {
+      setShowThumbs(true);
+    }
     if (saved && Number.isFinite(saved.zoom)) {
       pendingRestoreRef.current = saved;
       setZoom(clamp(saved.zoom as number, minZoom, maxZoom));
@@ -534,17 +618,49 @@ export function PdfViewer({
   }, [pageMeta, totalPages]);
 
   useEffect(() => {
-    updateAnnotationMarkers();
+    scheduleMarkerRefresh();
   }, [annotations, pageMeta, zoom, state]);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     const resizeObserver = new ResizeObserver(() => {
-      updateAnnotationMarkers();
+      scheduleMarkerRefresh();
     });
     resizeObserver.observe(container);
-    return () => resizeObserver.disconnect();
+    const handleResize = () => {
+      scheduleMarkerRefresh();
+    };
+    window.addEventListener("resize", handleResize);
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
+
+  useEffect(() => {
+    scheduleMarkerRefresh();
+    return () => {
+      if (markerRafRef.current !== null) {
+        cancelAnimationFrame(markerRafRef.current);
+        markerRafRef.current = null;
+      }
+    };
+  }, [showThumbs]);
+
+  useEffect(() => {
+    if (!documentId) return;
+    if (!canPersistRef.current || isRestoringRef.current) return;
+    writePdfState({ showThumbs });
+  }, [documentId, showThumbs]);
+
+
+  useEffect(() => {
+    const handleLayout = () => {
+      scheduleMarkerRefresh();
+    };
+    window.addEventListener("askpdf:layout", handleLayout);
+    return () => window.removeEventListener("askpdf:layout", handleLayout);
   }, []);
 
   useEffect(() => {
@@ -2347,10 +2463,75 @@ export function PdfViewer({
         </div>
       ) : null}
       {state !== "error" && (annotationsLoading || (!annotationsHydrated && documentId && accessToken)) ? (
-        <div className="pdf-embed__hint">Annotation loading...</div>
+        <div className="pdf-embed__hint">
+          {renderLoadingText("Annotation loading...")}
+          <button
+            type="button"
+            className="pdf-embed__hint-action"
+            onClick={() => void reloadAnnotations()}
+            aria-label={t("annotationsReload")}
+            data-tooltip={t("annotationsReload")}
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="1 4 1 10 7 10" />
+              <path d="M3.5 15a9 9 0 0 0 14.13 3.36" />
+              <path d="M20.5 9a9 9 0 0 0-14.13-3.36" />
+              <polyline points="23 20 23 14 17 14" />
+            </svg>
+          </button>
+        </div>
       ) : null}
-      <div className="pdf-embed__layout">
-        <div ref={thumbsRef} className="pdf-embed__thumbs" />
+      <div className={`pdf-embed__layout ${showThumbs ? "" : "is-thumbs-collapsed"}`}>
+        <div className="pdf-embed__thumbs-wrap">
+          <div ref={thumbsRef} className="pdf-embed__thumbs" />
+        </div>
+        <div className="pdf-embed__thumb-toggle-wrap">
+          <button
+            type="button"
+            className="pdf-embed__thumb-toggle"
+            onClick={() => setShowThumbs((prev) => !prev)}
+            aria-label={showThumbs ? "Hide thumbnails" : "Show thumbnails"}
+            data-tooltip={showThumbs ? t("thumbsHide") : t("thumbsShow")}
+            data-tooltip-position="bottom"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              aria-hidden="true"
+            >
+              {showThumbs ? (
+                <polyline
+                  points="15 6 9 12 15 18"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              ) : (
+                <polyline
+                  points="9 6 15 12 9 18"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              )}
+            </svg>
+          </button>
+        </div>
         <div className="pdf-embed__page-wrap">
           <div
             ref={containerRef}

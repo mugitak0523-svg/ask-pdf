@@ -20,6 +20,8 @@
       "exportAction": "エクスポート"
     },
     "pdf": {
+      "thumbsHide": "サムネイルを閉じる",
+      "thumbsShow": "サムネイルを開く",
       "zoomOut": "縮小",
       "zoomOutTooltip": "縮小 ⌘⇧↓",
       "zoomIn": "拡大",
@@ -29,7 +31,8 @@
       "nextPage": "次へ",
       "nextPageTooltip": "次へ →",
       "download": "ダウンロード",
-      "downloadTooltip": "ダウンロード ⌘S"
+      "downloadTooltip": "ダウンロード ⌘S",
+      "annotationsReload": "再読み込み"
     },
     "manual": {
       "title": "使用説明書",
@@ -152,6 +155,8 @@
       "chatHistory": "チャット履歴",
       "newChat": "新規チャット",
       "aiSettings": "AI設定",
+      "chatCollapse": "チャットを閉じる",
+      "chatExpand": "チャットを開く",
       "rename": "名前を変更"
     },
     "viewer": {
@@ -171,7 +176,7 @@
       "noChats": "チャットはまだありません",
       "noDocumentChats": "このPDFのチャットはありません",
       "noMessages": "メッセージはまだありません",
-      "placeholder": "質問してみましょう",
+      "placeholder": "質問してみましょう ⌘K",
       "send": "送信",
       "stop": "停止"
     },

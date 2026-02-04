@@ -20,6 +20,8 @@
       "exportAction": "Export"
     },
     "pdf": {
+      "thumbsHide": "Hide thumbnails",
+      "thumbsShow": "Show thumbnails",
       "zoomOut": "Zoom out",
       "zoomOutTooltip": "Zoom out ⌘⇧↓",
       "zoomIn": "Zoom in",
@@ -29,7 +31,8 @@
       "nextPage": "Next page",
       "nextPageTooltip": "Next →",
       "download": "Download",
-      "downloadTooltip": "Download ⌘S"
+      "downloadTooltip": "Download ⌘S",
+      "annotationsReload": "Reload"
     },
     "manual": {
       "title": "Manual",
@@ -152,6 +155,8 @@
       "chatHistory": "Chat history",
       "newChat": "New chat",
       "aiSettings": "AI settings",
+      "chatCollapse": "Collapse chat",
+      "chatExpand": "Expand chat",
       "rename": "Rename"
     },
     "viewer": {
