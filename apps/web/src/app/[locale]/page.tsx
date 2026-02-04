@@ -59,6 +59,21 @@ type ReferenceRequest = {
 };
 
 type ThemeMode = "system" | "light" | "dark";
+type PlanName = "guest" | "free" | "plus" | "pro";
+
+type PlanLimits = {
+  maxFiles: number | null;
+  maxFileMb: number | null;
+  maxMessagesPerThread: number | null;
+  maxThreadsPerDocument: number | null;
+};
+
+const DEFAULT_PLAN_LIMITS: Record<PlanName, PlanLimits> = {
+  guest: { maxFiles: 3, maxFileMb: 10, maxMessagesPerThread: 10, maxThreadsPerDocument: null },
+  free: { maxFiles: 10, maxFileMb: 20, maxMessagesPerThread: 20, maxThreadsPerDocument: null },
+  plus: { maxFiles: 50, maxFileMb: 30, maxMessagesPerThread: 50, maxThreadsPerDocument: 5 },
+  pro: { maxFiles: null, maxFileMb: 50, maxMessagesPerThread: null, maxThreadsPerDocument: null },
+};
 
 const STORAGE_KEY = "askpdf.ui.v1";
 
@@ -125,7 +140,34 @@ export default function Home() {
       } else if (right > window.innerWidth - padding) {
         shift = window.innerWidth - padding - right;
       }
+      const clampedLeft = Math.max(padding, Math.min(window.innerWidth - padding, center + shift));
       target.style.setProperty("--tooltip-shift", `${shift}px`);
+      target.style.setProperty("--tooltip-left", `${clampedLeft}px`);
+      target.style.setProperty("--tooltip-top", `${rect.bottom + 8}px`);
+    };
+    const handleMove = (event: MouseEvent) => {
+      const target = (event.target as HTMLElement | null)?.closest?.(
+        "[data-tooltip]"
+      ) as HTMLElement | null;
+      if (!target) return;
+      if (!target.getAttribute("data-tooltip")) return;
+      const rect = target.getBoundingClientRect();
+      const center = rect.left + rect.width / 2;
+      const measuredWidth = measure.getBoundingClientRect().width;
+      const approxWidth = Math.min(320, Math.max(80, measuredWidth));
+      const left = center - approxWidth / 2;
+      const right = center + approxWidth / 2;
+      const padding = 8;
+      let shift = 0;
+      if (left < padding) {
+        shift = padding - left;
+      } else if (right > window.innerWidth - padding) {
+        shift = window.innerWidth - padding - right;
+      }
+      const clampedLeft = Math.max(padding, Math.min(window.innerWidth - padding, center + shift));
+      target.style.setProperty("--tooltip-shift", `${shift}px`);
+      target.style.setProperty("--tooltip-left", `${clampedLeft}px`);
+      target.style.setProperty("--tooltip-top", `${rect.bottom + 8}px`);
     };
     const handleOut = (event: MouseEvent) => {
       const target = (event.target as HTMLElement | null)?.closest?.(
@@ -133,11 +175,15 @@ export default function Home() {
       ) as HTMLElement | null;
       if (!target) return;
       target.style.removeProperty("--tooltip-shift");
+      target.style.removeProperty("--tooltip-left");
+      target.style.removeProperty("--tooltip-top");
     };
     document.addEventListener("mouseover", handleOver, true);
+    document.addEventListener("mousemove", handleMove, true);
     document.addEventListener("mouseout", handleOut, true);
     return () => {
       document.removeEventListener("mouseover", handleOver, true);
+      document.removeEventListener("mousemove", handleMove, true);
       document.removeEventListener("mouseout", handleOut, true);
       measure.remove();
     };
@@ -204,6 +250,8 @@ export default function Home() {
   >([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [showThreadList, setShowThreadList] = useState(false);
+  const [editingChatTitle, setEditingChatTitle] = useState(false);
+  const [chatTitleDraft, setChatTitleDraft] = useState("");
   const [allChatThreads, setAllChatThreads] = useState<
     {
       id: string;
@@ -232,6 +280,8 @@ export default function Home() {
   const [openDocuments, setOpenDocuments] = useState<OpenDocument[]>([]);
   const [selectedTabId, setSelectedTabId] = useState<string | null>(null);
   const [tabsOverflow, setTabsOverflow] = useState(false);
+  const [editingDocumentId, setEditingDocumentId] = useState<string | null>(null);
+  const [documentTitleDraft, setDocumentTitleDraft] = useState("");
   const [referenceRequest, setReferenceRequest] = useState<ReferenceRequest | null>(null);
   const [activeRefId, setActiveRefId] = useState<string | null>(null);
   const [settingsSection, setSettingsSection] = useState<
@@ -242,6 +292,8 @@ export default function Home() {
   const [usageLoading, setUsageLoading] = useState(false);
   const [usageError, setUsageError] = useState<string | null>(null);
   const [theme, setTheme] = useState<ThemeMode>("system");
+  const [plan, setPlan] = useState<PlanName>("guest");
+  const [planLimits, setPlanLimits] = useState<PlanLimits>(DEFAULT_PLAN_LIMITS.guest);
   const restoreRef = useRef<any | null>(null);
   const restoreDoneRef = useRef(false);
   const [isHydrated, setIsHydrated] = useState(false);
@@ -322,8 +374,11 @@ export default function Home() {
       if (data.session) {
         setUserEmail(data.session.user?.email ?? null);
         void loadDocuments(data.session.access_token);
+        void loadPlan(data.session.access_token);
       } else {
         setUserEmail(null);
+        setPlan("guest");
+        setPlanLimits(DEFAULT_PLAN_LIMITS.guest);
       }
     });
     const {
@@ -333,6 +388,7 @@ export default function Home() {
       if (session) {
         setUserEmail(session.user?.email ?? null);
         void loadDocuments(session.access_token);
+        void loadPlan(session.access_token);
         if (selectedDocumentId) {
           void loadChats(selectedDocumentId, session.access_token);
         } else {
@@ -340,6 +396,8 @@ export default function Home() {
         }
       } else {
         setUserEmail(null);
+        setPlan("guest");
+        setPlanLimits(DEFAULT_PLAN_LIMITS.guest);
         setDocuments([]);
         setChatMessages([]);
         setChatError(null);
@@ -809,6 +867,46 @@ export default function Home() {
     }
   };
 
+  const loadPlan = async (accessToken: string) => {
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/plans/me`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load plan (${response.status})`);
+      }
+      const payload = await response.json();
+      const nextPlan =
+        payload?.plan === "free" ||
+        payload?.plan === "plus" ||
+        payload?.plan === "pro"
+          ? payload.plan
+          : "free";
+      const limits = payload?.limits ?? {};
+      setPlan(nextPlan);
+      setPlanLimits({
+        maxFiles:
+          typeof limits.maxFiles === "number" ? limits.maxFiles : DEFAULT_PLAN_LIMITS[nextPlan].maxFiles,
+        maxFileMb:
+          typeof limits.maxFileMb === "number" ? limits.maxFileMb : DEFAULT_PLAN_LIMITS[nextPlan].maxFileMb,
+        maxMessagesPerThread:
+          typeof limits.maxMessagesPerThread === "number"
+            ? limits.maxMessagesPerThread
+            : DEFAULT_PLAN_LIMITS[nextPlan].maxMessagesPerThread,
+        maxThreadsPerDocument:
+          typeof limits.maxThreadsPerDocument === "number"
+            ? limits.maxThreadsPerDocument
+            : DEFAULT_PLAN_LIMITS[nextPlan].maxThreadsPerDocument,
+      });
+    } catch {
+      setPlan("free");
+      setPlanLimits(DEFAULT_PLAN_LIMITS.free);
+    }
+  };
+
   const handleUploadClick = () => {
     if (!isAuthed) return;
     fileInputRef.current?.click();
@@ -817,6 +915,19 @@ export default function Home() {
   const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (planLimits.maxFiles !== null && documents.length >= planLimits.maxFiles) {
+      setDocsError(t("errors.documentLimit", { limit: planLimits.maxFiles }));
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+    if (
+      planLimits.maxFileMb !== null &&
+      file.size > planLimits.maxFileMb * 1024 * 1024
+    ) {
+      setDocsError(t("errors.fileSizeLimit", { limit: planLimits.maxFileMb }));
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
     setUploading(true);
     setDocsError(null);
     try {
@@ -1105,6 +1216,14 @@ export default function Home() {
       : chatThreads.find((thread) => thread.id === activeChatId)?.title ??
         (activeChatId ? t("chat.newChat") : t("chat.chat"))
     : t("chat.allChatList");
+  const planLabel =
+    plan === "guest"
+      ? t("planGuest")
+      : plan === "plus"
+        ? t("planPlus")
+        : plan === "pro"
+          ? t("planPro")
+          : t("planFree");
 
   const formatRelativeTime = (value: string | null) => {
     if (!value) return "";
@@ -1142,6 +1261,14 @@ export default function Home() {
     if (!trimmed) return;
     if (chatSending) return;
     if (!selectedDocumentId || !activeChatId) return;
+    const userMessageCount = chatMessages.filter((msg) => msg.role === "user").length;
+    if (
+      planLimits.maxMessagesPerThread !== null &&
+      userMessageCount >= planLimits.maxMessagesPerThread
+    ) {
+      setChatError(t("errors.messageLimit", { limit: planLimits.maxMessagesPerThread }));
+      return;
+    }
     const message: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
@@ -1573,7 +1700,7 @@ export default function Home() {
                 <div className="settings__item-desc">{t("planDesc")}</div>
               </div>
               <div className="settings__value">
-                {t("planFree")}
+                {planLabel}
               </div>
             </div>
             <div className="settings__item">
@@ -1708,6 +1835,13 @@ export default function Home() {
 
   const handleCreateChat = async () => {
     if (!selectedDocumentId) return;
+    if (
+      planLimits.maxThreadsPerDocument !== null &&
+      chatThreads.length >= planLimits.maxThreadsPerDocument
+    ) {
+      setChatError(t("errors.threadLimit", { limit: planLimits.maxThreadsPerDocument }));
+      return;
+    }
     const session = await supabase.auth.getSession();
     const accessToken = session.data.session?.access_token;
     if (!accessToken) return;
@@ -1720,6 +1854,126 @@ export default function Home() {
     setChatMessages([]);
     setShowThreadList(false);
     await loadChatMessages(selectedDocumentId, created.id, accessToken);
+  };
+
+  const applyDocumentTitleUpdate = (docId: string, title: string) => {
+    setDocuments((prev) =>
+      prev.map((doc) => (doc.id === docId ? { ...doc, title } : doc))
+    );
+    setOpenDocuments((prev) =>
+      prev.map((doc) => (doc.id === docId ? { ...doc, title } : doc))
+    );
+    setAllChatThreads((prev) =>
+      prev.map((thread) =>
+        thread.documentId === docId ? { ...thread, documentTitle: title } : thread
+      )
+    );
+    if (selectedDocumentId === docId) {
+      setSelectedDocumentTitle(title);
+    }
+  };
+
+  const startRenameDocument = (doc: DocumentItem) => {
+    setEditingDocumentId(doc.id);
+    setDocumentTitleDraft(doc.title);
+  };
+
+  const cancelRenameDocument = () => {
+    setEditingDocumentId(null);
+    setDocumentTitleDraft("");
+  };
+
+  const saveRenameDocument = async (docId: string) => {
+    const nextTitle = documentTitleDraft.trim();
+    if (!nextTitle) {
+      cancelRenameDocument();
+      return;
+    }
+    try {
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.access_token;
+      if (!accessToken) {
+        throw new Error("Not authenticated");
+      }
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/documents/${docId}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ title: nextTitle }),
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to rename (${response.status})`);
+      }
+      applyDocumentTitleUpdate(docId, nextTitle);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Rename failed";
+      setDocsError(message);
+    } finally {
+      cancelRenameDocument();
+    }
+  };
+
+  const startEditChatTitle = () => {
+    if (!activeChatId || showThreadList) return;
+    const current =
+      chatThreads.find((thread) => thread.id === activeChatId)?.title ??
+      t("chat.newChat");
+    setEditingChatTitle(true);
+    setChatTitleDraft(current);
+  };
+
+  const cancelEditChatTitle = () => {
+    setEditingChatTitle(false);
+    setChatTitleDraft("");
+  };
+
+  const saveChatTitle = async () => {
+    if (!selectedDocumentId || !activeChatId) return;
+    const nextTitle = chatTitleDraft.trim();
+    if (!nextTitle) {
+      cancelEditChatTitle();
+      return;
+    }
+    try {
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.access_token;
+      if (!accessToken) {
+        throw new Error("Not authenticated");
+      }
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(
+        `${baseUrl}/documents/${selectedDocumentId}/chats/${activeChatId}`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ title: nextTitle }),
+        }
+      );
+      if (!response.ok) {
+        throw new Error(`Failed to update chat title (${response.status})`);
+      }
+      setChatThreads((prev) =>
+        prev.map((thread) =>
+          thread.id === activeChatId ? { ...thread, title: nextTitle } : thread
+        )
+      );
+      setAllChatThreads((prev) =>
+        prev.map((thread) =>
+          thread.id === activeChatId ? { ...thread, title: nextTitle } : thread
+        )
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to update chat title";
+      setChatError(message);
+    } finally {
+      cancelEditChatTitle();
+    }
   };
 
   return (
@@ -1851,9 +2105,57 @@ export default function Home() {
                 <button
                   key={doc.id}
                   className="history-item"
-                  onClick={() => handleSelectDocument(doc)}
+                  onClick={() => {
+                    if (editingDocumentId === doc.id) return;
+                    handleSelectDocument(doc);
+                  }}
+                  data-tooltip={doc.title}
                 >
-                  <span className="label">{doc.title}</span>
+                  {editingDocumentId === doc.id ? (
+                    <input
+                      className="history-item__input"
+                      value={documentTitleDraft}
+                      onChange={(event) => setDocumentTitleDraft(event.target.value)}
+                      onClick={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void saveRenameDocument(doc.id);
+                        }
+                        if (event.key === "Escape") {
+                          event.preventDefault();
+                          cancelRenameDocument();
+                        }
+                      }}
+                      onBlur={() => void saveRenameDocument(doc.id)}
+                      aria-label={t("aria.renameDocument")}
+                      autoFocus
+                    />
+                  ) : (
+                    <>
+                      <span className="label">{doc.title}</span>
+                      {sidebarOpen ? (
+                        <span
+                          className="history-item__action"
+                          role="button"
+                          tabIndex={0}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            startRenameDocument(doc);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              startRenameDocument(doc);
+                            }
+                          }}
+                          data-tooltip={t("tooltip.rename")}
+                        >
+                          ✎
+                        </span>
+                      ) : null}
+                    </>
+                  )}
                 </button>
               ))
             )
@@ -2014,8 +2316,12 @@ export default function Home() {
                     doc.id === selectedTabId ? "viewer__tab--active" : ""
                   }`}
                   onClick={() => handleSelectTab(doc.id)}
+                  data-tooltip={doc.title}
+                  data-tooltip-position="bottom"
                 >
-                  <span className="viewer__tab-label">{doc.title}</span>
+                  <span className="viewer__tab-label">
+                    {doc.title}
+                  </span>
                   <span
                     className="viewer__tab-close"
                     role="button"
@@ -2053,7 +2359,7 @@ export default function Home() {
                       <div className="settings__email">
                         {userEmail ?? t("auth.notSignedIn")}
                       </div>
-                      <div className="settings__plan">{t("planFree")}</div>
+                      <div className="settings__plan">{planLabel}</div>
                     </div>
                   </div>
                   <div className="settings__nav-group">
@@ -2137,7 +2443,41 @@ export default function Home() {
                     ←
                   </button>
                 )}
-                <span className="chat__header-title">{activeChatTitle}</span>
+                {editingChatTitle && activeChatId && !showThreadList ? (
+                  <input
+                    className="chat__header-input"
+                    value={chatTitleDraft}
+                    onChange={(event) => setChatTitleDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void saveChatTitle();
+                      }
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        cancelEditChatTitle();
+                      }
+                    }}
+                    onBlur={() => void saveChatTitle()}
+                    aria-label={t("aria.renameChat")}
+                    autoFocus
+                  />
+                ) : (
+                  <span
+                    className="chat__header-title"
+                    onClick={startEditChatTitle}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        startEditChatTitle();
+                      }
+                    }}
+                  >
+                    {activeChatTitle}
+                  </span>
+                )}
               </div>
             ) : (
               <div className="chat__header-left">

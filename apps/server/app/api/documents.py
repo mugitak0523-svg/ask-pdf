@@ -12,6 +12,7 @@ from app.services.auth import AuthDependency, AuthUser, get_user_from_token_app
 from app.services.indexer import Indexer
 from app.services.storage import StorageClient
 from app.services.usage import extract_usage
+from app.services.plans import get_plan_limits, resolve_user_plan
 
 router = APIRouter()
 logger = logging.getLogger("askpdf.chat")
@@ -111,6 +112,49 @@ async def _record_usage(
         logger.exception("usage_log failed operation=%s", operation)
 
 
+async def _resolve_limits(pool, user_id: str):
+    plan = await resolve_user_plan(pool, user_id)
+    limits = get_plan_limits(plan)
+    return plan, limits
+
+
+def _enforce_file_size_limit(file_size: int, limits) -> None:
+    if limits.max_file_mb is None:
+        return
+    limit_bytes = limits.max_file_mb * 1024 * 1024
+    if file_size > limit_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="File size limit exceeded",
+        )
+
+
+async def _enforce_thread_limit(pool, user_id: str, document_id: str) -> None:
+    _, limits = await _resolve_limits(pool, user_id)
+    if limits.max_threads_per_document is None:
+        return
+    count = await repository.count_document_chat_threads(pool, document_id, user_id)
+    if count >= limits.max_threads_per_document:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Thread limit reached",
+        )
+
+
+async def _enforce_message_limit(pool, user_id: str, chat_id: str) -> None:
+    _, limits = await _resolve_limits(pool, user_id)
+    if limits.max_messages_per_thread is None:
+        return
+    count = await repository.count_document_chat_messages(
+        pool, chat_id, user_id, role="user"
+    )
+    if count >= limits.max_messages_per_thread:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Message limit reached",
+        )
+
+
 @router.post("/documents/index")
 async def index_document(
     request: Request,
@@ -118,8 +162,17 @@ async def index_document(
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
     content = await file.read()
-    indexer: Indexer = request.app.state.indexer
     pool = request.app.state.db_pool
+    _, limits = await _resolve_limits(pool, user.user_id)
+    _enforce_file_size_limit(len(content), limits)
+    if limits.max_files is not None:
+        count = await repository.count_documents(pool, user.user_id)
+        if count >= limits.max_files:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Document limit reached",
+            )
+    indexer: Indexer = request.app.state.indexer
     return await indexer.index_document(pool, content, file.filename, user.user_id)
 
 
@@ -144,6 +197,26 @@ async def get_document(
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     return row
+
+
+@router.patch("/documents/{document_id}")
+async def update_document(
+    request: Request,
+    document_id: str,
+    payload: dict[str, Any],
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    title = payload.get("title") if isinstance(payload, dict) else None
+    if not isinstance(title, str) or not title.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="title is required",
+        )
+    pool = request.app.state.db_pool
+    row = await repository.update_document_title(pool, document_id, user.user_id, title.strip())
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    return {"id": str(row["id"]), "title": row.get("title")}
 
 
 @router.get("/documents/{document_id}/signed-url")
@@ -415,6 +488,7 @@ async def create_document_chat(
     row = await repository.get_document(pool, document_id, user.user_id)
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    await _enforce_thread_limit(pool, user.user_id, document_id)
     title = payload.get("title") if isinstance(payload, dict) else None
     chat_id = await repository.insert_document_chat_thread(
         pool,
@@ -423,6 +497,40 @@ async def create_document_chat(
         title if isinstance(title, str) else None,
     )
     return {"chat_id": chat_id}
+
+
+@router.patch("/documents/{document_id}/chats/{chat_id}")
+async def update_document_chat(
+    request: Request,
+    document_id: str,
+    chat_id: str,
+    payload: dict[str, Any],
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    title = payload.get("title") if isinstance(payload, dict) else None
+    if not isinstance(title, str) or not title.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="title is required",
+        )
+    pool = request.app.state.db_pool
+    row = await repository.get_document_chat_thread(
+        pool,
+        document_id,
+        chat_id,
+        user.user_id,
+    )
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    saved = await repository.update_document_chat_thread_title(
+        pool,
+        chat_id,
+        user.user_id,
+        title.strip(),
+    )
+    if not saved:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    return {"id": str(saved["id"]), "title": saved.get("title")}
 
 
 @router.get("/documents/{document_id}/chats/{chat_id}/messages")
@@ -479,6 +587,7 @@ async def create_document_chat_message(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="text is required",
         )
+    await _enforce_message_limit(pool, user.user_id, chat_id)
     row = await repository.insert_document_chat_message(
         pool,
         chat_id,

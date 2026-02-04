@@ -64,6 +64,8 @@ export function PdfViewer({
 }: PdfViewerProps) {
   const t = useTranslations("app.pdf");
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const thumbsRef = useRef<HTMLDivElement | null>(null);
+  const markersRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const viewerActiveRef = useRef(false);
   const lastViewerActiveAtRef = useRef(0);
@@ -158,6 +160,107 @@ export function PdfViewer({
     window.localStorage.setItem(PDF_STATE_KEY, JSON.stringify(store));
   };
 
+  const updateAnnotationMarkers = () => {
+    const markers = markersRef.current;
+    const container = containerRef.current;
+    if (!markers || !container) return;
+    markers.innerHTML = "";
+    const scrollHeight = container.scrollHeight;
+    const clientHeight = container.clientHeight;
+    if (scrollHeight <= clientHeight) return;
+
+    const pageNodes = new Map<number, HTMLElement>();
+    container
+      .querySelectorAll<HTMLElement>(".pdf-embed__page")
+      .forEach((node) => {
+        const pageNumber = Number(node.dataset.pageNumber);
+        if (Number.isFinite(pageNumber)) {
+          pageNodes.set(pageNumber, node);
+        }
+      });
+
+    const annotatedPages = Object.entries(annotations)
+      .map(([page, entries]) => {
+        if (!entries || typeof entries !== "object") return null;
+        const flat = Object.values(entries).flatMap((items) =>
+          Array.isArray(items) ? items : []
+        );
+        const count = flat.length;
+        return count > 0 ? { page: Number(page), items: flat } : null;
+      })
+      .filter(
+        (item): item is { page: number; items: Annotation[] } => Boolean(item)
+      )
+      .sort((a, b) => a.page - b.page);
+
+    annotatedPages.forEach(({ page, items }) => {
+      const node = pageNodes.get(page);
+      if (!node) return;
+      const meta = pageMetaRef.current[page];
+      if (!meta) return;
+      const rects = wordRectsRef.current[page] || [];
+      const perLine = new Map<number | string, { item: Annotation; rect: WordRect }>();
+      items.forEach((item) => {
+        if (typeof item.wordIndex !== "number") return;
+        const rect = rects.find((entry) => entry.wordIndex === item.wordIndex);
+        if (!rect) return;
+        const lineKey = rect.lineId ?? Math.round(rect.top * 1000);
+        if (!perLine.has(lineKey)) {
+          perLine.set(lineKey, { item, rect });
+        }
+      });
+      const list = Array.from(perLine.values())
+        .sort((a, b) => a.item.wordIndex - b.item.wordIndex)
+        .slice(0, 12);
+      const pageOffset = node.offsetTop;
+      list.forEach(({ item, rect }) => {
+        const annotationTop = pageOffset + rect.top * meta.height;
+        const ratio = Math.min(
+          Math.max(annotationTop / (scrollHeight - clientHeight), 0),
+          1
+        );
+        const marker = document.createElement("button");
+        marker.type = "button";
+        marker.className = "pdf-embed__marker";
+        marker.style.top = `${ratio * (clientHeight - 8)}px`;
+        marker.style.opacity = "0.85";
+        if (item.color) {
+          marker.style.background = item.color;
+        }
+        marker.title = `p.${page}`;
+        marker.addEventListener("click", () => {
+          container.scrollTo({ top: Math.max(annotationTop - 80, 0), behavior: "smooth" });
+        });
+        markers.appendChild(marker);
+      });
+    });
+  };
+
+  const getFirstAnnotationOffset = (pageNumber: number) => {
+    const container = containerRef.current;
+    if (!container) return null;
+    const pageNode = container.querySelector(
+      `.pdf-embed__page[data-page-number="${pageNumber}"]`
+    ) as HTMLElement | null;
+    if (!pageNode) return null;
+    const entries = annotations[pageNumber];
+    if (!entries || typeof entries !== "object") return null;
+    const all = Object.values(entries).flatMap((items) =>
+      Array.isArray(items) ? items : []
+    );
+    if (all.length === 0) return null;
+    const minWordIndex = all.reduce((min, item) => {
+      if (typeof item.wordIndex !== "number") return min;
+      return min === null || item.wordIndex < min ? item.wordIndex : min;
+    }, null as number | null);
+    if (minWordIndex === null) return null;
+    const rects = wordRectsRef.current[pageNumber] || [];
+    const rect = rects.find((item) => item.wordIndex === minWordIndex);
+    const meta = pageMetaRef.current[pageNumber];
+    if (!rect || !meta) return null;
+    return pageNode.offsetTop + rect.top * meta.height;
+  };
+
   useEffect(() => {
     let cancelled = false;
     const render = async () => {
@@ -166,6 +269,10 @@ export function PdfViewer({
       const container = containerRef.current;
       if (!container) return;
       container.innerHTML = "";
+      const thumbs = thumbsRef.current;
+      if (thumbs) {
+        thumbs.innerHTML = "";
+      }
       try {
         const pdfjs = await import("pdfjs-dist/legacy/build/pdf");
         pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
@@ -227,6 +334,39 @@ export function PdfViewer({
           if (!context) continue;
           await page.render({ canvasContext: context, viewport: scaled }).promise;
 
+          if (thumbs) {
+            const thumbWrapper = document.createElement("button");
+            thumbWrapper.type = "button";
+            thumbWrapper.className = "pdf-embed__thumb";
+            thumbWrapper.dataset.pageNumber = String(pageNum);
+            thumbWrapper.addEventListener("click", () => {
+              const pageNode = container.querySelector(
+                `.pdf-embed__page[data-page-number="${pageNum}"]`
+              ) as HTMLElement | null;
+              if (pageNode) {
+                pageNode.scrollIntoView({ behavior: "smooth", block: "start" });
+              }
+            });
+
+            const thumbCanvas = document.createElement("canvas");
+            thumbCanvas.className = "pdf-embed__thumb-canvas";
+            const thumbViewport = page.getViewport({ scale: 0.18 });
+            thumbCanvas.width = Math.floor(thumbViewport.width);
+            thumbCanvas.height = Math.floor(thumbViewport.height);
+            const thumbContext = thumbCanvas.getContext("2d");
+            if (thumbContext) {
+              await page.render({ canvasContext: thumbContext, viewport: thumbViewport }).promise;
+            }
+
+            const thumbLabel = document.createElement("span");
+            thumbLabel.className = "pdf-embed__thumb-label";
+            thumbLabel.textContent = `p.${pageNum}`;
+
+            thumbWrapper.appendChild(thumbCanvas);
+            thumbWrapper.appendChild(thumbLabel);
+            thumbs.appendChild(thumbWrapper);
+          }
+
           const existing = pageMetaRef.current[pageNum];
           nextMeta[pageNum] = {
             width: Math.floor(scaled.width),
@@ -264,6 +404,9 @@ export function PdfViewer({
       cancelled = true;
       if (containerRef.current) {
         containerRef.current.innerHTML = "";
+      }
+      if (thumbsRef.current) {
+        thumbsRef.current.innerHTML = "";
       }
     };
   }, [url, zoom]);
@@ -382,13 +525,41 @@ export function PdfViewer({
         setPageInput(String(pageNumber));
       },
       {
-        root: (container.closest(".pdf-embed") as HTMLElement | null) ?? container,
+        root: container,
         threshold: [0.55, 0.7, 0.85],
       }
     );
     pages.forEach((page) => observer.observe(page));
     return () => observer.disconnect();
   }, [pageMeta, totalPages]);
+
+  useEffect(() => {
+    updateAnnotationMarkers();
+  }, [annotations, pageMeta, zoom, state]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const resizeObserver = new ResizeObserver(() => {
+      updateAnnotationMarkers();
+    });
+    resizeObserver.observe(container);
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const thumbs = thumbsRef.current;
+    if (!thumbs) return;
+    const nodes = Array.from(thumbs.querySelectorAll<HTMLElement>(".pdf-embed__thumb"));
+    nodes.forEach((node) => {
+      const pageNumber = Number(node.dataset.pageNumber);
+      if (Number.isFinite(pageNumber) && pageNumber === currentPage) {
+        node.classList.add("is-active");
+      } else {
+        node.classList.remove("is-active");
+      }
+    });
+  }, [currentPage, totalPages]);
 
   useEffect(() => {
     if (!documentId) return;
@@ -400,8 +571,7 @@ export function PdfViewer({
     }
     const container = containerRef.current;
     if (!container) return;
-    const scrollRoot =
-      (container.closest(".pdf-embed") as HTMLElement | null) ?? container;
+    const scrollRoot = container;
     if (!scrollRoot) return;
     pendingRestoreRef.current = null;
     isRestoringRef.current = true;
@@ -428,8 +598,7 @@ export function PdfViewer({
     if (!documentId) return;
     const container = containerRef.current;
     if (!container) return;
-    const scrollRoot =
-      (container.closest(".pdf-embed") as HTMLElement | null) ?? container;
+    const scrollRoot = container;
     if (!scrollRoot) return;
     const handleScroll = () => {
       scrollTopRef.current = scrollRoot.scrollTop;
@@ -1024,7 +1193,6 @@ export function PdfViewer({
     renderSearchHighlights(searchMatchesRef.current, clamped);
     if (!shouldScroll || !containerRef.current) return;
     const scrollRoot =
-      (containerRef.current.closest(".pdf-embed") as HTMLElement | null) ??
       containerRef.current;
     const pageNode = containerRef.current.querySelector(
       `.pdf-embed__page[data-page-number="${target.pageNumber}"]`
@@ -1122,9 +1290,7 @@ export function PdfViewer({
   const handlePageStep = (direction: "prev" | "next") => {
     const getVisiblePageNumber = () => {
       if (!containerRef.current) return null;
-      const scrollRoot =
-        (containerRef.current.closest(".pdf-embed") as HTMLElement | null) ??
-        containerRef.current;
+      const scrollRoot = containerRef.current;
       const rootRect = scrollRoot.getBoundingClientRect();
       const pages = Array.from(
         containerRef.current.querySelectorAll<HTMLElement>(".pdf-embed__page")
@@ -2183,21 +2349,27 @@ export function PdfViewer({
       {state !== "error" && (annotationsLoading || (!annotationsHydrated && documentId && accessToken)) ? (
         <div className="pdf-embed__hint">Annotation loading...</div>
       ) : null}
-      <div
-        ref={containerRef}
-        className="pdf-embed__pages"
-        tabIndex={0}
-        onPointerDown={() => {
-          viewerActiveRef.current = true;
-          containerRef.current?.focus();
-        }}
-        onFocus={() => {
-          viewerActiveRef.current = true;
-        }}
-        onBlur={() => {
-          viewerActiveRef.current = false;
-        }}
-      />
+      <div className="pdf-embed__layout">
+        <div ref={thumbsRef} className="pdf-embed__thumbs" />
+        <div className="pdf-embed__page-wrap">
+          <div
+            ref={containerRef}
+            className="pdf-embed__pages"
+            tabIndex={0}
+            onPointerDown={() => {
+              viewerActiveRef.current = true;
+              containerRef.current?.focus();
+            }}
+            onFocus={() => {
+              viewerActiveRef.current = true;
+            }}
+            onBlur={() => {
+              viewerActiveRef.current = false;
+            }}
+          />
+          <div ref={markersRef} className="pdf-embed__markers" aria-hidden="true" />
+        </div>
+      </div>
       <div className="pdf-embed__toolbar" role="toolbar" aria-label="PDF controls">
         <div className="pdf-embed__toolbar-group">
           <svg

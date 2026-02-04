@@ -52,6 +52,22 @@ async def list_documents(
     return [dict(row) for row in rows]
 
 
+async def count_documents(
+    pool: asyncpg.Pool,
+    user_id: str,
+) -> int:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select count(*) as total
+            from documents
+            where user_id = $1
+            """,
+            user_id,
+        )
+    return int(row["total"] or 0)
+
+
 async def get_document(
     pool: asyncpg.Pool,
     document_id: str,
@@ -66,6 +82,27 @@ async def get_document(
             """,
             document_id,
             user_id,
+        )
+    return dict(row) if row else None
+
+
+async def update_document_title(
+    pool: asyncpg.Pool,
+    document_id: str,
+    user_id: str,
+    title: str,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            update documents
+            set title = $3
+            where id = $1 and user_id = $2
+            returning id, title
+            """,
+            document_id,
+            user_id,
+            title,
         )
     return dict(row) if row else None
 
@@ -234,6 +271,24 @@ async def list_document_chat_threads(
     return [dict(row) for row in rows]
 
 
+async def count_document_chat_threads(
+    pool: asyncpg.Pool,
+    document_id: str,
+    user_id: str,
+) -> int:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select count(*) as total
+            from document_chat_threads
+            where document_id = $1 and user_id = $2
+            """,
+            document_id,
+            user_id,
+        )
+    return int(row["total"] or 0)
+
+
 async def insert_document_chat_thread(
     pool: asyncpg.Pool,
     document_id: str,
@@ -271,6 +326,37 @@ async def list_document_chat_messages(
             user_id,
         )
     return [dict(row) for row in rows]
+
+
+async def count_document_chat_messages(
+    pool: asyncpg.Pool,
+    chat_id: str,
+    user_id: str,
+    role: str | None = None,
+) -> int:
+    async with pool.acquire() as conn:
+        if role:
+            row = await conn.fetchrow(
+                """
+                select count(*) as total
+                from document_chat_messages
+                where chat_id = $1 and user_id = $2 and role = $3
+                """,
+                chat_id,
+                user_id,
+                role,
+            )
+        else:
+            row = await conn.fetchrow(
+                """
+                select count(*) as total
+                from document_chat_messages
+                where chat_id = $1 and user_id = $2
+                """,
+                chat_id,
+                user_id,
+            )
+    return int(row["total"] or 0)
 
 
 async def list_recent_document_chat_messages(
@@ -311,6 +397,27 @@ async def get_document_chat_thread(
             chat_id,
             document_id,
             user_id,
+        )
+    return dict(row) if row else None
+
+
+async def update_document_chat_thread_title(
+    pool: asyncpg.Pool,
+    chat_id: str,
+    user_id: str,
+    title: str,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            update document_chat_threads
+            set title = $3
+            where id = $1 and user_id = $2
+            returning id, title, document_id
+            """,
+            chat_id,
+            user_id,
+            title,
         )
     return dict(row) if row else None
 
@@ -408,6 +515,25 @@ async def list_user_chat_threads(
             user_id,
         )
     return [dict(row) for row in rows]
+
+
+async def get_user_plan(
+    pool: asyncpg.Pool,
+    user_id: str,
+) -> str | None:
+    async with pool.acquire() as conn:
+        try:
+            row = await conn.fetchrow(
+                """
+                select plan
+                from user_plans
+                where user_id = $1
+                """,
+                user_id,
+            )
+        except asyncpg.UndefinedTableError:
+            return None
+    return str(row["plan"]) if row and row.get("plan") else None
 
 
 async def insert_usage_log(
