@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useLocale, useTranslations } from "next-intl";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -91,6 +92,92 @@ const normalizeRefs = (value: unknown): ChatRef[] | undefined => {
   return undefined;
 };
 
+const replaceRefTags = (text: string, refs?: ChatRef[]) => {
+  if (!text) return text;
+  if (!refs || refs.length === 0) {
+    return text.replace(/\[@:chunk-[^\]]+\]/gi, "");
+  }
+  const lookup = new Map<string, ChatRef>();
+  for (const ref of refs) {
+    if (ref.id && !lookup.has(ref.id)) lookup.set(ref.id, ref);
+  }
+  return text.replace(/\[@:chunk-([^\]]+)\]/gi, (_, rawId) => {
+    const trimmed = String(rawId).trim();
+    const key = `chunk-${trimmed}`;
+    let ref = lookup.get(key);
+    if (!ref && /^\d+$/.test(trimmed)) {
+      const index = Number(trimmed) - 1;
+      if (index >= 0 && index < refs.length) ref = refs[index];
+    }
+    if (!ref) return "";
+    return normalizeRefLabel(ref.label, ref.id);
+  });
+};
+
+const buildRefLinkedText = (text: string, refs?: ChatRef[]) => {
+  if (!text) return text;
+  if (!refs || refs.length === 0) {
+    return text.replace(/\[@:chunk-[^\]]+\]/gi, "");
+  }
+  const lookup = new Map<string, ChatRef>();
+  for (const ref of refs) {
+    if (ref.id && !lookup.has(ref.id)) lookup.set(ref.id, ref);
+  }
+  return text.replace(/\[@:chunk-([^\]]+)\]/gi, (_, rawId) => {
+    const trimmed = String(rawId).trim();
+    const key = `chunk-${trimmed}`;
+    let ref = lookup.get(key);
+    if (!ref && /^\d+$/.test(trimmed)) {
+      const index = Number(trimmed) - 1;
+      if (index >= 0 && index < refs.length) ref = refs[index];
+    }
+    if (!ref) return "";
+    const label = normalizeRefLabel(ref.label, ref.id);
+    const doc = ref.documentId ? `?doc=${ref.documentId}` : "";
+    return `[${label}](ref:${ref.id}${doc})`;
+  });
+};
+
+const parseRefHref = (href?: string | null) => {
+  if (!href || !href.startsWith("ref:")) return null;
+  const raw = href.slice(4);
+  const [refId, query] = raw.split("?");
+  if (!refId) return null;
+  const params = new URLSearchParams(query || "");
+  const documentId = params.get("doc") ?? undefined;
+  return { refId, documentId };
+};
+
+const normalizeRefLabel = (label?: string, fallback?: string) =>
+  (label ?? fallback ?? "").replace(/\s*#\d+$/, "");
+
+const buildRefLabelLookup = (refs?: ChatRef[]) => {
+  if (!refs || refs.length === 0) return new Map<string, ChatRef>();
+  const lookup = new Map<string, ChatRef>();
+  for (const ref of refs) {
+    const label = normalizeRefLabel(ref.label, ref.id);
+    if (!label) continue;
+    if (!lookup.has(label)) lookup.set(label, ref);
+  }
+  return lookup;
+};
+
+const buildRefIdLookup = (refs?: ChatRef[]) => {
+  if (!refs || refs.length === 0) return new Map<string, ChatRef>();
+  const lookup = new Map<string, ChatRef>();
+  for (const ref of refs) {
+    if (ref.id && !lookup.has(ref.id)) lookup.set(ref.id, ref);
+  }
+  return lookup;
+};
+
+const getNodeText = (node: React.ReactNode): string => {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(getNodeText).join("");
+  if (React.isValidElement(node)) return getNodeText(node.props.children);
+  return "";
+};
+
 export default function Home() {
   const t = useTranslations("app");
   const locale = useLocale();
@@ -108,15 +195,194 @@ export default function Home() {
   const chatMessagesRef = useRef<HTMLDivElement | null>(null);
   const [showChatJump, setShowChatJump] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [refPreviewMap, setRefPreviewMap] = useState<
+    Record<string, { text: string; metadata?: Record<string, unknown>; documentTitle?: string }>
+  >({});
+  const refPreviewInFlight = useRef<Set<string>>(new Set());
+  const [refTooltip, setRefTooltip] = useState<{
+    visible: boolean;
+    x: number;
+    y: number;
+    title: string;
+    pageLabel: string | null;
+    text: string;
+    anchor: DOMRect | null;
+    refId: string | null;
+    documentId: string | null;
+  }>({
+    visible: false,
+    x: 0,
+    y: 0,
+    title: "",
+    pageLabel: null,
+    text: "",
+    anchor: null,
+    refId: null,
+    documentId: null,
+  });
+  const refTooltipBodyRef = useRef<HTMLDivElement | null>(null);
+  const [tooltipContainer, setTooltipContainer] = useState<HTMLElement | null>(null);
   const globalChatMessagesRef = useRef<HTMLDivElement | null>(null);
   const [globalChatId, setGlobalChatId] = useState<string | null>(null);
   const [globalChatInput, setGlobalChatInput] = useState("");
+  const [globalChatMode, setGlobalChatMode] = useState<"fast" | "standard" | "think">(
+    "standard"
+  );
   const [globalChatMessages, setGlobalChatMessages] = useState<ChatMessage[]>([]);
   const [globalChatLoading, setGlobalChatLoading] = useState(false);
   const [globalChatSending, setGlobalChatSending] = useState(false);
   const [globalChatError, setGlobalChatError] = useState<string | null>(null);
   const [globalChatOpen, setGlobalChatOpen] = useState(true);
   const [globalChatHeight, setGlobalChatHeight] = useState(220);
+
+  const getRefPreviewKey = (refId: string, documentId?: string) =>
+    `${refId}::${documentId ?? ""}`;
+
+  const getChunkIdFromRef = (refId: string) =>
+    refId.startsWith("chunk-") ? refId.slice("chunk-".length) : refId;
+
+  const getRefPreviewTitle = (refId: string, documentId: string | undefined, fallback: string) => {
+    const key = getRefPreviewKey(refId, documentId);
+    return refPreviewMap[key]?.text ?? fallback;
+  };
+
+  const getRefPreviewData = (refId: string, documentId?: string) => {
+    const key = getRefPreviewKey(refId, documentId);
+    return refPreviewMap[key];
+  };
+
+  const getRefPageLabel = (metadata?: Record<string, unknown>) => {
+    if (!metadata) return null;
+    const raw =
+      metadata.page ?? metadata.pages ?? metadata.page_number ?? metadata.pageNumber ?? null;
+    if (Array.isArray(raw)) {
+      const values = raw.filter((item) => Number.isFinite(item)).map((item) => String(item));
+      return values.length ? `p ${values.join(", ")}` : null;
+    }
+    if (Number.isFinite(raw)) return `p ${raw}`;
+    return null;
+  };
+
+  const getRefPageLabelFromLabel = (label: string | undefined) => {
+    if (!label) return null;
+    const match = label.match(/p\.?\s*([\d,\s]+)/i);
+    if (match?.[1]) {
+      const cleaned = match[1].replace(/\s+/g, " ").trim();
+      return cleaned ? `p ${cleaned}` : null;
+    }
+    if (/^\d+(,\s*\d+)*$/.test(label.trim())) {
+      return `p ${label.trim()}`;
+    }
+    return null;
+  };
+
+  const REF_TOOLTIP_WIDTH = 360;
+  const REF_TOOLTIP_HEIGHT = 220;
+  const REF_TOOLTIP_PADDING = 8;
+
+  const computeRefTooltipPosition = (rect: DOMRect) => {
+    const gap = 2;
+    const padding = REF_TOOLTIP_PADDING;
+    let x = rect.left;
+    let y = rect.bottom + gap;
+    const maxX = window.innerWidth - padding - REF_TOOLTIP_WIDTH;
+    const maxY = window.innerHeight - padding - REF_TOOLTIP_HEIGHT;
+    if (x > maxX) x = maxX;
+    if (x < padding) x = padding;
+    if (y > maxY) {
+      y = rect.top - REF_TOOLTIP_HEIGHT - gap;
+    }
+    if (y < padding) y = padding;
+    return { x, y };
+  };
+
+  const showRefTooltip = (
+    event: React.MouseEvent<HTMLElement>,
+    refId: string,
+    documentId: string | undefined,
+    fallbackTitle: string
+  ) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const { x, y } = computeRefTooltipPosition(rect);
+    const preview = getRefPreviewData(refId, documentId);
+    const title = preview?.documentTitle || fallbackTitle;
+    const pageLabel = getRefPageLabel(preview?.metadata) ?? getRefPageLabelFromLabel(fallbackTitle);
+    const text = preview?.text || "Loading...";
+    setRefTooltip({
+      visible: true,
+      x,
+      y,
+      title,
+      pageLabel,
+      text,
+      anchor: rect,
+      refId,
+      documentId: documentId ?? null,
+    });
+    requestAnimationFrame(() => {
+      if (refTooltipBodyRef.current) {
+        refTooltipBodyRef.current.scrollTop = 0;
+      }
+    });
+  };
+
+  const moveRefTooltip = (event: React.MouseEvent<HTMLElement>) => {
+    if (!refTooltip.visible) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const { x, y } = computeRefTooltipPosition(rect);
+    setRefTooltip((prev) => ({ ...prev, x, y, anchor: rect }));
+  };
+
+  const hideRefTooltip = () => {
+    setRefTooltip((prev) => ({ ...prev, visible: false }));
+  };
+
+  const handleRefButtonLeave = (event: React.MouseEvent<HTMLElement>) => {
+    const next = event.relatedTarget as HTMLElement | null;
+    if (next?.closest?.(".ref-tooltip")) return;
+    hideRefTooltip();
+  };
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    setTooltipContainer(document.body);
+  }, []);
+
+  const ensureRefPreview = async (refId: string, documentId?: string) => {
+    const key = getRefPreviewKey(refId, documentId);
+    if (refPreviewMap[key] || refPreviewInFlight.current.has(key)) return;
+    refPreviewInFlight.current.add(key);
+    try {
+      const accessToken =
+        (await supabase.auth.getSession()).data.session?.access_token ?? "";
+      if (!accessToken) return;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const chunkId = getChunkIdFromRef(refId);
+      const url = new URL(`${baseUrl}/document-chunks/${chunkId}`);
+      if (documentId) url.searchParams.set("document_id", documentId);
+      const response = await fetch(url.toString(), {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      const text = typeof data?.chunk?.text === "string" ? data.chunk.text : "";
+      if (!text) return;
+      const metadata =
+        data?.chunk?.metadata && typeof data.chunk.metadata === "object"
+          ? data.chunk.metadata
+          : undefined;
+      const documentTitle =
+        typeof data?.chunk?.documentTitle === "string" ? data.chunk.documentTitle : undefined;
+      setRefPreviewMap((prev) => ({
+        ...prev,
+        [key]: { text, metadata, documentTitle },
+      }));
+    } finally {
+      refPreviewInFlight.current.delete(key);
+    }
+  };
 
   useEffect(() => {
     const measure = document.createElement("span");
@@ -270,6 +536,13 @@ export default function Home() {
       }
       if (parsed.chatMode === "fast" || parsed.chatMode === "standard" || parsed.chatMode === "think") {
         setChatMode(parsed.chatMode);
+      }
+      if (
+        parsed.globalChatMode === "fast"
+        || parsed.globalChatMode === "standard"
+        || parsed.globalChatMode === "think"
+      ) {
+        setGlobalChatMode(parsed.globalChatMode);
       }
       if (Number.isFinite(parsed.chatWidth)) {
         setChatWidth(parsed.chatWidth);
@@ -593,6 +866,7 @@ export default function Home() {
       sidebarOpen,
       globalChatOpen,
       globalChatHeight,
+      globalChatMode,
       settingsSection,
       showThreadList,
       openDocuments,
@@ -610,6 +884,7 @@ export default function Home() {
     sidebarOpen,
     globalChatOpen,
     globalChatHeight,
+    globalChatMode,
     settingsSection,
     showThreadList,
     openDocuments,
@@ -1710,7 +1985,8 @@ export default function Home() {
     const startY = event.clientY;
     const startHeight = globalChatHeight;
     const containerRect = containerRef.current.getBoundingClientRect();
-    const maxHeight = Math.min(360, Math.max(160, containerRect.height - 160));
+    const headerOffset = 52;
+    const maxHeight = Math.max(160, Math.floor(containerRect.height - headerOffset));
     const minHeight = 140;
     const target = event.currentTarget;
     target.setPointerCapture(event.pointerId);
@@ -1858,16 +2134,6 @@ export default function Home() {
     setGlobalChatSending(true);
     setGlobalChatError(null);
     const pendingId = crypto.randomUUID();
-    setGlobalChatMessages((prev) => [
-      ...prev,
-      {
-        id: pendingId,
-        role: "assistant",
-        text: "",
-        createdAt: new Date().toISOString(),
-        status: "loading",
-      },
-    ]);
     try {
       const session = await supabase.auth.getSession();
       const accessToken = session.data.session?.access_token;
@@ -1904,6 +2170,44 @@ export default function Home() {
           )
         );
       }
+      await requestGlobalChatAnswer(trimmed, {
+        accessToken,
+        pendingId,
+      });
+    } catch (error) {
+      const messageText =
+        error instanceof Error ? error.message : "Failed to send global message";
+      setGlobalChatError(messageText);
+    } finally {
+      setGlobalChatSending(false);
+    }
+  };
+
+  const requestGlobalChatAnswer = async (
+    question: string,
+    options: { pendingId?: string; existingId?: string; accessToken?: string } = {}
+  ) => {
+    if (!globalChatId) return;
+    const pendingId = options.existingId ?? options.pendingId ?? crypto.randomUUID();
+    const pending: ChatMessage = {
+      id: pendingId,
+      role: "assistant",
+      text: "",
+      createdAt: new Date().toISOString(),
+      status: "loading",
+    };
+    setGlobalChatMessages((prev) =>
+      options.existingId
+        ? prev.map((item) => (item.id === pendingId ? pending : item))
+        : [...prev, pending]
+    );
+    try {
+      const accessToken =
+        options.accessToken ?? (await supabase.auth.getSession()).data.session?.access_token;
+      if (!accessToken) {
+        throw new Error("Not authenticated");
+      }
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const answerResponse = await fetch(
         `${baseUrl}/global-chats/${globalChatId}/assistant`,
         {
@@ -1913,8 +2217,9 @@ export default function Home() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            message: trimmed,
-            mode: chatMode,
+            message: question,
+            message_id: options.existingId ?? null,
+            mode: globalChatMode,
           }),
         }
       );
@@ -1946,9 +2251,6 @@ export default function Home() {
         scrollGlobalChatToBottom("smooth");
       });
     } catch (error) {
-      const messageText =
-        error instanceof Error ? error.message : "Failed to send global message";
-      setGlobalChatError(messageText);
       setGlobalChatMessages((prev) =>
         prev.map((item) =>
           item.id === pendingId
@@ -1960,8 +2262,6 @@ export default function Home() {
             : item
         )
       );
-    } finally {
-      setGlobalChatSending(false);
     }
   };
 
@@ -2772,12 +3072,20 @@ export default function Home() {
                     <>
                       <span className="label">{doc.title}</span>
                       {sidebarOpen ? (
-                        <button
-                          type="button"
+                        <span
+                          role="button"
+                          tabIndex={0}
                           className="history-item__menu-trigger"
                           onClick={(event) => {
                             event.stopPropagation();
                             setOpenDocMenuId((prev) => (prev === doc.id ? null : doc.id));
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setOpenDocMenuId((prev) => (prev === doc.id ? null : doc.id));
+                            }
                           }}
                           aria-label={t("tooltip.menu")}
                           data-tooltip={t("tooltip.menu")}
@@ -2799,7 +3107,7 @@ export default function Home() {
                             <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
                             <path d="M18 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
                           </svg>
-                        </button>
+                        </span>
                       ) : null}
                       {sidebarOpen && openDocMenuId === doc.id ? (
                         <div className="history-item__menu" onClick={(event) => event.stopPropagation()}>
@@ -3190,49 +3498,209 @@ export default function Home() {
                   ) : globalChatMessages.length === 0 ? (
                     <div className="global-chat__empty">{t("globalChat.empty")}</div>
                   ) : (
-                    globalChatMessages.map((msg) => (
-                      <div
-                        key={msg.id}
-                        className={`global-chat__line global-chat__line--${msg.role}`}
-                      >
-                        <span className="global-chat__prompt">
-                          {msg.role === "user" ? ">" : "•"}
-                        </span>
-                        <div className="global-chat__content">
-                          {msg.role === "assistant" ? (
-                            msg.status === "loading" ? (
-                              <p>{renderLoadingText(t("chat.answering"))}</p>
+                    globalChatMessages.map((msg, index) => {
+                      const isLatest = index === globalChatMessages.length - 1;
+                      const previousUserMessage = isLatest
+                        ? [...globalChatMessages]
+                            .slice(0, index)
+                            .reverse()
+                            .find((item) => item.role === "user")
+                        : undefined;
+                      const displayText = replaceRefTags(msg.text, msg.refs);
+                      const refLabelLookup = buildRefLabelLookup(msg.refs);
+                      const refIdLookup = buildRefIdLookup(msg.refs);
+                      return (
+                        <div
+                          key={msg.id}
+                          className={`global-chat__line global-chat__line--${msg.role}`}
+                        >
+                          <span className="global-chat__prompt">
+                            {msg.role === "user" ? ">" : "•"}
+                          </span>
+                          <div className="global-chat__content">
+                            {msg.role === "assistant" ? (
+                              msg.status === "loading" ? (
+                                <p>{renderLoadingText(t("chat.answering"))}</p>
+                              ) : msg.status === "error" || msg.status === "stopped" ? (
+                                <div className="global-chat__status">
+                                  <p>{displayText || t("chat.answerFailed")}</p>
+                                  {msg.status === "stopped" ? (
+                                    <p className="global-chat__stopped">{t("chat.stopped")}</p>
+                                  ) : null}
+                                  {isLatest && previousUserMessage?.text ? (
+                                    <button
+                                      type="button"
+                                      className="global-chat__retry"
+                                      onClick={() =>
+                                        requestGlobalChatAnswer(previousUserMessage.text, {
+                                          existingId: msg.id,
+                                        })
+                                      }
+                                      aria-label={t("aria.retry")}
+                                    >
+                                      <svg
+                                        width="14"
+                                        height="14"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeWidth="2"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        aria-hidden="true"
+                                      >
+                                        <polyline points="1 4 1 10 7 10" />
+                                        <path d="M3.51 15a9 9 0 1 0 .49-9.36L1 10" />
+                                      </svg>
+                                    </button>
+                                  ) : null}
+                                </div>
+                              ) : (
+                                <div className="markdown">
+                                  <ReactMarkdown
+                                    remarkPlugins={[remarkGfm]}
+                                    components={{
+                                      a: ({ href, children }) => {
+                                        const parsed = parseRefHref(href);
+                                        if (parsed) {
+                                          const ref = refIdLookup.get(parsed.refId);
+                                          return (
+                                            <button
+                                              type="button"
+                                              className="ref ref--inline"
+                                              onClick={() =>
+                                                handleRefClick(parsed.refId, {
+                                                  documentId: parsed.documentId,
+                                                })
+                                              }
+                                              onMouseEnter={(event) => {
+                                                ensureRefPreview(parsed.refId, parsed.documentId);
+                                                showRefTooltip(
+                                                  event,
+                                                  parsed.refId,
+                                                  parsed.documentId,
+                                                  ref?.label ?? ""
+                                                );
+                                              }}
+                                              onMouseMove={(event) =>
+                                                showRefTooltip(
+                                                  event,
+                                                  parsed.refId,
+                                                  parsed.documentId,
+                                                  ref?.label ?? ""
+                                                )
+                                              }
+                                              onMouseLeave={handleRefButtonLeave}
+                                            >
+                                              {children}
+                                            </button>
+                                          );
+                                        }
+                                        const labelText = getNodeText(children)
+                                          .replace(/\s+/g, " ")
+                                          .trim();
+                                        const matchedRef =
+                                          labelText ? refLabelLookup.get(labelText) : undefined;
+                                        if (matchedRef) {
+                                          return (
+                                            <button
+                                              type="button"
+                                              className="ref ref--inline"
+                                              onClick={() =>
+                                                handleRefClick(matchedRef.id, {
+                                                  documentId: matchedRef.documentId,
+                                                })
+                                              }
+                                              onMouseEnter={(event) => {
+                                                ensureRefPreview(
+                                                  matchedRef.id,
+                                                  matchedRef.documentId
+                                                );
+                                                showRefTooltip(
+                                                  event,
+                                                  matchedRef.id,
+                                                  matchedRef.documentId,
+                                                  matchedRef.label ?? ""
+                                                );
+                                              }}
+                                              onMouseMove={(event) =>
+                                                showRefTooltip(
+                                                  event,
+                                                  matchedRef.id,
+                                                  matchedRef.documentId,
+                                                  matchedRef.label ?? ""
+                                                )
+                                              }
+                                              onMouseLeave={handleRefButtonLeave}
+                                            >
+                                              {children}
+                                            </button>
+                                          );
+                                        }
+                                        return (
+                                          <a href={href} target="_blank" rel="noreferrer">
+                                            {children}
+                                          </a>
+                                        );
+                                      },
+                                    }}
+                                  >
+                                    {buildRefLinkedText(msg.text, msg.refs)}
+                                  </ReactMarkdown>
+                                </div>
+                              )
                             ) : (
-                              <div className="markdown">
-                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                  {msg.text}
-                                </ReactMarkdown>
+                              <p>{displayText}</p>
+                            )}
+                            {msg.refs ? (
+                              <div className="refs refs--inline">
+                                {(() => {
+                                  const seen = new Set<string>();
+                                  const uniqueRefs = msg.refs.filter((ref) => {
+                                    const key = ref.documentId ?? ref.id;
+                                    if (seen.has(key)) return false;
+                                    seen.add(key);
+                                    return true;
+                                  });
+                                  return uniqueRefs.map((ref) => (
+                                    <button
+                                      type="button"
+                                      key={`${ref.id}-${ref.documentId ?? "doc"}`}
+                                      className="ref"
+                                      onClick={() =>
+                                        handleRefClick(ref.id, {
+                                          documentId: ref.documentId,
+                                        })
+                                      }
+                                      onMouseEnter={(event) => {
+                                        ensureRefPreview(ref.id, ref.documentId);
+                                        showRefTooltip(
+                                          event,
+                                          ref.id,
+                                          ref.documentId,
+                                          ref.label ?? ""
+                                        );
+                                      }}
+                                      onMouseMove={(event) =>
+                                        showRefTooltip(
+                                          event,
+                                          ref.id,
+                                          ref.documentId,
+                                          ref.label ?? ""
+                                        )
+                                      }
+                                      onMouseLeave={handleRefButtonLeave}
+                                    >
+                                      {ref.label?.replace(/\s*#\d+$/, "")}
+                                    </button>
+                                  ));
+                                })()}
                               </div>
-                            )
-                          ) : (
-                            <p>{msg.text}</p>
-                          )}
-                          {msg.refs ? (
-                            <div className="refs refs--inline">
-                              {msg.refs.map((ref) => (
-                                <button
-                                  type="button"
-                                  key={`${ref.id}-${ref.documentId ?? "doc"}`}
-                                  className="ref"
-                                  onClick={() =>
-                                    handleRefClick(ref.id, {
-                                      documentId: ref.documentId,
-                                    })
-                                  }
-                                >
-                                  {ref.label}
-                                </button>
-                              ))}
-                            </div>
-                          ) : null}
+                            ) : null}
+                          </div>
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
                 <form
@@ -3242,35 +3710,134 @@ export default function Home() {
                     void sendGlobalChatMessage();
                   }}
                 >
-                  <textarea
-                    rows={1}
-                    placeholder={t("globalChat.placeholder")}
-                    value={globalChatInput}
-                    onChange={(event) => setGlobalChatInput(event.target.value)}
-                    onKeyDown={(event) => {
-                      const isComposing =
-                        event.nativeEvent.isComposing || event.isComposing || false;
-                      const hasModifier =
-                        event.shiftKey || event.metaKey || event.ctrlKey || event.altKey;
-                      if (event.key === "Enter" && !hasModifier && !isComposing) {
-                        event.preventDefault();
-                        void sendGlobalChatMessage();
-                      }
-                    }}
-                    disabled={!isAuthed || globalChatSending}
-                  />
-                  <button
-                    type="submit"
-                    className="global-chat__send"
-                    disabled={!isAuthed || globalChatSending}
-                    aria-label={t("globalChat.send")}
-                  >
-                    {globalChatSending ? "…" : "↵"}
-                  </button>
+                  <div className="global-chat__input-row">
+                    <textarea
+                      rows={1}
+                      placeholder={t("globalChat.placeholder")}
+                      value={globalChatInput}
+                      onChange={(event) => setGlobalChatInput(event.target.value)}
+                      onKeyDown={(event) => {
+                        const isComposing =
+                          event.nativeEvent.isComposing || event.isComposing || false;
+                        const hasModifier =
+                          event.shiftKey || event.metaKey || event.ctrlKey || event.altKey;
+                        if (event.key === "Enter" && !hasModifier && !isComposing) {
+                          event.preventDefault();
+                          void sendGlobalChatMessage();
+                        }
+                      }}
+                      disabled={!isAuthed || globalChatSending}
+                    />
+                    <div className="global-chat__send-row">
+                      <button
+                        type="submit"
+                        className="global-chat__send"
+                        disabled={!isAuthed || globalChatSending}
+                        aria-label={t("globalChat.send")}
+                      >
+                        {globalChatSending ? "…" : "↵"}
+                      </button>
+                      <div className="global-chat__controls">
+                        <div className="model-select">
+                          <button
+                            type="button"
+                            className={`model-option ${
+                              globalChatMode === "fast" ? "is-active" : ""
+                            }`}
+                            onClick={() => setGlobalChatMode("fast")}
+                          >
+                            {t("model.fast")}
+                          </button>
+                          <button
+                            type="button"
+                            className={`model-option ${
+                              globalChatMode === "standard" ? "is-active" : ""
+                            }`}
+                            onClick={() => setGlobalChatMode("standard")}
+                          >
+                            {t("model.standard")}
+                          </button>
+                          <button
+                            type="button"
+                            className={`model-option ${
+                              globalChatMode === "think" ? "is-active" : ""
+                            }`}
+                            onClick={() => setGlobalChatMode("think")}
+                          >
+                            {t("model.think")}
+                          </button>
+                        </div>
+                        <div
+                          className="usage-ring"
+                          aria-label={t("aria.usageRing", { percent: 40 })}
+                        >
+                          <span className="usage-ring__center" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </form>
               </section>
               </>
             ) : null}
+            {tooltipContainer
+              ? createPortal(
+                  <div
+                    className="ref-tooltip"
+                    style={{
+                      left: `${refTooltip.x}px`,
+                      top: `${refTooltip.y}px`,
+                      opacity: refTooltip.visible ? 1 : 0,
+                      pointerEvents: refTooltip.visible ? "auto" : "none",
+                    }}
+                    onMouseEnter={() =>
+                      setRefTooltip((prev) => (prev.visible ? prev : { ...prev, visible: true }))
+                    }
+                    onMouseMove={() => {
+                      if (!refTooltip.visible) return;
+                      const rect = refTooltip.anchor;
+                      if (!rect) return;
+                      const { x, y } = computeRefTooltipPosition(rect);
+                      setRefTooltip((prev) => ({ ...prev, x, y }));
+                    }}
+                    onMouseLeave={hideRefTooltip}
+                  >
+                    <div className="ref-tooltip__header">
+                      <div className="ref-tooltip__header-title">
+                        <span className="ref-tooltip__title">
+                          {refTooltip.refId
+                            ? getRefPreviewData(
+                                refTooltip.refId,
+                                refTooltip.documentId ?? undefined
+                              )?.documentTitle || refTooltip.title
+                            : refTooltip.title}
+                        </span>
+                      </div>
+                      <div className="ref-tooltip__header-page">
+                        {(() => {
+                          if (!refTooltip.refId) return null;
+                          const preview = getRefPreviewData(
+                            refTooltip.refId,
+                            refTooltip.documentId ?? undefined
+                          );
+                          const page =
+                            getRefPageLabel(preview?.metadata) ?? refTooltip.pageLabel;
+                          return page ? <span className="ref-tooltip__page">{page}</span> : null;
+                        })()}
+                      </div>
+                    </div>
+                    <div className="ref-tooltip__body" ref={refTooltipBodyRef}>
+                      {refTooltip.refId
+                        ? getRefPreviewData(
+                            refTooltip.refId,
+                            refTooltip.documentId ?? undefined
+                          )?.text || refTooltip.text
+                        : refTooltip.text}
+                    </div>
+                  </div>,
+                  tooltipContainer
+                )
+              : null}
             {showGlobalChat ? (
               <button
                 type="button"
@@ -3620,12 +4187,20 @@ export default function Home() {
                               {formatRelativeTime(thread.updatedAt)}
                             </span>
                           ) : null}
-                          <button
-                            type="button"
+                          <span
+                            role="button"
+                            tabIndex={0}
                             className="chat__thread-menu-trigger"
                             onClick={(event) => {
                               event.stopPropagation();
                               setOpenChatMenuId((prev) => (prev === thread.id ? null : thread.id));
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                setOpenChatMenuId((prev) => (prev === thread.id ? null : thread.id));
+                              }
                             }}
                             aria-label={t("tooltip.menu")}
                             data-tooltip={t("tooltip.menu")}
@@ -3647,7 +4222,7 @@ export default function Home() {
                               <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
                               <path d="M18 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
                             </svg>
-                          </button>
+                          </span>
                         </div>
                         {openChatMenuId === thread.id ? (
                           <div
@@ -3784,12 +4359,20 @@ export default function Home() {
                               {formatRelativeTime(thread.updatedAt)}
                             </span>
                           ) : null}
-                          <button
-                            type="button"
+                          <span
+                            role="button"
+                            tabIndex={0}
                             className="chat__thread-menu-trigger"
                             onClick={(event) => {
                               event.stopPropagation();
                               setOpenChatMenuId((prev) => (prev === thread.id ? null : thread.id));
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                setOpenChatMenuId((prev) => (prev === thread.id ? null : thread.id));
+                              }
                             }}
                             aria-label={t("tooltip.menu")}
                             data-tooltip={t("tooltip.menu")}
@@ -3811,7 +4394,7 @@ export default function Home() {
                               <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
                               <path d="M18 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
                             </svg>
-                          </button>
+                          </span>
                         </div>
                         {openChatMenuId === thread.id ? (
                           <div
@@ -3899,13 +4482,83 @@ export default function Home() {
                         .reverse()
                         .find((item) => item.role === "user")
                     : undefined;
+                  const displayText =
+                    msg.role === "assistant"
+                      ? msg.text
+                      : replaceRefTags(msg.text, msg.refs);
+                  const refLabelLookup = buildRefLabelLookup(msg.refs);
+                  const refIdLookup = buildRefIdLookup(msg.refs);
                   return (
                   <div key={msg.id} className={`bubble bubble--${msg.role}`}>
                     {msg.status === "loading" ? (
                       msg.text ? (
                         <div className="bubble__content markdown">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {msg.text}
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              a: ({ href, children }) => {
+                                const parsed = parseRefHref(href);
+                                if (parsed) {
+                                  const ref = refIdLookup.get(parsed.refId);
+                                  return (
+                                    <button
+                                      type="button"
+                                      className="ref ref--inline"
+                                      onClick={() =>
+                                        handleRefClick(parsed.refId, {
+                                          documentId: parsed.documentId,
+                                        })
+                                      }
+                                      onMouseEnter={() =>
+                                        ensureRefPreview(parsed.refId, parsed.documentId)
+                                      }
+                                      title={getRefPreviewTitle(
+                                        parsed.refId,
+                                        parsed.documentId,
+                                        ref?.label ?? ""
+                                      )}
+                                    >
+                                      {children}
+                                    </button>
+                                  );
+                                }
+                                const labelText = getNodeText(children)
+                                  .replace(/\s+/g, " ")
+                                  .trim();
+                                const matchedRef =
+                                  labelText ? refLabelLookup.get(labelText) : undefined;
+                                if (matchedRef) {
+                                  return (
+                                    <button
+                                      type="button"
+                                      className="ref ref--inline"
+                                      onClick={() =>
+                                        handleRefClick(matchedRef.id, {
+                                          documentId: matchedRef.documentId,
+                                        })
+                                      }
+                                      onMouseEnter={() =>
+                                        ensureRefPreview(matchedRef.id, matchedRef.documentId)
+                                      }
+                                      title={getRefPreviewTitle(
+                                        matchedRef.id,
+                                        matchedRef.documentId,
+                                        matchedRef.label ?? ""
+                                      )}
+                                    >
+                                      {children}
+                                    </button>
+                                  );
+                                }
+                                return (
+                                  <a href={href} target="_blank" rel="noreferrer">
+                                    {children}
+                                  </a>
+                                );
+                              },
+                            }}
+                          >
+                            {buildRefLinkedText(msg.text, msg.refs)}
                           </ReactMarkdown>
                         </div>
                       ) : (
@@ -3913,7 +4566,7 @@ export default function Home() {
                       )
                     ) : msg.status === "error" || msg.status === "stopped" ? (
                       <div className="bubble__row">
-                        <p className="bubble__content">{msg.text}</p>
+                        <p className="bubble__content">{displayText}</p>
                         {msg.status === "stopped" ? (
                           <p className="bubble__stopped">{t("chat.stopped")}</p>
                         ) : null}
@@ -3947,15 +4600,99 @@ export default function Home() {
                       </div>
                     ) : msg.role === "assistant" ? (
                       <div className="bubble__content markdown">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {msg.text}
+                        <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          a: ({ href, children }) => {
+                            const parsed = parseRefHref(href);
+                            if (parsed) {
+                              const ref = refIdLookup.get(parsed.refId);
+                              return (
+                                <button
+                                  type="button"
+                                  className="ref ref--inline"
+                                  onClick={() =>
+                                    handleRefClick(parsed.refId, {
+                                      documentId: parsed.documentId,
+                                    })
+                                  }
+                                  onMouseEnter={(event) => {
+                                    ensureRefPreview(parsed.refId, parsed.documentId);
+                                    showRefTooltip(
+                                      event,
+                                      parsed.refId,
+                                      parsed.documentId,
+                                      ref?.label ?? ""
+                                    );
+                                  }}
+                                  onMouseMove={(event) =>
+                                    showRefTooltip(
+                                      event,
+                                      parsed.refId,
+                                                  parsed.documentId,
+                                      ref?.label ?? ""
+                                    )
+                                  }
+                                  onMouseLeave={handleRefButtonLeave}
+                                            >
+                                              {children}
+                                            </button>
+                                          );
+                                        }
+                            const labelText = getNodeText(children)
+                              .replace(/\s+/g, " ")
+                              .trim();
+                            const matchedRef =
+                              labelText ? refLabelLookup.get(labelText) : undefined;
+                            if (matchedRef) {
+                              return (
+                                <button
+                                  type="button"
+                                  className="ref ref--inline"
+                                  onClick={() =>
+                                    handleRefClick(matchedRef.id, {
+                                      documentId: matchedRef.documentId,
+                                    })
+                                  }
+                                  onMouseEnter={(event) => {
+                                    ensureRefPreview(matchedRef.id, matchedRef.documentId);
+                                    showRefTooltip(
+                                      event,
+                                      matchedRef.id,
+                                      matchedRef.documentId,
+                                      matchedRef.label ?? ""
+                                    );
+                                  }}
+                                  onMouseMove={(event) =>
+                                    showRefTooltip(
+                                      event,
+                                      matchedRef.id,
+                                                  matchedRef.documentId,
+                                      matchedRef.label ?? ""
+                                    )
+                                  }
+                                  onMouseLeave={handleRefButtonLeave}
+                                            >
+                                              {children}
+                                            </button>
+                                          );
+                                        }
+                            return (
+                              <a href={href} target="_blank" rel="noreferrer">
+                                {children}
+                              </a>
+                            );
+                          },
+                          }}
+                        >
+                          {buildRefLinkedText(msg.text, msg.refs)}
                         </ReactMarkdown>
                         {msg.status === "stopped" ? (
                           <p className="bubble__stopped">{t("chat.stopped")}</p>
                         ) : null}
                       </div>
                     ) : (
-                      <p className="bubble__content">{msg.text}</p>
+                      <p className="bubble__content">{displayText}</p>
                     )}
                     {msg.refs ? (
                       <div className="refs">
@@ -3965,6 +4702,24 @@ export default function Home() {
                             key={ref.id}
                             className="ref"
                             onClick={() => handleRefClick(ref.id)}
+                            onMouseEnter={(event) => {
+                              ensureRefPreview(ref.id, ref.documentId);
+                              showRefTooltip(
+                                event,
+                                ref.id,
+                                ref.documentId,
+                                ref.label ?? ""
+                              );
+                            }}
+                            onMouseMove={(event) =>
+                              showRefTooltip(
+                                event,
+                                ref.id,
+                                ref.documentId,
+                                ref.label ?? ""
+                              )
+                            }
+                            onMouseLeave={handleRefButtonLeave}
                           >
                             {ref.label}
                           </button>

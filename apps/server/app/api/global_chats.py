@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -82,6 +83,25 @@ def _split_matches(
     if len(filtered) < min_k:
         return matches[:min_k], filtered
     return filtered, filtered
+
+
+def _extract_tag_refs(answer: str, ref_map: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    if not answer:
+        return []
+    tags = re.findall(r"\[@:chunk-([a-f0-9\\-]+)\]", answer, flags=re.IGNORECASE)
+    if not tags:
+        return []
+    refs: list[dict[str, Any]] = []
+    seen = set()
+    for chunk_id in tags:
+        key = str(chunk_id).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        ref = ref_map.get(key)
+        if ref:
+            refs.append(ref)
+    return refs
 
 
 async def _record_usage(
@@ -317,40 +337,65 @@ async def create_global_chat_assistant_message(
             return str(pages)
         return None
 
+
     context_parts: list[str] = []
     refs: list[dict[str, Any]] = []
+    ref_map: dict[str, dict[str, Any]] = {}
     for idx, match in enumerate(context_matches, start=1):
         content = str(match.get("content") or "")
         meta = match.get("metadata") or {}
         page_label = _page_label(meta) if isinstance(meta, dict) else None
         doc_title = str(match.get("document_title") or "Document")
         doc_id = str(match.get("document_id") or "")
+        match_id = str(match.get("id") or "").lower()
         if page_label:
             context_parts.append(f"[{idx}] ({doc_title} p.{page_label}) {content}")
-            if match in ref_matches:
-                refs.append(
-                    {
-                        "id": f"chunk-{match['id']}",
-                        "label": f"{doc_title} p.{page_label}",
-                        "documentId": doc_id,
-                    }
-                )
+            refs.append(
+                {
+                    "id": f"chunk-{match['id']}",
+                    "label": f"{doc_title} p.{page_label}",
+                    "documentId": doc_id,
+                }
+            )
+            if match_id:
+                ref_map[match_id] = {
+                    "id": f"chunk-{match['id']}",
+                    "label": f"{doc_title} p.{page_label}",
+                    "documentId": doc_id,
+                }
         else:
             context_parts.append(f"[{idx}] ({doc_title}) {content}")
-            if match in ref_matches:
-                refs.append(
-                    {
-                        "id": f"chunk-{match['id']}",
-                        "label": f"{doc_title} #{idx}",
-                        "documentId": doc_id,
-                    }
-                )
+            refs.append(
+                {
+                    "id": f"chunk-{match['id']}",
+                    "label": f"{doc_title}",
+                    "documentId": doc_id,
+                }
+            )
+            if match_id:
+                ref_map[match_id] = {
+                    "id": f"chunk-{match['id']}",
+                    "label": f"{doc_title}",
+                    "documentId": doc_id,
+                }
 
     if memory_lines:
         context_parts.insert(
             0,
             "Conversation (last 2 turns):\n" + "\n".join(memory_lines),
         )
+
+    context_parts.insert(
+        0,
+        "System:\n"
+        "あなたはPDF横断検索を行うアシスタントです。\n"
+        "ユーザーの質問に対し、与えられたコンテキストと確定している事実，一般常識だけを根拠に答えてください。\n"
+        "推測で補完しないでください。\n"
+        "\n"
+        "Instruction:\n"
+        "- 参照した場合は [@:chunk-{id}] を文中に挿入してください。\n"
+        "- 参照は複数可、段落末尾に付けてください。\n",
+    )
 
     model = _build_model(settings, payload.mode)
 
@@ -363,6 +408,7 @@ async def create_global_chat_assistant_message(
         answer = str(answer_payload.get("answer") or "").strip()
         if not answer:
             raise RuntimeError("Answer generation failed")
+        final_refs = refs if refs else None
         if payload.message_id:
             saved = await repository.update_global_chat_message(
                 pool,
@@ -371,7 +417,7 @@ async def create_global_chat_assistant_message(
                 payload.message_id,
                 answer,
                 "ok",
-                refs if refs else None,
+                final_refs,
             )
             if saved is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
@@ -383,7 +429,7 @@ async def create_global_chat_assistant_message(
                 "assistant",
                 answer,
                 "ok",
-                refs if refs else None,
+                final_refs,
             )
         await _record_usage(
             pool,

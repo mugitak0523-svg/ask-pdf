@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import logging
 from typing import Any, Literal
 
@@ -76,6 +77,25 @@ def _split_matches(
     if len(filtered) < min_k:
         return matches[:min_k], filtered
     return filtered, filtered
+
+
+def _extract_tag_refs(answer: str, ref_map: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    if not answer:
+        return []
+    tags = re.findall(r"\[@:chunk-([a-f0-9\\-]+)\]", answer, flags=re.IGNORECASE)
+    if not tags:
+        return []
+    refs: list[dict[str, Any]] = []
+    seen = set()
+    for chunk_id in tags:
+        key = str(chunk_id).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        ref = ref_map.get(key)
+        if ref:
+            refs.append(ref)
+    return refs
 
 
 async def _record_usage(
@@ -376,6 +396,41 @@ async def get_document_chunk(
             "id": str(row["id"]),
             "documentId": str(row["document_id"]),
             "metadata": row.get("metadata"),
+        }
+    }
+
+
+@router.get("/document-chunks/{chunk_id}")
+async def get_document_chunk_preview(
+    request: Request,
+    chunk_id: str,
+    document_id: str | None = None,
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    pool = request.app.state.db_pool
+    row = await repository.get_document_chunk_content(
+        pool,
+        chunk_id=chunk_id,
+        user_id=user.user_id,
+        document_id=document_id,
+    )
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    content = str(row.get("content") or "")
+    text = " ".join(content.split())
+    metadata = row.get("metadata")
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except json.JSONDecodeError:
+            metadata = None
+    return {
+        "chunk": {
+            "id": str(row["id"]),
+            "documentId": str(row["document_id"]),
+            "text": text,
+            "metadata": metadata,
+            "documentTitle": row.get("document_title"),
         }
     }
 
@@ -727,36 +782,60 @@ async def create_document_chat_assistant_message(
             return str(pages)
         return None
 
+
+
     context_parts: list[str] = []
     refs: list[dict[str, Any]] = []
+    ref_map: dict[str, dict[str, Any]] = {}
     for idx, match in enumerate(context_matches, start=1):
         content = str(match.get("content") or "")
         meta = match.get("metadata") or {}
         page_label = _page_label(meta) if isinstance(meta, dict) else None
+        match_id = str(match.get("id") or "").lower()
         if page_label:
             context_parts.append(f"[{idx}] (page {page_label}) {content}")
-            if match in ref_matches:
-                refs.append(
-                    {
-                        "id": f"chunk-{match['id']}",
-                        "label": f"p.{page_label}",
-                    }
-                )
+            refs.append(
+                {
+                    "id": f"chunk-{match['id']}",
+                    "label": f"p.{page_label}",
+                }
+            )
+            if match_id:
+                ref_map[match_id] = {
+                    "id": f"chunk-{match['id']}",
+                    "label": f"p.{page_label}",
+                }
         else:
             context_parts.append(f"[{idx}] {content}")
-            if match in ref_matches:
-                refs.append(
-                    {
-                        "id": f"chunk-{match['id']}",
-                        "label": str(idx),
-                    }
-                )
+            refs.append(
+                {
+                    "id": f"chunk-{match['id']}",
+                    "label": str(idx),
+                }
+            )
+            if match_id:
+                ref_map[match_id] = {
+                    "id": f"chunk-{match['id']}",
+                    "label": str(idx),
+                }
 
     if memory_lines:
         context_parts.insert(
             0,
             "Conversation (last 2 turns):\n" + "\n".join(memory_lines),
         )
+
+    context_parts.insert(
+        0,
+        "System:\n"
+        "あなたはPDF横断検索を行うアシスタントです。\n"
+        "ユーザーの質問に対し、与えられたコンテキストと確定している事実，一般常識だけを根拠に答えてください。\n"
+        "推測で補完しないでください。\n"
+        "\n"
+        "Instruction:\n"
+        "- 参照した場合は [@:chunk-{id}] を文中に挿入してください。\n"
+        "- 参照は複数可、段落末尾に付けてください。\n",
+    )
 
     settings = request.app.state.settings
     model = _build_model(settings, payload.mode)
@@ -770,6 +849,8 @@ async def create_document_chat_assistant_message(
         answer = str(answer_payload.get("answer") or "").strip()
         if not answer:
             raise RuntimeError("Answer generation failed")
+        _ = _extract_tag_refs(answer, ref_map)
+        final_refs = refs if refs else None
         if payload.message_id:
             saved = await repository.update_document_chat_message(
                 pool,
@@ -778,7 +859,7 @@ async def create_document_chat_assistant_message(
                 payload.message_id,
                 answer,
                 "ok",
-                refs if refs else None,
+                final_refs,
             )
             if saved is None:
                 raise HTTPException(
@@ -793,7 +874,7 @@ async def create_document_chat_assistant_message(
                 "assistant",
                 answer,
                 "ok",
-                refs if refs else None,
+                final_refs,
             )
         await _record_usage(
             pool,
@@ -960,28 +1041,38 @@ async def stream_document_chat_assistant_message(
 
     context_parts: list[str] = []
     refs: list[dict[str, Any]] = []
+    ref_map: dict[str, dict[str, Any]] = {}
     for idx, match in enumerate(context_matches, start=1):
         content = str(match.get("content") or "")
         meta = match.get("metadata") or {}
         page_label = _page_label(meta) if isinstance(meta, dict) else None
+        match_id = str(match.get("id") or "").lower()
         if page_label:
             context_parts.append(f"[{idx}] (page {page_label}) {content}")
-            if match in ref_matches:
-                refs.append(
-                    {
-                        "id": f"chunk-{match['id']}",
-                        "label": f"p.{page_label}",
-                    }
-                )
+            refs.append(
+                {
+                    "id": f"chunk-{match['id']}",
+                    "label": f"p.{page_label}",
+                }
+            )
+            if match_id:
+                ref_map[match_id] = {
+                    "id": f"chunk-{match['id']}",
+                    "label": f"p.{page_label}",
+                }
         else:
             context_parts.append(f"[{idx}] {content}")
-            if match in ref_matches:
-                refs.append(
-                    {
-                        "id": f"chunk-{match['id']}",
-                        "label": str(idx),
-                    }
-                )
+            refs.append(
+                {
+                    "id": f"chunk-{match['id']}",
+                    "label": str(idx),
+                }
+            )
+            if match_id:
+                ref_map[match_id] = {
+                    "id": f"chunk-{match['id']}",
+                    "label": str(idx),
+                }
 
     if memory_lines:
         context_parts.insert(
@@ -989,6 +1080,17 @@ async def stream_document_chat_assistant_message(
             "Conversation (last 2 turns):\n" + "\n".join(memory_lines),
         )
 
+    context_parts.insert(
+        0,
+        "System:\n"
+        "あなたはPDF横断検索を行うアシスタントです。\n"
+        "ユーザーの質問に対し、与えられたコンテキストと確定している事実，一般常識だけを根拠に答えてください。\n"
+        "推測で補完しないでください。\n"
+        "\n"
+        "Instruction:\n"
+        "- 参照した場合は [@:chunk-{id}] を文中に挿入してください。\n"
+        "- 参照は複数可、段落末尾に付けてください。\n",
+    )
     model = _build_model(settings, payload.mode)
 
     answer_parts: list[str] = []
@@ -1029,6 +1131,8 @@ async def stream_document_chat_assistant_message(
         answer = "".join(answer_parts).strip()
         if parser_error or not answer:
             raise RuntimeError("Answer generation failed")
+        _ = _extract_tag_refs(answer, ref_map)
+        final_refs = refs if refs else None
         if payload.message_id:
             saved = await repository.update_document_chat_message(
                 pool,
@@ -1037,7 +1141,7 @@ async def stream_document_chat_assistant_message(
                 payload.message_id,
                 answer,
                 "ok",
-                refs if refs else None,
+                final_refs,
             )
             if saved is None:
                 await websocket.send_text(
@@ -1053,7 +1157,7 @@ async def stream_document_chat_assistant_message(
                 "assistant",
                 answer,
                 "ok",
-                refs if refs else None,
+                final_refs,
             )
         message_payload = {
             "id": str(saved["id"]),
@@ -1082,6 +1186,8 @@ async def stream_document_chat_assistant_message(
     except WebSocketDisconnect:
         if answer_parts:
             answer = "".join(answer_parts).strip()
+            _ = _extract_tag_refs(answer, ref_map)
+            final_refs = refs if refs else None
             if payload.message_id:
                 await repository.update_document_chat_message(
                     pool,
@@ -1090,7 +1196,7 @@ async def stream_document_chat_assistant_message(
                     payload.message_id,
                     answer,
                     "stopped",
-                    refs if refs else None,
+                    final_refs,
                 )
             else:
                 await repository.insert_document_chat_message(
@@ -1100,7 +1206,7 @@ async def stream_document_chat_assistant_message(
                     "assistant",
                     answer,
                     "stopped",
-                    refs if refs else None,
+                    final_refs,
                 )
         return
     except Exception as exc:

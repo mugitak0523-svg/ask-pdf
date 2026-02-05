@@ -919,3 +919,49 @@ async def get_document_chunk(
             user_id,
         )
     return dict(row) if row else None
+
+
+async def get_document_chunk_content(
+    pool: asyncpg.Pool,
+    chunk_id: str,
+    user_id: str,
+    document_id: str | None = None,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        if document_id:
+            row = await conn.fetchrow(
+                """
+                select
+                    document_chunks.id,
+                    document_chunks.document_id,
+                    document_chunks.content,
+                    document_chunks.metadata,
+                    documents.title as document_title
+                from document_chunks
+                join documents on documents.id = document_chunks.document_id
+                where document_chunks.id = $1
+                  and document_chunks.document_id = $2
+                  and document_chunks.user_id = $3
+                """,
+                chunk_id,
+                document_id,
+                user_id,
+            )
+        else:
+            row = await conn.fetchrow(
+                """
+                select
+                    document_chunks.id,
+                    document_chunks.document_id,
+                    document_chunks.content,
+                    document_chunks.metadata,
+                    documents.title as document_title
+                from document_chunks
+                join documents on documents.id = document_chunks.document_id
+                where document_chunks.id = $1
+                  and document_chunks.user_id = $2
+                """,
+                chunk_id,
+                user_id,
+            )
+    return dict(row) if row else None
