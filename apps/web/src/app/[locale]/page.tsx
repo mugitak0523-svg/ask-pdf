@@ -11,6 +11,7 @@ import { supabase } from "@/lib/supabase";
 type ChatRef = {
   label: string;
   id: string;
+  documentId?: string;
 };
 
 type ChatMessage = {
@@ -107,6 +108,15 @@ export default function Home() {
   const chatMessagesRef = useRef<HTMLDivElement | null>(null);
   const [showChatJump, setShowChatJump] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const globalChatMessagesRef = useRef<HTMLDivElement | null>(null);
+  const [globalChatId, setGlobalChatId] = useState<string | null>(null);
+  const [globalChatInput, setGlobalChatInput] = useState("");
+  const [globalChatMessages, setGlobalChatMessages] = useState<ChatMessage[]>([]);
+  const [globalChatLoading, setGlobalChatLoading] = useState(false);
+  const [globalChatSending, setGlobalChatSending] = useState(false);
+  const [globalChatError, setGlobalChatError] = useState<string | null>(null);
+  const [globalChatOpen, setGlobalChatOpen] = useState(true);
+  const [globalChatHeight, setGlobalChatHeight] = useState(220);
 
   useEffect(() => {
     const measure = document.createElement("span");
@@ -165,6 +175,7 @@ export default function Home() {
       }
       const clampedLeft = Math.max(padding, Math.min(window.innerWidth - padding, center + shift));
       const usePortal = target.getAttribute("data-tooltip-portal") === "true";
+      const position = target.getAttribute("data-tooltip-position") ?? "bottom";
       if (usePortal) {
         const node = ensurePortal();
         node.textContent = text;
@@ -173,7 +184,7 @@ export default function Home() {
         const width = node.getBoundingClientRect().width;
         const height = node.getBoundingClientRect().height;
         const leftPos = Math.max(padding, Math.min(window.innerWidth - padding, clampedLeft));
-        const topPos = rect.bottom + 8;
+        const topPos = position === "top" ? rect.top - height - 8 : rect.bottom + 8;
         node.style.transform = `translate(${leftPos - width / 2}px, ${topPos}px)`;
       } else {
         target.style.setProperty("--tooltip-shift", `${shift}px`);
@@ -202,6 +213,7 @@ export default function Home() {
       }
       const clampedLeft = Math.max(padding, Math.min(window.innerWidth - padding, center + shift));
       const usePortal = target.getAttribute("data-tooltip-portal") === "true";
+      const position = target.getAttribute("data-tooltip-position") ?? "bottom";
       if (usePortal) {
         const node = ensurePortal();
         node.textContent = target.getAttribute("data-tooltip") ?? "";
@@ -209,7 +221,7 @@ export default function Home() {
         const width = node.getBoundingClientRect().width;
         const height = node.getBoundingClientRect().height;
         const leftPos = Math.max(padding, Math.min(window.innerWidth - padding, clampedLeft));
-        const topPos = rect.bottom + 8;
+        const topPos = position === "top" ? rect.top - height - 8 : rect.bottom + 8;
         node.style.transform = `translate(${leftPos - width / 2}px, ${topPos}px)`;
       } else {
         target.style.setProperty("--tooltip-shift", `${shift}px`);
@@ -267,6 +279,12 @@ export default function Home() {
       }
       if (typeof parsed.sidebarOpen === "boolean") {
         setSidebarOpen(parsed.sidebarOpen);
+      }
+      if (typeof parsed.globalChatOpen === "boolean") {
+        setGlobalChatOpen(parsed.globalChatOpen);
+      }
+      if (Number.isFinite(parsed.globalChatHeight)) {
+        setGlobalChatHeight(parsed.globalChatHeight);
       }
       if (
         parsed.settingsSection === "general" ||
@@ -447,6 +465,7 @@ export default function Home() {
         setUserEmail(data.session.user?.email ?? null);
         void loadDocuments(data.session.access_token);
         void loadPlan(data.session.access_token);
+        void loadGlobalChat(data.session.access_token);
       } else {
         setUserEmail(null);
         setPlan("guest");
@@ -461,6 +480,7 @@ export default function Home() {
         setUserEmail(session.user?.email ?? null);
         void loadDocuments(session.access_token);
         void loadPlan(session.access_token);
+        void loadGlobalChat(session.access_token);
         if (selectedDocumentId) {
           void loadChats(selectedDocumentId, session.access_token);
         } else {
@@ -476,6 +496,9 @@ export default function Home() {
         setChatThreads([]);
         setActiveChatId(null);
         setAllChatThreads([]);
+        setGlobalChatId(null);
+        setGlobalChatMessages([]);
+        setGlobalChatError(null);
       }
     });
     return () => {
@@ -505,6 +528,19 @@ export default function Home() {
       if (!event.metaKey || !event.shiftKey || event.key.toLowerCase() !== "b") return;
       event.preventDefault();
       setChatOpen((prev) => !prev);
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
+
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (!event.shiftKey || event.key.toLowerCase() !== "b") return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, [contenteditable='true']")) return;
+      event.preventDefault();
+      setGlobalChatOpen((prev) => !prev);
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
@@ -555,6 +591,8 @@ export default function Home() {
       chatWidth,
       chatOpen,
       sidebarOpen,
+      globalChatOpen,
+      globalChatHeight,
       settingsSection,
       showThreadList,
       openDocuments,
@@ -570,6 +608,8 @@ export default function Home() {
     chatWidth,
     chatOpen,
     sidebarOpen,
+    globalChatOpen,
+    globalChatHeight,
     settingsSection,
     showThreadList,
     openDocuments,
@@ -730,6 +770,22 @@ export default function Home() {
       });
     });
   }, [showThreadList, chatMessages.length]);
+
+  useEffect(() => {
+    if (globalChatMessages.length === 0) return;
+    requestAnimationFrame(() => {
+      scrollGlobalChatToBottom("auto");
+    });
+  }, [globalChatMessages.length]);
+
+  const scrollGlobalChatToBottom = (behavior: ScrollBehavior = "smooth") => {
+    const target = globalChatMessagesRef.current;
+    if (!target) return;
+    target.scrollTo({
+      top: target.scrollHeight,
+      behavior,
+    });
+  };
 
   const loadChatMessages = async (
     documentId: string,
@@ -916,6 +972,94 @@ export default function Home() {
       if (allChatsAbortRef.current) {
         allChatsAbortRef.current = null;
       }
+    }
+  };
+
+  const loadGlobalChatMessages = async (chatId: string, accessToken: string) => {
+    setGlobalChatLoading(true);
+    setGlobalChatError(null);
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/global-chats/${chatId}/messages`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load global chat messages (${response.status})`);
+      }
+      const payload = await response.json();
+      const items = Array.isArray(payload.messages) ? payload.messages : [];
+      const messages = items.map((item: ChatMessage) => ({
+        id: String(item.id),
+        role: item.role === "assistant" ? "assistant" : "user",
+        text:
+          item.status === "error" && !item.text
+            ? t("chat.answerFailed")
+            : String(item.text ?? ""),
+        status:
+          item.status === "error"
+            ? "error"
+            : item.status === "stopped"
+              ? "stopped"
+              : undefined,
+        refs: normalizeRefs(item.refs),
+        createdAt: String(item.createdAt ?? new Date().toISOString()),
+      }));
+      setGlobalChatMessages(messages);
+      requestAnimationFrame(() => {
+        scrollGlobalChatToBottom("auto");
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to load global chat messages";
+      setGlobalChatError(message);
+      setGlobalChatMessages([]);
+    } finally {
+      setGlobalChatLoading(false);
+    }
+  };
+
+  const loadGlobalChat = async (accessToken: string) => {
+    setGlobalChatError(null);
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/global-chats`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load global chats (${response.status})`);
+      }
+      const payload = await response.json();
+      const items = Array.isArray(payload.chats) ? payload.chats : [];
+      let chatId = items[0]?.id ? String(items[0].id) : null;
+      if (!chatId) {
+        const createResponse = await fetch(`${baseUrl}/global-chats`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ title: t("globalChat.title") }),
+        });
+        if (!createResponse.ok) {
+          throw new Error(`Failed to create global chat (${createResponse.status})`);
+        }
+        const created = await createResponse.json();
+        chatId = String(created.chat_id ?? "");
+      }
+      if (!chatId) {
+        throw new Error("Global chat not available");
+      }
+      setGlobalChatId(chatId);
+      await loadGlobalChatMessages(chatId, accessToken);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load global chat";
+      setGlobalChatError(message);
+      setGlobalChatId(null);
+      setGlobalChatMessages([]);
     }
   };
 
@@ -1462,17 +1606,24 @@ export default function Home() {
     await supabase.auth.signOut();
   };
 
-  const handleRefClick = async (refId: string) => {
-    if (!selectedDocumentId) return;
-    if (activeRefId === refId) {
+  const handleRefClick = async (refId: string, options: { documentId?: string } = {}) => {
+    const targetDocumentId = options.documentId ?? selectedDocumentId;
+    if (!targetDocumentId) return;
+    const refKey = `${targetDocumentId}:${refId}`;
+    if (activeRefId === refKey) {
       setReferenceRequest(null);
       setActiveRefId(null);
       return;
     }
+    if (options.documentId && options.documentId !== selectedDocumentId) {
+      const doc = documents.find((item) => item.id === options.documentId);
+      if (!doc) return;
+      await handleSelectDocument(doc, { autoOpenChat: false });
+    }
     const chunkId = refId.startsWith("chunk-") ? refId.slice(6) : refId;
     if (!chunkId) return;
     try {
-      setActiveRefId(refId);
+      setActiveRefId(refKey);
       setReferenceRequest(null);
       const session = await supabase.auth.getSession();
       const accessToken = session.data.session?.access_token;
@@ -1485,7 +1636,7 @@ export default function Home() {
       refAbortRef.current = controller;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const response = await fetch(
-        `${baseUrl}/documents/${selectedDocumentId}/chunks/${chunkId}`,
+        `${baseUrl}/documents/${targetDocumentId}/chunks/${chunkId}`,
         {
           headers: {
             Authorization: `Bearer ${accessToken}`,
@@ -1553,6 +1704,29 @@ export default function Home() {
       : chatThreads.find((thread) => thread.id === activeChatId)?.title ??
         (activeChatId ? t("chat.newChat") : t("chat.chat"))
     : t("chat.allChatList");
+  const showGlobalChat = selectedTabId !== SETTINGS_TAB_ID;
+  const handleGlobalChatResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!containerRef.current) return;
+    const startY = event.clientY;
+    const startHeight = globalChatHeight;
+    const containerRect = containerRef.current.getBoundingClientRect();
+    const maxHeight = Math.min(360, Math.max(160, containerRect.height - 160));
+    const minHeight = 140;
+    const target = event.currentTarget;
+    target.setPointerCapture(event.pointerId);
+    const onMove = (moveEvent: PointerEvent) => {
+      const delta = startY - moveEvent.clientY;
+      const next = Math.min(maxHeight, Math.max(minHeight, startHeight + delta));
+      setGlobalChatHeight(next);
+    };
+    const onUp = (upEvent: PointerEvent) => {
+      target.releasePointerCapture(upEvent.pointerId);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
   const planLabel =
     plan === "guest"
       ? t("planGuest")
@@ -1656,6 +1830,138 @@ export default function Home() {
       const messageText =
         error instanceof Error ? error.message : "Failed to send message";
       setChatError(messageText);
+    }
+  };
+
+  const sendGlobalChatMessage = async () => {
+    const trimmed = globalChatInput.trim();
+    if (!trimmed) return;
+    if (globalChatSending) return;
+    if (!globalChatId) return;
+    const userMessageCount = globalChatMessages.filter((msg) => msg.role === "user").length;
+    if (
+      planLimits.maxMessagesPerThread !== null &&
+      userMessageCount >= planLimits.maxMessagesPerThread
+    ) {
+      setGlobalChatError(t("errors.messageLimit", { limit: planLimits.maxMessagesPerThread }));
+      return;
+    }
+    const tempId = crypto.randomUUID();
+    const userMessage: ChatMessage = {
+      id: tempId,
+      role: "user",
+      text: trimmed,
+      createdAt: new Date().toISOString(),
+    };
+    setGlobalChatMessages((prev) => [...prev, userMessage]);
+    setGlobalChatInput("");
+    setGlobalChatSending(true);
+    setGlobalChatError(null);
+    const pendingId = crypto.randomUUID();
+    setGlobalChatMessages((prev) => [
+      ...prev,
+      {
+        id: pendingId,
+        role: "assistant",
+        text: "",
+        createdAt: new Date().toISOString(),
+        status: "loading",
+      },
+    ]);
+    try {
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.access_token;
+      if (!accessToken) {
+        throw new Error("Not authenticated");
+      }
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/global-chats/${globalChatId}/messages`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          role: "user",
+          text: trimmed,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to send global message (${response.status})`);
+      }
+      const payload = await response.json();
+      const saved = payload?.message;
+      if (saved?.id) {
+        setGlobalChatMessages((prev) =>
+          prev.map((item) =>
+            item.id === tempId
+              ? {
+                  ...item,
+                  id: String(saved.id),
+                  createdAt: String(saved.createdAt ?? item.createdAt),
+                }
+              : item
+          )
+        );
+      }
+      const answerResponse = await fetch(
+        `${baseUrl}/global-chats/${globalChatId}/assistant`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            message: trimmed,
+            mode: chatMode,
+          }),
+        }
+      );
+      if (!answerResponse.ok) {
+        throw new Error(`Failed to get answer (${answerResponse.status})`);
+      }
+      const answerPayload = await answerResponse.json();
+      const savedAnswer = answerPayload?.message;
+      setGlobalChatMessages((prev) =>
+        prev.map((item) =>
+          item.id === pendingId
+            ? {
+                id: String(savedAnswer?.id ?? pendingId),
+                role: "assistant",
+                text: String(savedAnswer?.text ?? ""),
+                status:
+                  savedAnswer?.status === "error"
+                    ? "error"
+                    : savedAnswer?.status === "stopped"
+                      ? "stopped"
+                      : undefined,
+                refs: normalizeRefs(savedAnswer?.refs),
+                createdAt: String(savedAnswer?.createdAt ?? item.createdAt),
+              }
+            : item
+        )
+      );
+      requestAnimationFrame(() => {
+        scrollGlobalChatToBottom("smooth");
+      });
+    } catch (error) {
+      const messageText =
+        error instanceof Error ? error.message : "Failed to send global message";
+      setGlobalChatError(messageText);
+      setGlobalChatMessages((prev) =>
+        prev.map((item) =>
+          item.id === pendingId
+            ? {
+                ...item,
+                status: "error",
+                text: t("chat.answerFailed"),
+              }
+            : item
+        )
+      );
+    } finally {
+      setGlobalChatSending(false);
     }
   };
 
@@ -2775,7 +3081,15 @@ export default function Home() {
               ≫
             </button>
           </div>
-          <div className="viewer__canvas">
+          <div
+            className={`viewer__canvas ${
+              showGlobalChat && globalChatOpen ? "viewer__canvas--global" : ""
+            }`}
+            style={{
+              paddingBottom:
+                showGlobalChat && globalChatOpen ? `${globalChatHeight}px` : "0px",
+            }}
+          >
             {viewerLoading ? (
               <div className="empty-state">{renderLoadingText(t("common.loading"))}</div>
             ) : selectedTabId === SETTINGS_TAB_ID ? (
@@ -2844,6 +3158,165 @@ export default function Home() {
             ) : (
               <div className="empty-state">{t("viewer.empty")}</div>
             )}
+            {showGlobalChat && globalChatOpen ? (
+              <>
+                <div
+                  className="global-chat__resizer"
+                  role="separator"
+                  aria-orientation="horizontal"
+                  onPointerDown={handleGlobalChatResizeStart}
+                  style={{ bottom: `${globalChatHeight}px` }}
+                />
+                <section
+                  className="global-chat"
+                  aria-label={t("globalChat.title")}
+                  style={{ height: globalChatHeight }}
+                >
+                <div className="global-chat__header">
+                  <div className="global-chat__title">{t("globalChat.title")}</div>
+                  <div className="global-chat__subtitle">{t("globalChat.subtitle")}</div>
+                </div>
+                <div className="global-chat__body" ref={globalChatMessagesRef}>
+                  {!isAuthed ? (
+                    <div className="global-chat__empty">
+                      {t("globalChat.signInHint")}
+                    </div>
+                  ) : globalChatLoading ? (
+                    <div className="global-chat__empty">
+                      {renderLoadingText(t("common.loading"))}
+                    </div>
+                  ) : globalChatError ? (
+                    <div className="global-chat__empty">{globalChatError}</div>
+                  ) : globalChatMessages.length === 0 ? (
+                    <div className="global-chat__empty">{t("globalChat.empty")}</div>
+                  ) : (
+                    globalChatMessages.map((msg) => (
+                      <div
+                        key={msg.id}
+                        className={`global-chat__line global-chat__line--${msg.role}`}
+                      >
+                        <span className="global-chat__prompt">
+                          {msg.role === "user" ? ">" : "•"}
+                        </span>
+                        <div className="global-chat__content">
+                          {msg.role === "assistant" ? (
+                            msg.status === "loading" ? (
+                              <p>{renderLoadingText(t("chat.answering"))}</p>
+                            ) : (
+                              <div className="markdown">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                  {msg.text}
+                                </ReactMarkdown>
+                              </div>
+                            )
+                          ) : (
+                            <p>{msg.text}</p>
+                          )}
+                          {msg.refs ? (
+                            <div className="refs refs--inline">
+                              {msg.refs.map((ref) => (
+                                <button
+                                  type="button"
+                                  key={`${ref.id}-${ref.documentId ?? "doc"}`}
+                                  className="ref"
+                                  onClick={() =>
+                                    handleRefClick(ref.id, {
+                                      documentId: ref.documentId,
+                                    })
+                                  }
+                                >
+                                  {ref.label}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <form
+                  className="global-chat__input"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void sendGlobalChatMessage();
+                  }}
+                >
+                  <textarea
+                    rows={1}
+                    placeholder={t("globalChat.placeholder")}
+                    value={globalChatInput}
+                    onChange={(event) => setGlobalChatInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      const isComposing =
+                        event.nativeEvent.isComposing || event.isComposing || false;
+                      const hasModifier =
+                        event.shiftKey || event.metaKey || event.ctrlKey || event.altKey;
+                      if (event.key === "Enter" && !hasModifier && !isComposing) {
+                        event.preventDefault();
+                        void sendGlobalChatMessage();
+                      }
+                    }}
+                    disabled={!isAuthed || globalChatSending}
+                  />
+                  <button
+                    type="submit"
+                    className="global-chat__send"
+                    disabled={!isAuthed || globalChatSending}
+                    aria-label={t("globalChat.send")}
+                  >
+                    {globalChatSending ? "…" : "↵"}
+                  </button>
+                </form>
+              </section>
+              </>
+            ) : null}
+            {showGlobalChat ? (
+              <button
+                type="button"
+                className="global-chat__toggle"
+                onClick={() => setGlobalChatOpen((prev) => !prev)}
+                aria-label={
+                  globalChatOpen
+                    ? t("tooltip.globalChatCollapse")
+                    : t("tooltip.globalChatExpand")
+                }
+                data-tooltip={
+                  globalChatOpen
+                    ? t("tooltip.globalChatCollapse")
+                    : t("tooltip.globalChatExpand")
+                }
+                data-tooltip-portal="true"
+                data-tooltip-position="top"
+                style={{
+                  bottom: globalChatOpen
+                    ? `${Math.max(0, globalChatHeight - 1)}px`
+                    : "0",
+                }}
+              >
+                <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                  {globalChatOpen ? (
+                    <polyline
+                      points="6 10 12 16 18 10"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  ) : (
+                    <polyline
+                      points="6 14 12 8 18 14"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  )}
+                </svg>
+              </button>
+            ) : null}
             <button
               type="button"
               className="viewer__chat-toggle"

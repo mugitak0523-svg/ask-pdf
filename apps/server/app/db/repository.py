@@ -128,6 +128,7 @@ async def delete_document(
 async def insert_chunks(
     pool: asyncpg.Pool,
     document_id: str,
+    user_id: str,
     chunks: list[dict[str, Any]],
 ) -> int:
     if not chunks:
@@ -143,6 +144,7 @@ async def insert_chunks(
         records.append(
             (
                 document_id,
+                user_id,
                 content,
                 _vector_literal(embedding),
                 json.dumps(metadata),
@@ -155,8 +157,8 @@ async def insert_chunks(
     async with pool.acquire() as conn:
         await conn.executemany(
             """
-            insert into document_chunks (document_id, content, embedding, metadata)
-            values ($1, $2, $3::vector, $4::jsonb)
+            insert into document_chunks (document_id, user_id, content, embedding, metadata)
+            values ($1, $2, $3, $4::vector, $5::jsonb)
             """,
             records,
         )
@@ -178,6 +180,36 @@ async def match_documents(
             vector_literal,
             match_count,
             document_id,
+        )
+    return [dict(row) for row in rows]
+
+
+async def match_user_documents(
+    pool: asyncpg.Pool,
+    user_id: str,
+    query_embedding: list[float],
+    match_count: int = 5,
+) -> list[dict[str, Any]]:
+    vector_literal = _vector_literal(query_embedding)
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            select
+                document_chunks.id,
+                document_chunks.document_id,
+                document_chunks.content,
+                document_chunks.metadata,
+                documents.title as document_title,
+                1 - (document_chunks.embedding <=> $2::vector) as similarity
+            from document_chunks
+            join documents on documents.id = document_chunks.document_id
+            where document_chunks.user_id = $1
+            order by document_chunks.embedding <=> $2::vector
+            limit $3
+            """,
+            user_id,
+            vector_literal,
+            match_count,
         )
     return [dict(row) for row in rows]
 
@@ -508,6 +540,214 @@ async def update_document_chat_message(
         row = await conn.fetchrow(
             """
             update document_chat_messages
+            set content = $1,
+                status = $2,
+                refs = $3::jsonb
+            where id = $4 and chat_id = $5 and user_id = $6
+            returning id, role, content, status, refs, created_at
+            """,
+            content,
+            status,
+            json.dumps(refs) if refs is not None else None,
+            message_id,
+            chat_id,
+            user_id,
+        )
+    return dict(row) if row else None
+
+
+async def list_global_chat_threads(
+    pool: asyncpg.Pool,
+    user_id: str,
+) -> list[dict[str, Any]]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            select
+                threads.id,
+                threads.title,
+                threads.updated_at,
+                (
+                    select content
+                    from global_chat_messages
+                    where chat_id = threads.id
+                      and user_id = $1
+                    order by created_at desc
+                    limit 1
+                ) as last_message
+            from global_chat_threads as threads
+            where threads.user_id = $1
+            order by threads.updated_at desc, threads.created_at desc
+            """,
+            user_id,
+        )
+    return [dict(row) for row in rows]
+
+
+async def create_global_chat_thread(
+    pool: asyncpg.Pool,
+    user_id: str,
+    title: str | None = None,
+) -> dict[str, Any]:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            insert into global_chat_threads (user_id, title)
+            values ($1, $2)
+            returning id, title, updated_at
+            """,
+            user_id,
+            title,
+        )
+    return dict(row)
+
+
+async def get_global_chat_thread(
+    pool: asyncpg.Pool,
+    chat_id: str,
+    user_id: str,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select id, title, updated_at
+            from global_chat_threads
+            where id = $1 and user_id = $2
+            """,
+            chat_id,
+            user_id,
+        )
+    return dict(row) if row else None
+
+
+async def update_global_chat_thread_title(
+    pool: asyncpg.Pool,
+    chat_id: str,
+    user_id: str,
+    title: str,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            update global_chat_threads
+            set title = $3
+            where id = $1 and user_id = $2
+            returning id, title, updated_at
+            """,
+            chat_id,
+            user_id,
+            title,
+        )
+    return dict(row) if row else None
+
+
+async def delete_global_chat_thread(
+    pool: asyncpg.Pool,
+    chat_id: str,
+    user_id: str,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            delete from global_chat_threads
+            where id = $1 and user_id = $2
+            returning id
+            """,
+            chat_id,
+            user_id,
+        )
+    return dict(row) if row else None
+
+
+async def list_global_chat_messages(
+    pool: asyncpg.Pool,
+    chat_id: str,
+    user_id: str,
+) -> list[dict[str, Any]]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            select id, role, content, status, refs, created_at
+            from global_chat_messages
+            where chat_id = $1 and user_id = $2
+            order by created_at asc
+            """,
+            chat_id,
+            user_id,
+        )
+    return [dict(row) for row in rows]
+
+
+async def count_global_chat_messages(
+    pool: asyncpg.Pool,
+    chat_id: str,
+    user_id: str,
+    role: str | None = None,
+) -> int:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select count(*) as count
+            from global_chat_messages
+            where chat_id = $1
+              and user_id = $2
+              and ($3::text is null or role = $3::text)
+            """,
+            chat_id,
+            user_id,
+            role,
+        )
+    return int(row["count"]) if row else 0
+
+
+async def insert_global_chat_message(
+    pool: asyncpg.Pool,
+    chat_id: str,
+    user_id: str,
+    role: str,
+    content: str,
+    status: str | None = None,
+    refs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            update global_chat_threads
+            set updated_at = now()
+            where id = $1 and user_id = $2
+            """,
+            chat_id,
+            user_id,
+        )
+        row = await conn.fetchrow(
+            """
+            insert into global_chat_messages (chat_id, user_id, role, content, status, refs)
+            values ($1, $2, $3, $4, $5, $6::jsonb)
+            returning id, role, content, status, refs, created_at
+            """,
+            chat_id,
+            user_id,
+            role,
+            content,
+            status,
+            json.dumps(refs) if refs is not None else None,
+        )
+    return dict(row)
+
+
+async def update_global_chat_message(
+    pool: asyncpg.Pool,
+    chat_id: str,
+    user_id: str,
+    message_id: str,
+    content: str,
+    status: str | None = None,
+    refs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            update global_chat_messages
             set content = $1,
                 status = $2,
                 refs = $3::jsonb

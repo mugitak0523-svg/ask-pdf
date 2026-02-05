@@ -55,7 +55,7 @@ class Indexer:
             result=result_payload,
             user_id=user_id,
         )
-        inserted = await repository.insert_chunks(pool, document_id, chunks)
+        inserted = await repository.insert_chunks(pool, document_id, user_id, chunks)
 
         pages = extract_pages(result_payload)
         if pages is not None:
