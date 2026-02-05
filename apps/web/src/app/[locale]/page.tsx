@@ -13,6 +13,7 @@ type ChatRef = {
   label: string;
   id: string;
   documentId?: string;
+  aboveThreshold?: boolean;
 };
 
 type ChatMessage = {
@@ -78,6 +79,7 @@ const DEFAULT_PLAN_LIMITS: Record<PlanName, PlanLimits> = {
 };
 
 const STORAGE_KEY = "askpdf.ui.v1";
+const DOCUMENTS_SEEN_KEY = "askpdf.docs.seen.v1";
 
 const normalizeRefs = (value: unknown): ChatRef[] | undefined => {
   if (Array.isArray(value)) return value as ChatRef[];
@@ -99,6 +101,7 @@ const replaceRefTags = (text: string, refs?: ChatRef[]) => {
   }
   const lookup = new Map<string, ChatRef>();
   for (const ref of refs) {
+    if (ref.aboveThreshold === false) continue;
     if (ref.id && !lookup.has(ref.id)) lookup.set(ref.id, ref);
   }
   return text.replace(/\[@:chunk-([^\]]+)\]/gi, (_, rawId) => {
@@ -106,8 +109,9 @@ const replaceRefTags = (text: string, refs?: ChatRef[]) => {
     const key = `chunk-${trimmed}`;
     let ref = lookup.get(key);
     if (!ref && /^\d+$/.test(trimmed)) {
+      const visibleRefs = refs.filter((item) => item.aboveThreshold !== false);
       const index = Number(trimmed) - 1;
-      if (index >= 0 && index < refs.length) ref = refs[index];
+      if (index >= 0 && index < visibleRefs.length) ref = visibleRefs[index];
     }
     if (!ref) return "";
     return normalizeRefLabel(ref.label, ref.id);
@@ -121,6 +125,7 @@ const buildRefLinkedText = (text: string, refs?: ChatRef[]) => {
   }
   const lookup = new Map<string, ChatRef>();
   for (const ref of refs) {
+    if (ref.aboveThreshold === false) continue;
     if (ref.id && !lookup.has(ref.id)) lookup.set(ref.id, ref);
   }
   return text.replace(/\[@:chunk-([^\]]+)\]/gi, (_, rawId) => {
@@ -128,8 +133,9 @@ const buildRefLinkedText = (text: string, refs?: ChatRef[]) => {
     const key = `chunk-${trimmed}`;
     let ref = lookup.get(key);
     if (!ref && /^\d+$/.test(trimmed)) {
+      const visibleRefs = refs.filter((item) => item.aboveThreshold !== false);
       const index = Number(trimmed) - 1;
-      if (index >= 0 && index < refs.length) ref = refs[index];
+      if (index >= 0 && index < visibleRefs.length) ref = visibleRefs[index];
     }
     if (!ref) return "";
     const label = normalizeRefLabel(ref.label, ref.id);
@@ -151,10 +157,13 @@ const parseRefHref = (href?: string | null) => {
 const normalizeRefLabel = (label?: string, fallback?: string) =>
   (label ?? fallback ?? "").replace(/\s*#\d+$/, "");
 
+const isRefVisible = (ref: ChatRef) => ref.aboveThreshold !== false;
+
 const buildRefLabelLookup = (refs?: ChatRef[]) => {
   if (!refs || refs.length === 0) return new Map<string, ChatRef>();
   const lookup = new Map<string, ChatRef>();
   for (const ref of refs) {
+    if (!isRefVisible(ref)) continue;
     const label = normalizeRefLabel(ref.label, ref.id);
     if (!label) continue;
     if (!lookup.has(label)) lookup.set(label, ref);
@@ -166,6 +175,7 @@ const buildRefIdLookup = (refs?: ChatRef[]) => {
   if (!refs || refs.length === 0) return new Map<string, ChatRef>();
   const lookup = new Map<string, ChatRef>();
   for (const ref of refs) {
+    if (!isRefVisible(ref)) continue;
     if (ref.id && !lookup.has(ref.id)) lookup.set(ref.id, ref);
   }
   return lookup;
@@ -223,6 +233,7 @@ export default function Home() {
   const refTooltipBodyRef = useRef<HTMLDivElement | null>(null);
   const [tooltipContainer, setTooltipContainer] = useState<HTMLElement | null>(null);
   const globalChatMessagesRef = useRef<HTMLDivElement | null>(null);
+  const globalChatScrollTopRef = useRef(0);
   const [globalChatId, setGlobalChatId] = useState<string | null>(null);
   const [globalChatInput, setGlobalChatInput] = useState("");
   const [globalChatMode, setGlobalChatMode] = useState<"fast" | "standard" | "think">(
@@ -342,6 +353,21 @@ export default function Home() {
     if (next?.closest?.(".ref-tooltip")) return;
     hideRefTooltip();
   };
+
+  useEffect(() => {
+    const handleGlobalPointer = (event: MouseEvent) => {
+      if (!refTooltip.visible) return;
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest?.(".ref-tooltip")) return;
+      if (target.closest?.(".ref")) return;
+      hideRefTooltip();
+    };
+    window.addEventListener("mousemove", handleGlobalPointer, { passive: true });
+    return () => {
+      window.removeEventListener("mousemove", handleGlobalPointer);
+    };
+  }, [refTooltip.visible]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -592,6 +618,7 @@ export default function Home() {
   const allChatsAbortRef = useRef<AbortController | null>(null);
   const documentsAbortRef = useRef<AbortController | null>(null);
   const signedUrlAbortRef = useRef<AbortController | null>(null);
+  const seenDocsCacheRef = useRef(false);
 
   const scrollChatToBottom = (behavior: ScrollBehavior = "auto") => {
     const target = chatMessagesRef.current;
@@ -628,6 +655,7 @@ export default function Home() {
   const [docsLoading, setDocsLoading] = useState(false);
   const [docsError, setDocsError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [seenDocumentIds, setSeenDocumentIds] = useState<Set<string>>(new Set());
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
   const [selectedDocumentUrl, setSelectedDocumentUrl] = useState<string | null>(null);
@@ -656,6 +684,21 @@ export default function Home() {
   const restoreRef = useRef<any | null>(null);
   const restoreDoneRef = useRef(false);
   const [isHydrated, setIsHydrated] = useState(false);
+  useEffect(() => {
+    if (!isHydrated) return;
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(DOCUMENTS_SEEN_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        seenDocsCacheRef.current = true;
+        setSeenDocumentIds(new Set(parsed.map((id) => String(id))));
+      }
+    } catch {
+      // Ignore malformed cache
+    }
+  }, [isHydrated]);
 
   const normalizeUsageBucket = (bucket: any): UsageBucket => ({
     periodStart: bucket?.periodStart ?? null,
@@ -715,6 +758,25 @@ export default function Home() {
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+  };
+
+  const persistSeenDocuments = (next: Set<string>) => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(DOCUMENTS_SEEN_KEY, JSON.stringify(Array.from(next)));
+    } catch {
+      // Ignore storage failures
+    }
+  };
+
+  const markDocumentSeen = (docId: string) => {
+    setSeenDocumentIds((prev) => {
+      if (prev.has(docId)) return prev;
+      const next = new Set(prev);
+      next.add(docId);
+      persistSeenDocuments(next);
+      return next;
+    });
   };
 
   const resizeChatInput = () => {
@@ -1053,6 +1115,16 @@ export default function Home() {
     });
   }, [globalChatMessages.length]);
 
+  useEffect(() => {
+    if (!globalChatOpen) return;
+    const target = globalChatMessagesRef.current;
+    if (!target) return;
+    const raf = requestAnimationFrame(() => {
+      target.scrollTop = globalChatScrollTopRef.current;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [globalChatOpen, globalChatId, globalChatHeight]);
+
   const scrollGlobalChatToBottom = (behavior: ScrollBehavior = "smooth") => {
     const target = globalChatMessagesRef.current;
     if (!target) return;
@@ -1060,6 +1132,12 @@ export default function Home() {
       top: target.scrollHeight,
       behavior,
     });
+  };
+
+  const handleGlobalChatScroll = () => {
+    const target = globalChatMessagesRef.current;
+    if (!target) return;
+    globalChatScrollTopRef.current = target.scrollTop;
   };
 
   const loadChatMessages = async (
@@ -1382,12 +1460,17 @@ export default function Home() {
       }
       const payload = await response.json();
       const items = Array.isArray(payload.documents) ? payload.documents : [];
-      setDocuments(
-        items.map((item) => ({
-          id: String(item.id),
-          title: String(item.title ?? t("common.untitled")),
-        }))
-      );
+      const normalized = items.map((item) => ({
+        id: String(item.id),
+        title: String(item.title ?? t("common.untitled")),
+      }));
+      setDocuments(normalized);
+      if (!seenDocsCacheRef.current && normalized.length > 0) {
+        const seed = new Set(normalized.map((doc) => doc.id));
+        seenDocsCacheRef.current = true;
+        setSeenDocumentIds(seed);
+        persistSeenDocuments(seed);
+      }
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         return;
@@ -1719,6 +1802,7 @@ export default function Home() {
     doc: DocumentItem,
     options: { restoreChatId?: string | null; autoOpenChat?: boolean } = {}
   ) => {
+    markDocumentSeen(doc.id);
     setSelectedTabId(doc.id);
     setSelectedDocumentId(doc.id);
     setSelectedDocumentTitle(doc.title);
@@ -1979,7 +2063,7 @@ export default function Home() {
       : chatThreads.find((thread) => thread.id === activeChatId)?.title ??
         (activeChatId ? t("chat.newChat") : t("chat.chat"))
     : t("chat.allChatList");
-  const showGlobalChat = selectedTabId !== SETTINGS_TAB_ID;
+  const showGlobalChat = true;
   const handleGlobalChatResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!containerRef.current) return;
     const startY = event.clientY;
@@ -3070,7 +3154,12 @@ export default function Home() {
                     />
                   ) : (
                     <>
-                      <span className="label">{doc.title}</span>
+                      <span className="history-item__label-row">
+                        <span className="label history-item__label">{doc.title}</span>
+                        {!seenDocumentIds.has(doc.id) ? (
+                          <span className="history-item__badge">NEW</span>
+                        ) : null}
+                      </span>
                       {sidebarOpen ? (
                         <span
                           role="button"
@@ -3484,7 +3573,11 @@ export default function Home() {
                   <div className="global-chat__title">{t("globalChat.title")}</div>
                   <div className="global-chat__subtitle">{t("globalChat.subtitle")}</div>
                 </div>
-                <div className="global-chat__body" ref={globalChatMessagesRef}>
+                <div
+                  className="global-chat__body"
+                  ref={globalChatMessagesRef}
+                  onScroll={handleGlobalChatScroll}
+                >
                   {!isAuthed ? (
                     <div className="global-chat__empty">
                       {t("globalChat.signInHint")}
@@ -3657,6 +3750,7 @@ export default function Home() {
                                 {(() => {
                                   const seen = new Set<string>();
                                   const uniqueRefs = msg.refs.filter((ref) => {
+                                    if (!isRefVisible(ref)) return false;
                                     const key = ref.documentId ?? ref.id;
                                     if (seen.has(key)) return false;
                                     seen.add(key);
@@ -3827,12 +3921,14 @@ export default function Home() {
                       </div>
                     </div>
                     <div className="ref-tooltip__body" ref={refTooltipBodyRef}>
-                      {refTooltip.refId
-                        ? getRefPreviewData(
-                            refTooltip.refId,
-                            refTooltip.documentId ?? undefined
-                          )?.text || refTooltip.text
-                        : refTooltip.text}
+                      {`...${
+                        refTooltip.refId
+                          ? getRefPreviewData(
+                              refTooltip.refId,
+                              refTooltip.documentId ?? undefined
+                            )?.text || refTooltip.text
+                          : refTooltip.text
+                      }...`}
                     </div>
                   </div>,
                   tooltipContainer
@@ -4696,7 +4792,7 @@ export default function Home() {
                     )}
                     {msg.refs ? (
                       <div className="refs">
-                        {msg.refs.map((ref) => (
+                        {msg.refs.filter(isRefVisible).map((ref) => (
                           <button
                             type="button"
                             key={ref.id}

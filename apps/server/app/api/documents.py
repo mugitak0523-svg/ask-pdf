@@ -792,18 +792,21 @@ async def create_document_chat_assistant_message(
         meta = match.get("metadata") or {}
         page_label = _page_label(meta) if isinstance(meta, dict) else None
         match_id = str(match.get("id") or "").lower()
+        above_threshold = (match.get("similarity") or 0.0) >= score_threshold
         if page_label:
             context_parts.append(f"[{idx}] (page {page_label}) {content}")
             refs.append(
                 {
                     "id": f"chunk-{match['id']}",
                     "label": f"p.{page_label}",
+                    "aboveThreshold": above_threshold,
                 }
             )
             if match_id:
                 ref_map[match_id] = {
                     "id": f"chunk-{match['id']}",
                     "label": f"p.{page_label}",
+                    "aboveThreshold": above_threshold,
                 }
         else:
             context_parts.append(f"[{idx}] {content}")
@@ -811,12 +814,14 @@ async def create_document_chat_assistant_message(
                 {
                     "id": f"chunk-{match['id']}",
                     "label": str(idx),
+                    "aboveThreshold": above_threshold,
                 }
             )
             if match_id:
                 ref_map[match_id] = {
                     "id": f"chunk-{match['id']}",
                     "label": str(idx),
+                    "aboveThreshold": above_threshold,
                 }
 
     if memory_lines:
@@ -1047,18 +1052,21 @@ async def stream_document_chat_assistant_message(
         meta = match.get("metadata") or {}
         page_label = _page_label(meta) if isinstance(meta, dict) else None
         match_id = str(match.get("id") or "").lower()
+        above_threshold = (match.get("similarity") or 0.0) >= score_threshold
         if page_label:
             context_parts.append(f"[{idx}] (page {page_label}) {content}")
             refs.append(
                 {
                     "id": f"chunk-{match['id']}",
                     "label": f"p.{page_label}",
+                    "aboveThreshold": above_threshold,
                 }
             )
             if match_id:
                 ref_map[match_id] = {
                     "id": f"chunk-{match['id']}",
                     "label": f"p.{page_label}",
+                    "aboveThreshold": above_threshold,
                 }
         else:
             context_parts.append(f"[{idx}] {content}")
@@ -1066,12 +1074,14 @@ async def stream_document_chat_assistant_message(
                 {
                     "id": f"chunk-{match['id']}",
                     "label": str(idx),
+                    "aboveThreshold": above_threshold,
                 }
             )
             if match_id:
                 ref_map[match_id] = {
                     "id": f"chunk-{match['id']}",
                     "label": str(idx),
+                    "aboveThreshold": above_threshold,
                 }
 
     if memory_lines:

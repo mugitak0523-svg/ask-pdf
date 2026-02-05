@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 from typing import Any, Literal
 
@@ -46,9 +47,19 @@ def _build_model(settings, mode: str | None) -> str | None:
     return None
 
 
-def _resolve_rag_params(settings, payload: ChatAnswerRequest) -> tuple[int, int, float]:
-    top_k = payload.top_k if payload.top_k is not None else settings.rag_top_k
-    top_k = min(max(int(top_k), 1), 20)
+def _resolve_rag_params(
+    settings,
+    payload: ChatAnswerRequest,
+    document_count: int,
+) -> tuple[int, int, float]:
+    if payload.top_k is not None:
+        top_k = payload.top_k
+    else:
+        base = max(int(settings.rag_top_k), 1)
+        alpha = 2
+        k_max = 40
+        top_k = base + math.ceil(alpha * math.sqrt(max(document_count, 0)))
+    top_k = min(max(int(top_k), 1), 40)
     min_k = min(max(int(settings.rag_min_k), 0), top_k)
     score_threshold = max(float(settings.rag_score_threshold), 0.0)
     return top_k, min_k, score_threshold
@@ -124,8 +135,8 @@ async def _record_usage(
             pool,
             user_id=user_id,
             operation=operation,
-            chat_id=chat_id,
-            message_id=message_id,
+            global_chat_id=chat_id,
+            global_message_id=message_id,
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -302,14 +313,47 @@ async def create_global_chat_assistant_message(
         )
 
     settings = request.app.state.settings
-    top_k, min_k, score_threshold = _resolve_rag_params(settings, payload)
+    document_count = await repository.count_documents(pool, user.user_id)
+    top_k, min_k, score_threshold = _resolve_rag_params(settings, payload, document_count)
     matches = await repository.match_user_documents(
         pool,
         user_id=user.user_id,
         query_embedding=embedding,
-        match_count=top_k,
+        match_count=min(top_k * 3, 120),
     )
     context_matches, ref_matches = _split_matches(matches, min_k, score_threshold)
+    # expand with extra matches so "effective" count reaches top_k
+    def _doc_bucket_count(count: int) -> int:
+        if count <= 0:
+            return 0
+        if count <= 2:
+            return 1
+        if count <= 5:
+            return 2
+        return 3
+
+    def _effective_count(items: list[dict[str, Any]]) -> int:
+        counts: dict[str, int] = {}
+        for item in items:
+            doc_id = str(item.get("document_id") or "")
+            counts[doc_id] = counts.get(doc_id, 0) + 1
+        return sum(_doc_bucket_count(value) for value in counts.values())
+
+    if context_matches:
+        effective = _effective_count(context_matches)
+        if effective < top_k:
+            extras = []
+            used_ids = {str(item.get("id") or "") for item in context_matches}
+            for item in matches:
+                item_id = str(item.get("id") or "")
+                if not item_id or item_id in used_ids:
+                    continue
+                extras.append(item)
+                effective = _effective_count(context_matches + extras)
+                if effective >= top_k:
+                    break
+            if extras:
+                context_matches = context_matches + extras
 
     recent_messages = await repository.list_global_chat_messages(
         pool,
@@ -348,6 +392,7 @@ async def create_global_chat_assistant_message(
         doc_title = str(match.get("document_title") or "Document")
         doc_id = str(match.get("document_id") or "")
         match_id = str(match.get("id") or "").lower()
+        above_threshold = (match.get("similarity") or 0.0) >= score_threshold
         if page_label:
             context_parts.append(f"[{idx}] ({doc_title} p.{page_label}) {content}")
             refs.append(
@@ -355,6 +400,7 @@ async def create_global_chat_assistant_message(
                     "id": f"chunk-{match['id']}",
                     "label": f"{doc_title} p.{page_label}",
                     "documentId": doc_id,
+                    "aboveThreshold": above_threshold,
                 }
             )
             if match_id:
@@ -362,6 +408,7 @@ async def create_global_chat_assistant_message(
                     "id": f"chunk-{match['id']}",
                     "label": f"{doc_title} p.{page_label}",
                     "documentId": doc_id,
+                    "aboveThreshold": above_threshold,
                 }
         else:
             context_parts.append(f"[{idx}] ({doc_title}) {content}")
@@ -370,6 +417,7 @@ async def create_global_chat_assistant_message(
                     "id": f"chunk-{match['id']}",
                     "label": f"{doc_title}",
                     "documentId": doc_id,
+                    "aboveThreshold": above_threshold,
                 }
             )
             if match_id:
@@ -377,6 +425,7 @@ async def create_global_chat_assistant_message(
                     "id": f"chunk-{match['id']}",
                     "label": f"{doc_title}",
                     "documentId": doc_id,
+                    "aboveThreshold": above_threshold,
                 }
 
     if memory_lines:

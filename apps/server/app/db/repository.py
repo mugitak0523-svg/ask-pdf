@@ -820,7 +820,9 @@ async def insert_usage_log(
     operation: str,
     document_id: str | None = None,
     chat_id: str | None = None,
+    global_chat_id: str | None = None,
     message_id: str | None = None,
+    global_message_id: str | None = None,
     model: str | None = None,
     input_tokens: int | None = None,
     output_tokens: int | None = None,
@@ -837,7 +839,9 @@ async def insert_usage_log(
                 operation,
                 document_id,
                 chat_id,
+                global_chat_id,
                 message_id,
+                global_chat_message_id,
                 model,
                 input_tokens,
                 output_tokens,
@@ -846,13 +850,15 @@ async def insert_usage_log(
                 raw_usage,
                 raw_request
             )
-            values ($1, $2, $3::uuid, $4::uuid, $5::uuid, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb)
+            values ($1, $2, $3::uuid, $4::uuid, $5::uuid, $6::uuid, $7::uuid, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb)
             """,
             user_id,
             operation,
             document_id,
             chat_id,
+            global_chat_id,
             message_id,
+            global_message_id,
             model,
             input_tokens,
             output_tokens,
