@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 import logging
-import time
 import asyncio
 from typing import Any, Literal
 
@@ -213,25 +212,13 @@ async def _record_usage_conn(
         logger.exception("usage_log failed operation=%s", operation)
 
 async def _resolve_limits(pool, user_id: str):
-    t_plan = time.perf_counter()
     plan = await resolve_user_plan(pool, user_id)
-    logger.info(
-        "(test) timing user=%s phase=resolve_plan ms=%.1f",
-        user_id,
-        (time.perf_counter() - t_plan) * 1000,
-    )
     limits = get_plan_limits(plan)
     return plan, limits
 
 
 async def _resolve_limits_conn(conn, user_id: str):
-    t_plan = time.perf_counter()
     plan = await repository.get_user_plan_conn(conn, user_id)
-    logger.info(
-        "(test) timing user=%s phase=resolve_plan ms=%.1f",
-        user_id,
-        (time.perf_counter() - t_plan) * 1000,
-    )
     limits = get_plan_limits(plan)
     return plan, limits
 
@@ -260,25 +247,11 @@ async def _enforce_thread_limit(pool, user_id: str, document_id: str) -> None:
 
 
 async def _enforce_message_limit(pool, user_id: str, chat_id: str) -> None:
-    t_limits = time.perf_counter()
     _, limits = await _resolve_limits(pool, user_id)
-    logger.info(
-        "(test) timing user=%s chat=%s phase=resolve_limits ms=%.1f",
-        user_id,
-        chat_id,
-        (time.perf_counter() - t_limits) * 1000,
-    )
     if limits.max_messages_per_thread is None:
         return
-    t_count = time.perf_counter()
     count = await repository.count_document_chat_messages(
         pool, chat_id, user_id, role="user"
-    )
-    logger.info(
-        "(test) timing user=%s chat=%s phase=count_messages ms=%.1f",
-        user_id,
-        chat_id,
-        (time.perf_counter() - t_count) * 1000,
     )
     if count >= limits.max_messages_per_thread:
         raise HTTPException(
@@ -288,25 +261,11 @@ async def _enforce_message_limit(pool, user_id: str, chat_id: str) -> None:
 
 
 async def _enforce_message_limit_conn(conn, user_id: str, chat_id: str) -> None:
-    t_limits = time.perf_counter()
     _, limits = await _resolve_limits_conn(conn, user_id)
-    logger.info(
-        "(test) timing user=%s chat=%s phase=resolve_limits ms=%.1f",
-        user_id,
-        chat_id,
-        (time.perf_counter() - t_limits) * 1000,
-    )
     if limits.max_messages_per_thread is None:
         return
-    t_count = time.perf_counter()
     count = await repository.count_document_chat_messages_conn(
         conn, chat_id, user_id, role="user"
-    )
-    logger.info(
-        "(test) timing user=%s chat=%s phase=count_messages ms=%.1f",
-        user_id,
-        chat_id,
-        (time.perf_counter() - t_count) * 1000,
     )
     if count >= limits.max_messages_per_thread:
         raise HTTPException(
@@ -821,7 +780,6 @@ async def create_document_chat_message(
     payload: dict[str, Any],
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
-    t_total = time.perf_counter()
     role = payload.get("role")
     text = payload.get("text")
     refs = payload.get("refs") if isinstance(payload, dict) else None
@@ -836,21 +794,8 @@ async def create_document_chat_message(
             detail="text is required",
         )
     pool = request.app.state.db_pool
-    t_acquire = time.perf_counter()
     async with pool.acquire() as conn:
-        logger.info(
-            "(test) timing db_acquire op=message_post_conn ms=%.1f",
-            (time.perf_counter() - t_acquire) * 1000,
-        )
-        t_limit = time.perf_counter()
         _, limits = await _resolve_limits_conn(conn, user.user_id)
-        logger.info(
-            "(test) timing doc=%s chat=%s phase=message_limit ms=%.1f",
-            document_id,
-            chat_id,
-            (time.perf_counter() - t_limit) * 1000,
-        )
-        t_insert = time.perf_counter()
         row = await repository.insert_document_chat_message_checked_conn(
             conn,
             document_id,
@@ -878,19 +823,6 @@ async def create_document_chat_message(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Message not saved",
             )
-        logger.info(
-            "(test) timing doc=%s chat=%s phase=message_insert ms=%.1f",
-            document_id,
-            chat_id,
-            (time.perf_counter() - t_insert) * 1000,
-        )
-        logger.info(
-            "(test) timing doc=%s chat=%s phase=message_post_total ms=%.1f len=%s",
-            document_id,
-            chat_id,
-            (time.perf_counter() - t_total) * 1000,
-            len(text.strip()),
-        )
     return {
         "message": {
             "id": str(row["id"]),
@@ -989,7 +921,7 @@ async def create_document_chat_assistant_message(
                 limit=4,
             )
 
-    context_matches, ref_matches = _split_matches(matches, min_k, score_threshold)
+    context_matches, _ = _split_matches(matches, min_k, score_threshold)
     memory_lines: list[str] = []
     for item in recent_messages:
         if item.get("status") in {"error", "stopped"}:
@@ -1084,7 +1016,6 @@ async def create_document_chat_assistant_message(
             raise RuntimeError("Answer generation failed")
         _ = _extract_tag_refs(answer, ref_map)
         final_refs = refs if refs else None
-        t_save = time.perf_counter()
         async with pool.acquire() as conn:
             if payload.message_id:
                 saved = await repository.update_document_chat_message_conn(
@@ -1111,12 +1042,6 @@ async def create_document_chat_assistant_message(
                     "ok",
                     final_refs,
                 )
-            logger.info(
-                "(test) timing doc=%s chat=%s phase=save ms=%.1f",
-                document_id,
-                chat_id,
-                (time.perf_counter() - t_save) * 1000,
-            )
             await _record_usage_conn(
                 conn,
                 user_id=user.user_id,
@@ -1199,18 +1124,11 @@ async def stream_document_chat_assistant_message(
         return
 
     pool = websocket.scope["app"].state.db_pool
-    t_check = time.perf_counter()
     ok = await repository.document_thread_exists(
         pool,
         document_id,
         chat_id,
         user.user_id,
-    )
-    logger.info(
-        "(test) timing doc=%s chat=%s phase=document_thread_exists ms=%.1f",
-        document_id,
-        chat_id,
-        (time.perf_counter() - t_check) * 1000,
     )
     if not ok:
         await websocket.close(code=1008)
@@ -1239,14 +1157,7 @@ async def stream_document_chat_assistant_message(
     if client_matches:
         matches = client_matches[:top_k]
     else:
-        t_embed = time.perf_counter()
         embed_payload = await parser.embed_text(message)
-        logger.info(
-            "(test) timing doc=%s chat=%s phase=embed ms=%.1f",
-            document_id,
-            chat_id,
-            (time.perf_counter() - t_embed) * 1000,
-        )
         await _record_usage(
             pool,
             user_id=user.user_id,
@@ -1259,21 +1170,13 @@ async def stream_document_chat_assistant_message(
         if not isinstance(embedding, list):
             await websocket.close(code=1011)
             return
-        t_match = time.perf_counter()
         matches = await repository.match_documents(
             pool,
             query_embedding=embedding,
             match_count=top_k,
             document_id=document_id,
         )
-        logger.info(
-            "(test) timing doc=%s chat=%s phase=match ms=%.1f matches=%s",
-            document_id,
-            chat_id,
-            (time.perf_counter() - t_match) * 1000,
-            len(matches),
-        )
-    context_matches, ref_matches = _split_matches(matches, min_k, score_threshold)
+    context_matches, _ = _split_matches(matches, min_k, score_threshold)
 
     recent_messages = await repository.list_recent_document_chat_messages(
         pool,
@@ -1365,15 +1268,6 @@ async def stream_document_chat_assistant_message(
     usage = None
     parser_error: str | None = None
     try:
-        t_llm = time.perf_counter()
-        logger.info(
-            "(test) assistant.ws start doc=%s chat=%s model=%s question_len=%s context_len=%s",
-            document_id,
-            chat_id,
-            model,
-            len(message),
-            len("\n\n".join(context_parts)),
-        )
         async for event in parser.stream_answer(
             question=message,
             context="\n\n".join(context_parts),
@@ -1396,12 +1290,6 @@ async def stream_document_chat_assistant_message(
                 break
             elif event_type == "done":
                 break
-        logger.info(
-            "(test) timing doc=%s chat=%s phase=llm ms=%.1f",
-            document_id,
-            chat_id,
-            (time.perf_counter() - t_llm) * 1000,
-        )
 
         answer = "".join(answer_parts).strip()
         if parser_error or not answer:

@@ -61,14 +61,6 @@ type ReferenceRequest = {
   pages: Record<number, number[]>;
 };
 
-type ChatPerf = {
-  postStart?: number;
-  postEnd?: number;
-  wsStart?: number;
-  wsOpen?: number;
-  firstDelta?: number;
-  done?: number;
-};
 
 type ThemeMode = "system" | "light" | "dark";
 type PlanName = "guest" | "free" | "plus" | "pro";
@@ -258,19 +250,6 @@ export default function Home() {
   });
   const refTooltipBodyRef = useRef<HTMLDivElement | null>(null);
   const [tooltipContainer, setTooltipContainer] = useState<HTMLElement | null>(null);
-  const globalChatMessagesRef = useRef<HTMLDivElement | null>(null);
-  const globalChatScrollTopRef = useRef(0);
-  const [globalChatId, setGlobalChatId] = useState<string | null>(null);
-  const [globalChatInput, setGlobalChatInput] = useState("");
-  const [globalChatMode, setGlobalChatMode] = useState<"fast" | "standard" | "think">(
-    "standard"
-  );
-  const [globalChatMessages, setGlobalChatMessages] = useState<ChatMessage[]>([]);
-  const [globalChatLoading, setGlobalChatLoading] = useState(false);
-  const [globalChatSending, setGlobalChatSending] = useState(false);
-  const [globalChatError, setGlobalChatError] = useState<string | null>(null);
-  const [globalChatOpen, setGlobalChatOpen] = useState(true);
-  const [globalChatHeight, setGlobalChatHeight] = useState(220);
 
   const getRefPreviewKey = (refId: string, documentId?: string) =>
     `${refId}::${documentId ?? ""}`;
@@ -589,13 +568,6 @@ export default function Home() {
       if (parsed.chatMode === "fast" || parsed.chatMode === "standard" || parsed.chatMode === "think") {
         setChatMode(parsed.chatMode);
       }
-      if (
-        parsed.globalChatMode === "fast"
-        || parsed.globalChatMode === "standard"
-        || parsed.globalChatMode === "think"
-      ) {
-        setGlobalChatMode(parsed.globalChatMode);
-      }
       if (Number.isFinite(parsed.chatWidth)) {
         setChatWidth(parsed.chatWidth);
       }
@@ -604,12 +576,6 @@ export default function Home() {
       }
       if (typeof parsed.sidebarOpen === "boolean") {
         setSidebarOpen(parsed.sidebarOpen);
-      }
-      if (typeof parsed.globalChatOpen === "boolean") {
-        setGlobalChatOpen(parsed.globalChatOpen);
-      }
-      if (Number.isFinite(parsed.globalChatHeight)) {
-        setGlobalChatHeight(parsed.globalChatHeight);
       }
       if (
         parsed.settingsSection === "general" ||
@@ -638,8 +604,6 @@ export default function Home() {
   const chatSocketRef = useRef<WebSocket | null>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
   const isNearBottomRef = useRef(true);
-  const chatPerfRef = useRef<ChatPerf | null>(null);
-  const globalChatPerfRef = useRef<ChatPerf | null>(null);
   const refAbortRef = useRef<AbortController | null>(null);
   const chatMessagesAbortRef = useRef<AbortController | null>(null);
   const chatsAbortRef = useRef<AbortController | null>(null);
@@ -830,7 +794,6 @@ export default function Home() {
         setUserEmail(data.session.user?.email ?? null);
         void loadDocuments(data.session.access_token);
         void loadPlan(data.session.access_token);
-        void loadGlobalChat(data.session.access_token);
       } else {
         setUserEmail(null);
         setPlan("guest");
@@ -845,7 +808,6 @@ export default function Home() {
         setUserEmail(session.user?.email ?? null);
         void loadDocuments(session.access_token);
         void loadPlan(session.access_token);
-        void loadGlobalChat(session.access_token);
         if (selectedDocumentId) {
           void loadChats(selectedDocumentId, session.access_token);
         } else {
@@ -861,9 +823,6 @@ export default function Home() {
         setChatThreads([]);
         setActiveChatId(null);
         setAllChatThreads([]);
-        setGlobalChatId(null);
-        setGlobalChatMessages([]);
-        setGlobalChatError(null);
       }
     });
     return () => {
@@ -905,7 +864,6 @@ export default function Home() {
       const target = event.target as HTMLElement | null;
       if (target?.closest("input, textarea, [contenteditable='true']")) return;
       event.preventDefault();
-      setGlobalChatOpen((prev) => !prev);
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
@@ -956,9 +914,6 @@ export default function Home() {
       chatWidth,
       chatOpen,
       sidebarOpen,
-      globalChatOpen,
-      globalChatHeight,
-      globalChatMode,
       settingsSection,
       showThreadList,
       openDocuments,
@@ -974,9 +929,6 @@ export default function Home() {
     chatWidth,
     chatOpen,
     sidebarOpen,
-    globalChatOpen,
-    globalChatHeight,
-    globalChatMode,
     settingsSection,
     showThreadList,
     openDocuments,
@@ -1137,38 +1089,6 @@ export default function Home() {
       });
     });
   }, [showThreadList, chatMessages.length]);
-
-  useEffect(() => {
-    if (globalChatMessages.length === 0) return;
-    requestAnimationFrame(() => {
-      scrollGlobalChatToBottom("auto");
-    });
-  }, [globalChatMessages.length]);
-
-  useEffect(() => {
-    if (!globalChatOpen) return;
-    const target = globalChatMessagesRef.current;
-    if (!target) return;
-    const raf = requestAnimationFrame(() => {
-      target.scrollTop = globalChatScrollTopRef.current;
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [globalChatOpen, globalChatId, globalChatHeight]);
-
-  const scrollGlobalChatToBottom = (behavior: ScrollBehavior = "smooth") => {
-    const target = globalChatMessagesRef.current;
-    if (!target) return;
-    target.scrollTo({
-      top: target.scrollHeight,
-      behavior,
-    });
-  };
-
-  const handleGlobalChatScroll = () => {
-    const target = globalChatMessagesRef.current;
-    if (!target) return;
-    globalChatScrollTopRef.current = target.scrollTop;
-  };
 
   const loadChatMessages = async (
     documentId: string,
@@ -1355,94 +1275,6 @@ export default function Home() {
       if (allChatsAbortRef.current) {
         allChatsAbortRef.current = null;
       }
-    }
-  };
-
-  const loadGlobalChatMessages = async (chatId: string, accessToken: string) => {
-    setGlobalChatLoading(true);
-    setGlobalChatError(null);
-    try {
-      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
-      const response = await fetch(`${baseUrl}/global-chats/${chatId}/messages`, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
-      if (!response.ok) {
-        throw new Error(`Failed to load global chat messages (${response.status})`);
-      }
-      const payload = await response.json();
-      const items = Array.isArray(payload.messages) ? payload.messages : [];
-      const messages = items.map((item: ChatMessage) => ({
-        id: String(item.id),
-        role: item.role === "assistant" ? "assistant" : "user",
-        text:
-          item.status === "error" && !item.text
-            ? t("chat.answerFailed")
-            : String(item.text ?? ""),
-        status:
-          item.status === "error"
-            ? "error"
-            : item.status === "stopped"
-              ? "stopped"
-              : undefined,
-        refs: normalizeRefs(item.refs),
-        createdAt: String(item.createdAt ?? new Date().toISOString()),
-      }));
-      setGlobalChatMessages(messages);
-      requestAnimationFrame(() => {
-        scrollGlobalChatToBottom("auto");
-      });
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to load global chat messages";
-      setGlobalChatError(message);
-      setGlobalChatMessages([]);
-    } finally {
-      setGlobalChatLoading(false);
-    }
-  };
-
-  const loadGlobalChat = async (accessToken: string) => {
-    setGlobalChatError(null);
-    try {
-      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
-      const response = await fetch(`${baseUrl}/global-chats`, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
-      if (!response.ok) {
-        throw new Error(`Failed to load global chats (${response.status})`);
-      }
-      const payload = await response.json();
-      const items = Array.isArray(payload.chats) ? payload.chats : [];
-      let chatId = items[0]?.id ? String(items[0].id) : null;
-      if (!chatId) {
-        const createResponse = await fetch(`${baseUrl}/global-chats`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ title: t("globalChat.title") }),
-        });
-        if (!createResponse.ok) {
-          throw new Error(`Failed to create global chat (${createResponse.status})`);
-        }
-        const created = await createResponse.json();
-        chatId = String(created.chat_id ?? "");
-      }
-      if (!chatId) {
-        throw new Error("Global chat not available");
-      }
-      setGlobalChatId(chatId);
-      await loadGlobalChatMessages(chatId, accessToken);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to load global chat";
-      setGlobalChatError(message);
-      setGlobalChatId(null);
-      setGlobalChatMessages([]);
     }
   };
 
@@ -2098,30 +1930,6 @@ export default function Home() {
       : chatThreads.find((thread) => thread.id === activeChatId)?.title ??
         (activeChatId ? t("chat.newChat") : t("chat.chat"))
     : t("chat.allChatList");
-  const showGlobalChat = true;
-  const handleGlobalChatResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!containerRef.current) return;
-    const startY = event.clientY;
-    const startHeight = globalChatHeight;
-    const containerRect = containerRef.current.getBoundingClientRect();
-    const headerOffset = 52;
-    const maxHeight = Math.max(160, Math.floor(containerRect.height - headerOffset));
-    const minHeight = 140;
-    const target = event.currentTarget;
-    target.setPointerCapture(event.pointerId);
-    const onMove = (moveEvent: PointerEvent) => {
-      const delta = startY - moveEvent.clientY;
-      const next = Math.min(maxHeight, Math.max(minHeight, startHeight + delta));
-      setGlobalChatHeight(next);
-    };
-    const onUp = (upEvent: PointerEvent) => {
-      target.releasePointerCapture(upEvent.pointerId);
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  };
   const planLabel =
     plan === "guest"
       ? t("planGuest")
@@ -2291,7 +2099,6 @@ export default function Home() {
     if (!trimmed) return;
     if (chatSending) return;
     if (!selectedDocumentId || !activeChatId) return;
-    chatPerfRef.current = { postStart: performance.now() };
     const userMessageCount = chatMessages.filter((msg) => msg.role === "user").length;
     if (
       planLimits.maxMessagesPerThread !== null &&
@@ -2346,197 +2153,10 @@ export default function Home() {
           )
         );
       }
-      if (chatPerfRef.current) {
-        chatPerfRef.current.postEnd = performance.now();
-      }
     } catch (error) {
       const messageText =
         error instanceof Error ? error.message : "Failed to send message";
       setChatError(messageText);
-    }
-  };
-
-  const sendGlobalChatMessage = async () => {
-    const trimmed = globalChatInput.trim();
-    if (!trimmed) return;
-    if (globalChatSending) return;
-    if (!globalChatId) return;
-    globalChatPerfRef.current = { postStart: performance.now() };
-    const userMessageCount = globalChatMessages.filter((msg) => msg.role === "user").length;
-    if (
-      planLimits.maxMessagesPerThread !== null &&
-      userMessageCount >= planLimits.maxMessagesPerThread
-    ) {
-      setGlobalChatError(t("errors.messageLimit", { limit: planLimits.maxMessagesPerThread }));
-      return;
-    }
-    const tempId = crypto.randomUUID();
-    const userMessage: ChatMessage = {
-      id: tempId,
-      role: "user",
-      text: trimmed,
-      createdAt: new Date().toISOString(),
-    };
-    setGlobalChatMessages((prev) => [...prev, userMessage]);
-    setGlobalChatInput("");
-    setGlobalChatSending(true);
-    setGlobalChatError(null);
-    const pendingId = crypto.randomUUID();
-    try {
-      const session = await supabase.auth.getSession();
-      const accessToken = session.data.session?.access_token;
-      if (!accessToken) {
-        throw new Error("Not authenticated");
-      }
-      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
-      const response = await fetch(`${baseUrl}/global-chats/${globalChatId}/messages`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          role: "user",
-          text: trimmed,
-        }),
-      });
-      if (!response.ok) {
-        throw new Error(`Failed to send global message (${response.status})`);
-      }
-      const payload = await response.json();
-      const saved = payload?.message;
-      if (saved?.id) {
-        setGlobalChatMessages((prev) =>
-          prev.map((item) =>
-            item.id === tempId
-              ? {
-                  ...item,
-                  id: String(saved.id),
-                  createdAt: String(saved.createdAt ?? item.createdAt),
-                }
-              : item
-          )
-        );
-      }
-      if (globalChatPerfRef.current) {
-        globalChatPerfRef.current.postEnd = performance.now();
-      }
-      await requestGlobalChatAnswer(trimmed, {
-        accessToken,
-        pendingId,
-      });
-    } catch (error) {
-      const messageText =
-        error instanceof Error ? error.message : "Failed to send global message";
-      setGlobalChatError(messageText);
-    } finally {
-      setGlobalChatSending(false);
-    }
-  };
-
-  const requestGlobalChatAnswer = async (
-    question: string,
-    options: { pendingId?: string; existingId?: string; accessToken?: string } = {}
-  ) => {
-    if (!globalChatId) return;
-    const pendingId = options.existingId ?? options.pendingId ?? crypto.randomUUID();
-    const pending: ChatMessage = {
-      id: pendingId,
-      role: "assistant",
-      text: "",
-      createdAt: new Date().toISOString(),
-      status: "loading",
-    };
-    setGlobalChatMessages((prev) =>
-      options.existingId
-        ? prev.map((item) => (item.id === pendingId ? pending : item))
-        : [...prev, pending]
-    );
-    try {
-      const perf = globalChatPerfRef.current ?? {};
-      perf.wsStart = performance.now();
-      globalChatPerfRef.current = perf;
-      const accessToken =
-        options.accessToken ?? (await supabase.auth.getSession()).data.session?.access_token;
-      if (!accessToken) {
-        throw new Error("Not authenticated");
-      }
-      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
-      const answerResponse = await fetch(
-        `${baseUrl}/global-chats/${globalChatId}/assistant`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            message: question,
-            message_id: options.existingId ?? null,
-            mode: globalChatMode,
-          }),
-        }
-      );
-      if (globalChatPerfRef.current) {
-        globalChatPerfRef.current.wsOpen = performance.now();
-      }
-      if (!answerResponse.ok) {
-        throw new Error(`Failed to get answer (${answerResponse.status})`);
-      }
-      const answerPayload = await answerResponse.json();
-      const savedAnswer = answerPayload?.message;
-      if (globalChatPerfRef.current && !globalChatPerfRef.current.firstDelta) {
-        globalChatPerfRef.current.firstDelta = performance.now();
-      }
-      setGlobalChatMessages((prev) =>
-        prev.map((item) =>
-          item.id === pendingId
-            ? {
-                id: String(savedAnswer?.id ?? pendingId),
-                role: "assistant",
-                text: String(savedAnswer?.text ?? ""),
-                status:
-                  savedAnswer?.status === "error"
-                    ? "error"
-                    : savedAnswer?.status === "stopped"
-                      ? "stopped"
-                      : undefined,
-                refs: normalizeRefs(savedAnswer?.refs),
-                createdAt: String(savedAnswer?.createdAt ?? item.createdAt),
-              }
-            : item
-        )
-      );
-      if (globalChatPerfRef.current) {
-        globalChatPerfRef.current.done = performance.now();
-        const perfDone = globalChatPerfRef.current;
-        const postMs =
-          perfDone.postStart && perfDone.postEnd ? perfDone.postEnd - perfDone.postStart : undefined;
-        const answerRequestMs =
-          perfDone.wsStart && perfDone.wsOpen ? perfDone.wsOpen - perfDone.wsStart : undefined;
-        const totalMs =
-          perfDone.postStart && perfDone.done ? perfDone.done - perfDone.postStart : undefined;
-        console.info("[perf(test)] global-chat", {
-          postMs,
-          answerRequestMs,
-          totalMs,
-        });
-      }
-      requestAnimationFrame(() => {
-        scrollGlobalChatToBottom("smooth");
-      });
-    } catch (error) {
-      setGlobalChatMessages((prev) =>
-        prev.map((item) =>
-          item.id === pendingId
-            ? {
-                ...item,
-                status: "error",
-                text: t("chat.answerFailed"),
-              }
-            : item
-        )
-      );
     }
   };
 
@@ -2562,9 +2182,6 @@ export default function Home() {
     setChatError(null);
     streamingMessageIdRef.current = pendingId;
     try {
-      const perf = chatPerfRef.current ?? {};
-      perf.wsStart = performance.now();
-      chatPerfRef.current = perf;
       const session = await supabase.auth.getSession();
       const accessToken = session.data.session?.access_token;
       if (!accessToken) {
@@ -2591,9 +2208,6 @@ export default function Home() {
         }
         const payload = JSON.stringify(payloadObj);
         socket.addEventListener("open", () => {
-          if (chatPerfRef.current) {
-            chatPerfRef.current.wsOpen = performance.now();
-          }
           socket.send(payload);
         });
         socket.addEventListener("message", (event) => {
@@ -2607,9 +2221,6 @@ export default function Home() {
           if (data.type === "delta") {
             const deltaText = String(data.delta ?? "");
             if (!deltaText) return;
-            if (chatPerfRef.current && !chatPerfRef.current.firstDelta) {
-              chatPerfRef.current.firstDelta = performance.now();
-            }
             setChatMessages((prev) =>
               prev.map((item) =>
                 item.id === pendingId
@@ -2656,37 +2267,6 @@ export default function Home() {
               )
             );
           } else if (data.type === "done") {
-            if (chatPerfRef.current) {
-              chatPerfRef.current.done = performance.now();
-              const perfDone = chatPerfRef.current;
-              const postMs =
-                perfDone.postStart && perfDone.postEnd
-                  ? perfDone.postEnd - perfDone.postStart
-                  : undefined;
-              const postToWsOpenMs =
-                perfDone.postEnd && perfDone.wsOpen
-                  ? perfDone.wsOpen - perfDone.postEnd
-                  : undefined;
-              const wsOpenToFirstDeltaMs =
-                perfDone.wsOpen && perfDone.firstDelta
-                  ? perfDone.firstDelta - perfDone.wsOpen
-                  : undefined;
-              const totalToFirstDeltaMs =
-                perfDone.postStart && perfDone.firstDelta
-                  ? perfDone.firstDelta - perfDone.postStart
-                  : undefined;
-              const totalToDoneMs =
-                perfDone.postStart && perfDone.done
-                  ? perfDone.done - perfDone.postStart
-                  : undefined;
-              console.info("[perf(test)] pdf-chat", {
-                postMs,
-                postToWsOpenMs,
-                wsOpenToFirstDeltaMs,
-                totalToFirstDeltaMs,
-                totalToDoneMs,
-              });
-            }
             socket.close();
             resolve();
           }
@@ -2698,18 +2278,6 @@ export default function Home() {
         socket.addEventListener("close", (event) => {
           chatSocketRef.current = null;
           streamingMessageIdRef.current = null;
-          if (event.code !== 1000 && chatPerfRef.current) {
-            chatPerfRef.current.done = performance.now();
-            const perfDone = chatPerfRef.current;
-            const totalToDoneMs =
-              perfDone.postStart && perfDone.done
-                ? perfDone.done - perfDone.postStart
-                : undefined;
-            console.info("[perf(test)] pdf-chat closed", {
-              code: event.code,
-              totalToDoneMs,
-            });
-          }
           if (event.code !== 1000) {
             reject(new Error("WebSocket closed"));
           } else {
@@ -3729,15 +3297,7 @@ export default function Home() {
               ≫
             </button>
           </div>
-          <div
-            className={`viewer__canvas ${
-              showGlobalChat && globalChatOpen ? "viewer__canvas--global" : ""
-            }`}
-            style={{
-              paddingBottom:
-                showGlobalChat && globalChatOpen ? `${globalChatHeight}px` : "0px",
-            }}
-          >
+          <div className="viewer__canvas">
             {viewerLoading ? (
               <div className="empty-state">{renderLoadingText(t("common.loading"))}</div>
             ) : selectedTabId === SETTINGS_TAB_ID ? (
@@ -3806,325 +3366,6 @@ export default function Home() {
             ) : (
               <div className="empty-state">{t("viewer.empty")}</div>
             )}
-            {showGlobalChat && globalChatOpen ? (
-              <>
-                <div
-                  className="global-chat__resizer"
-                  role="separator"
-                  aria-orientation="horizontal"
-                  onPointerDown={handleGlobalChatResizeStart}
-                  style={{ bottom: `${globalChatHeight}px` }}
-                />
-                <section
-                  className="global-chat"
-                  aria-label={t("globalChat.title")}
-                  style={{ height: globalChatHeight }}
-                >
-                <div className="global-chat__header">
-                  <div className="global-chat__title">{t("globalChat.title")}</div>
-                  <div className="global-chat__subtitle">{t("globalChat.subtitle")}</div>
-                </div>
-                <div
-                  className="global-chat__body"
-                  ref={globalChatMessagesRef}
-                  onScroll={handleGlobalChatScroll}
-                >
-                  {!isAuthed ? (
-                    <div className="global-chat__empty">
-                      {t("globalChat.signInHint")}
-                    </div>
-                  ) : globalChatLoading ? (
-                    <div className="global-chat__empty">
-                      {renderLoadingText(t("common.loading"))}
-                    </div>
-                  ) : globalChatError ? (
-                    <div className="global-chat__empty">{globalChatError}</div>
-                  ) : globalChatMessages.length === 0 ? (
-                    <div className="global-chat__empty">{t("globalChat.empty")}</div>
-                  ) : (
-                    globalChatMessages.map((msg, index) => {
-                      const isLatest = index === globalChatMessages.length - 1;
-                      const previousUserMessage = isLatest
-                        ? [...globalChatMessages]
-                            .slice(0, index)
-                            .reverse()
-                            .find((item) => item.role === "user")
-                        : undefined;
-                      const displayText = replaceRefTags(msg.text, msg.refs);
-                      const refLabelLookup = buildRefLabelLookup(msg.refs);
-                      const refIdLookup = buildRefIdLookup(msg.refs);
-                      return (
-                        <div
-                          key={msg.id}
-                          className={`global-chat__line global-chat__line--${msg.role}`}
-                        >
-                          <span className="global-chat__prompt">
-                            {msg.role === "user" ? ">" : "•"}
-                          </span>
-                          <div className="global-chat__content">
-                            {msg.role === "assistant" ? (
-                              msg.status === "loading" ? (
-                                <p>{renderLoadingText(t("chat.answering"))}</p>
-                              ) : msg.status === "error" || msg.status === "stopped" ? (
-                                <div className="global-chat__status">
-                                  <p>{displayText || t("chat.answerFailed")}</p>
-                                  {msg.status === "stopped" ? (
-                                    <p className="global-chat__stopped">{t("chat.stopped")}</p>
-                                  ) : null}
-                                  {isLatest && previousUserMessage?.text ? (
-                                    <button
-                                      type="button"
-                                      className="global-chat__retry"
-                                      onClick={() =>
-                                        requestGlobalChatAnswer(previousUserMessage.text, {
-                                          existingId: msg.id,
-                                        })
-                                      }
-                                      aria-label={t("aria.retry")}
-                                    >
-                                      <svg
-                                        width="14"
-                                        height="14"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        strokeWidth="2"
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                        aria-hidden="true"
-                                      >
-                                        <polyline points="1 4 1 10 7 10" />
-                                        <path d="M3.51 15a9 9 0 1 0 .49-9.36L1 10" />
-                                      </svg>
-                                    </button>
-                                  ) : null}
-                                </div>
-                              ) : (
-                                <div className="markdown">
-                                  <ReactMarkdown
-                                    remarkPlugins={[remarkGfm]}
-                                    components={{
-                                      a: ({ href, children }) => {
-                                        const parsed = parseRefHref(href);
-                                        if (parsed) {
-                                          const ref = refIdLookup.get(parsed.refId);
-                                          return (
-                                            <button
-                                              type="button"
-                                              className="ref ref--inline"
-                                              onClick={() =>
-                                                handleRefClick(parsed.refId, {
-                                                  documentId: parsed.documentId,
-                                                })
-                                              }
-                                              onMouseEnter={(event) => {
-                                                ensureRefPreview(parsed.refId, parsed.documentId);
-                                                showRefTooltip(
-                                                  event,
-                                                  parsed.refId,
-                                                  parsed.documentId,
-                                                  ref?.label ?? ""
-                                                );
-                                              }}
-                                              onMouseMove={(event) =>
-                                                showRefTooltip(
-                                                  event,
-                                                  parsed.refId,
-                                                  parsed.documentId,
-                                                  ref?.label ?? ""
-                                                )
-                                              }
-                                              onMouseLeave={handleRefButtonLeave}
-                                            >
-                                              {children}
-                                            </button>
-                                          );
-                                        }
-                                        const labelText = getNodeText(children)
-                                          .replace(/\s+/g, " ")
-                                          .trim();
-                                        const matchedRef =
-                                          labelText ? refLabelLookup.get(labelText) : undefined;
-                                        if (matchedRef) {
-                                          return (
-                                            <button
-                                              type="button"
-                                              className="ref ref--inline"
-                                              onClick={() =>
-                                                handleRefClick(matchedRef.id, {
-                                                  documentId: matchedRef.documentId,
-                                                })
-                                              }
-                                              onMouseEnter={(event) => {
-                                                ensureRefPreview(
-                                                  matchedRef.id,
-                                                  matchedRef.documentId
-                                                );
-                                                showRefTooltip(
-                                                  event,
-                                                  matchedRef.id,
-                                                  matchedRef.documentId,
-                                                  matchedRef.label ?? ""
-                                                );
-                                              }}
-                                              onMouseMove={(event) =>
-                                                showRefTooltip(
-                                                  event,
-                                                  matchedRef.id,
-                                                  matchedRef.documentId,
-                                                  matchedRef.label ?? ""
-                                                )
-                                              }
-                                              onMouseLeave={handleRefButtonLeave}
-                                            >
-                                              {children}
-                                            </button>
-                                          );
-                                        }
-                                        return (
-                                          <a href={href} target="_blank" rel="noreferrer">
-                                            {children}
-                                          </a>
-                                        );
-                                      },
-                                    }}
-                                  >
-                                    {buildRefLinkedText(msg.text, msg.refs)}
-                                  </ReactMarkdown>
-                                </div>
-                              )
-                            ) : (
-                              <p>{displayText}</p>
-                            )}
-                            {msg.refs ? (
-                              <div className="refs refs--inline">
-                                {(() => {
-                                  const seen = new Set<string>();
-                                  const uniqueRefs = msg.refs.filter((ref) => {
-                                    if (!isRefVisible(ref)) return false;
-                                    const key = ref.documentId ?? ref.id;
-                                    if (seen.has(key)) return false;
-                                    seen.add(key);
-                                    return true;
-                                  });
-                                  return uniqueRefs.map((ref) => (
-                                    <button
-                                      type="button"
-                                      key={`${ref.id}-${ref.documentId ?? "doc"}`}
-                                      className="ref"
-                                      onClick={() =>
-                                        handleRefClick(ref.id, {
-                                          documentId: ref.documentId,
-                                        })
-                                      }
-                                      onMouseEnter={(event) => {
-                                        ensureRefPreview(ref.id, ref.documentId);
-                                        showRefTooltip(
-                                          event,
-                                          ref.id,
-                                          ref.documentId,
-                                          ref.label ?? ""
-                                        );
-                                      }}
-                                      onMouseMove={(event) =>
-                                        showRefTooltip(
-                                          event,
-                                          ref.id,
-                                          ref.documentId,
-                                          ref.label ?? ""
-                                        )
-                                      }
-                                      onMouseLeave={handleRefButtonLeave}
-                                    >
-                                      {ref.label?.replace(/\s*#\d+$/, "")}
-                                    </button>
-                                  ));
-                                })()}
-                              </div>
-                            ) : null}
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-                <form
-                  className="global-chat__input"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void sendGlobalChatMessage();
-                  }}
-                >
-                  <div className="global-chat__input-row">
-                    <textarea
-                      rows={1}
-                      placeholder={t("globalChat.placeholder")}
-                      value={globalChatInput}
-                      onChange={(event) => setGlobalChatInput(event.target.value)}
-                      onKeyDown={(event) => {
-                        const isComposing =
-                          event.nativeEvent.isComposing || event.isComposing || false;
-                        const hasModifier =
-                          event.shiftKey || event.metaKey || event.ctrlKey || event.altKey;
-                        if (event.key === "Enter" && !hasModifier && !isComposing) {
-                          event.preventDefault();
-                          void sendGlobalChatMessage();
-                        }
-                      }}
-                      disabled={!isAuthed || globalChatSending}
-                    />
-                    <div className="global-chat__send-row">
-                      <button
-                        type="submit"
-                        className="global-chat__send"
-                        disabled={!isAuthed || globalChatSending}
-                        aria-label={t("globalChat.send")}
-                      >
-                        {globalChatSending ? "…" : "↵"}
-                      </button>
-                      <div className="global-chat__controls">
-                        <div className="model-select">
-                          <button
-                            type="button"
-                            className={`model-option ${
-                              globalChatMode === "fast" ? "is-active" : ""
-                            }`}
-                            onClick={() => setGlobalChatMode("fast")}
-                          >
-                            {t("model.fast")}
-                          </button>
-                          <button
-                            type="button"
-                            className={`model-option ${
-                              globalChatMode === "standard" ? "is-active" : ""
-                            }`}
-                            onClick={() => setGlobalChatMode("standard")}
-                          >
-                            {t("model.standard")}
-                          </button>
-                          <button
-                            type="button"
-                            className={`model-option ${
-                              globalChatMode === "think" ? "is-active" : ""
-                            }`}
-                            onClick={() => setGlobalChatMode("think")}
-                          >
-                            {t("model.think")}
-                          </button>
-                        </div>
-                        <div
-                          className="usage-ring"
-                          aria-label={t("aria.usageRing", { percent: 40 })}
-                        >
-                          <span className="usage-ring__center" />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </form>
-              </section>
-              </>
-            ) : null}
             {tooltipContainer
               ? createPortal(
                   <div
@@ -4185,52 +3426,6 @@ export default function Home() {
                   tooltipContainer
                 )
               : null}
-            {showGlobalChat ? (
-              <button
-                type="button"
-                className="global-chat__toggle"
-                onClick={() => setGlobalChatOpen((prev) => !prev)}
-                aria-label={
-                  globalChatOpen
-                    ? t("tooltip.globalChatCollapse")
-                    : t("tooltip.globalChatExpand")
-                }
-                data-tooltip={
-                  globalChatOpen
-                    ? t("tooltip.globalChatCollapse")
-                    : t("tooltip.globalChatExpand")
-                }
-                data-tooltip-portal="true"
-                data-tooltip-position="top"
-                style={{
-                  bottom: globalChatOpen
-                    ? `${Math.max(0, globalChatHeight - 1)}px`
-                    : "0",
-                }}
-              >
-                <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-                  {globalChatOpen ? (
-                    <polyline
-                      points="6 10 12 16 18 10"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  ) : (
-                    <polyline
-                      points="6 14 12 8 18 14"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  )}
-                </svg>
-              </button>
-            ) : null}
             <button
               type="button"
               className="viewer__chat-toggle"

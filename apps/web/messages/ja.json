@@ -179,8 +179,6 @@
       "aiSettings": "AI設定",
       "chatCollapse": "チャットを閉じる ⌘⇧B",
       "chatExpand": "チャットを開く ⌘⇧B",
-      "globalChatCollapse": "グローバルチャットを閉じる ⇧B",
-      "globalChatExpand": "グローバルチャットを開く ⇧B",
       "rename": "名前を変更",
       "delete": "削除",
       "menu": "その他"
@@ -205,14 +203,6 @@
       "placeholder": "質問してみましょう ⌘K",
       "send": "送信",
       "stop": "停止"
-    },
-    "globalChat": {
-      "title": "グローバルチャット",
-      "subtitle": "検索範囲: 全PDF",
-      "placeholder": "全PDFを横断して質問",
-      "empty": "グローバルチャットはまだありません。",
-      "signInHint": "グローバルチャットを使うにはログインしてください。",
-      "send": "送信"
     },
     "model": {
       "fast": "高速",

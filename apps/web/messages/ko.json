@@ -179,8 +179,6 @@
       "aiSettings": "AI settings",
       "chatCollapse": "Collapse chat ⌘⇧B",
       "chatExpand": "Expand chat ⌘⇧B",
-      "globalChatCollapse": "Collapse global chat ⇧B",
-      "globalChatExpand": "Expand global chat ⇧B",
       "rename": "Rename",
       "delete": "Delete",
       "menu": "More"
@@ -205,14 +203,6 @@
       "placeholder": "Ask something",
       "send": "Send",
       "stop": "Stop"
-    },
-    "globalChat": {
-      "title": "Global Chat",
-      "subtitle": "Search scope: all PDFs",
-      "placeholder": "Ask across all of your PDFs",
-      "empty": "No global messages yet.",
-      "signInHint": "Sign in to use global chat.",
-      "send": "Send"
     },
     "model": {
       "fast": "Fast",
