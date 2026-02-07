@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import re
 import logging
+import time
+import asyncio
 from typing import Any, Literal
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status, WebSocket, WebSocketDisconnect
@@ -16,8 +18,7 @@ from app.services.usage import extract_usage
 from app.services.plans import get_plan_limits, resolve_user_plan
 
 router = APIRouter()
-logger = logging.getLogger("askpdf.chat")
-logger.setLevel(logging.INFO)
+logger = logging.getLogger("uvicorn.error")
 
 
 class ChatAnswerRequest(BaseModel):
@@ -25,6 +26,7 @@ class ChatAnswerRequest(BaseModel):
     message_id: str | None = None
     mode: Literal["fast", "standard", "think"] | None = None
     top_k: int | None = None
+    client_matches: list[dict[str, Any]] | None = None
 
 
 ChatAnswerRequest.model_rebuild()
@@ -68,6 +70,24 @@ def _extract_embedding(payload: dict[str, Any]) -> list[float] | None:
     return None
 
 
+def _parse_vector(value: Any) -> list[float] | None:
+    if isinstance(value, list):
+        return [float(item) for item in value]
+    if value is None:
+        return None
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        value = bytes(value).decode()
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("[") and text.endswith("]"):
+            text = text[1:-1]
+        if not text:
+            return []
+        parts = [item.strip() for item in text.split(",") if item.strip()]
+        return [float(item) for item in parts]
+    return None
+
+
 def _split_matches(
     matches: list[dict[str, Any]],
     min_k: int,
@@ -77,6 +97,33 @@ def _split_matches(
     if len(filtered) < min_k:
         return matches[:min_k], filtered
     return filtered, filtered
+
+
+def _normalize_client_matches(value: Any) -> list[dict[str, Any]] | None:
+    if not isinstance(value, list):
+        return None
+    matches: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        chunk_id = item.get("id") or item.get("chunk_id")
+        content = item.get("content")
+        if not chunk_id or content is None:
+            continue
+        similarity = item.get("similarity")
+        try:
+            similarity_value = float(similarity) if similarity is not None else 0.0
+        except (TypeError, ValueError):
+            similarity_value = 0.0
+        matches.append(
+            {
+                "id": str(chunk_id),
+                "content": str(content),
+                "metadata": item.get("metadata"),
+                "similarity": similarity_value,
+            }
+        )
+    return matches if matches else None
 
 
 def _extract_tag_refs(answer: str, ref_map: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -132,8 +179,59 @@ async def _record_usage(
         logger.exception("usage_log failed operation=%s", operation)
 
 
+async def _record_usage_conn(
+    conn,
+    *,
+    user_id: str,
+    operation: str,
+    payload: dict[str, Any] | None = None,
+    document_id: str | None = None,
+    chat_id: str | None = None,
+    message_id: str | None = None,
+    model: str | None = None,
+) -> None:
+    if payload is None:
+        return
+    input_tokens, output_tokens, total_tokens, raw_usage = extract_usage(payload)
+    if raw_usage is None and total_tokens is None:
+        return
+    try:
+        await repository.insert_usage_log_conn(
+            conn,
+            user_id=user_id,
+            operation=operation,
+            document_id=document_id,
+            chat_id=chat_id,
+            message_id=message_id,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            raw_usage=raw_usage,
+        )
+    except Exception:
+        logger.exception("usage_log failed operation=%s", operation)
+
 async def _resolve_limits(pool, user_id: str):
+    t_plan = time.perf_counter()
     plan = await resolve_user_plan(pool, user_id)
+    logger.info(
+        "(test) timing user=%s phase=resolve_plan ms=%.1f",
+        user_id,
+        (time.perf_counter() - t_plan) * 1000,
+    )
+    limits = get_plan_limits(plan)
+    return plan, limits
+
+
+async def _resolve_limits_conn(conn, user_id: str):
+    t_plan = time.perf_counter()
+    plan = await repository.get_user_plan_conn(conn, user_id)
+    logger.info(
+        "(test) timing user=%s phase=resolve_plan ms=%.1f",
+        user_id,
+        (time.perf_counter() - t_plan) * 1000,
+    )
     limits = get_plan_limits(plan)
     return plan, limits
 
@@ -162,11 +260,53 @@ async def _enforce_thread_limit(pool, user_id: str, document_id: str) -> None:
 
 
 async def _enforce_message_limit(pool, user_id: str, chat_id: str) -> None:
+    t_limits = time.perf_counter()
     _, limits = await _resolve_limits(pool, user_id)
+    logger.info(
+        "(test) timing user=%s chat=%s phase=resolve_limits ms=%.1f",
+        user_id,
+        chat_id,
+        (time.perf_counter() - t_limits) * 1000,
+    )
     if limits.max_messages_per_thread is None:
         return
+    t_count = time.perf_counter()
     count = await repository.count_document_chat_messages(
         pool, chat_id, user_id, role="user"
+    )
+    logger.info(
+        "(test) timing user=%s chat=%s phase=count_messages ms=%.1f",
+        user_id,
+        chat_id,
+        (time.perf_counter() - t_count) * 1000,
+    )
+    if count >= limits.max_messages_per_thread:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Message limit reached",
+        )
+
+
+async def _enforce_message_limit_conn(conn, user_id: str, chat_id: str) -> None:
+    t_limits = time.perf_counter()
+    _, limits = await _resolve_limits_conn(conn, user_id)
+    logger.info(
+        "(test) timing user=%s chat=%s phase=resolve_limits ms=%.1f",
+        user_id,
+        chat_id,
+        (time.perf_counter() - t_limits) * 1000,
+    )
+    if limits.max_messages_per_thread is None:
+        return
+    t_count = time.perf_counter()
+    count = await repository.count_document_chat_messages_conn(
+        conn, chat_id, user_id, role="user"
+    )
+    logger.info(
+        "(test) timing user=%s chat=%s phase=count_messages ms=%.1f",
+        user_id,
+        chat_id,
+        (time.perf_counter() - t_count) * 1000,
     )
     if count >= limits.max_messages_per_thread:
         raise HTTPException(
@@ -213,8 +353,8 @@ async def get_document(
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
     pool = request.app.state.db_pool
-    row = await repository.get_document(pool, document_id, user.user_id)
-    if not row:
+    exists = await repository.document_exists(pool, document_id, user.user_id)
+    if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     return row
 
@@ -398,6 +538,33 @@ async def get_document_chunk(
             "metadata": row.get("metadata"),
         }
     }
+
+
+@router.get("/documents/{document_id}/chunks")
+async def list_document_chunks(
+    request: Request,
+    document_id: str,
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    pool = request.app.state.db_pool
+    rows = await repository.list_document_chunks_with_embeddings(
+        pool,
+        document_id,
+        user.user_id,
+    )
+    chunks: list[dict[str, Any]] = []
+    for row in rows:
+        embedding = _parse_vector(row.get("embedding"))
+        chunks.append(
+            {
+                "id": str(row["id"]),
+                "documentId": str(row["document_id"]),
+                "content": str(row.get("content") or ""),
+                "metadata": row.get("metadata"),
+                "embedding": embedding,
+            }
+        )
+    return {"chunks": chunks}
 
 
 @router.get("/document-chunks/{chunk_id}")
@@ -654,10 +821,7 @@ async def create_document_chat_message(
     payload: dict[str, Any],
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
-    pool = request.app.state.db_pool
-    row = await repository.get_document(pool, document_id, user.user_id)
-    if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    t_total = time.perf_counter()
     role = payload.get("role")
     text = payload.get("text")
     refs = payload.get("refs") if isinstance(payload, dict) else None
@@ -671,16 +835,62 @@ async def create_document_chat_message(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="text is required",
         )
-    await _enforce_message_limit(pool, user.user_id, chat_id)
-    row = await repository.insert_document_chat_message(
-        pool,
-        chat_id,
-        user.user_id,
-        role,
-        text,
-        "ok",
-        refs if isinstance(refs, list) else None,
-    )
+    pool = request.app.state.db_pool
+    t_acquire = time.perf_counter()
+    async with pool.acquire() as conn:
+        logger.info(
+            "(test) timing db_acquire op=message_post_conn ms=%.1f",
+            (time.perf_counter() - t_acquire) * 1000,
+        )
+        t_limit = time.perf_counter()
+        _, limits = await _resolve_limits_conn(conn, user.user_id)
+        logger.info(
+            "(test) timing doc=%s chat=%s phase=message_limit ms=%.1f",
+            document_id,
+            chat_id,
+            (time.perf_counter() - t_limit) * 1000,
+        )
+        t_insert = time.perf_counter()
+        row = await repository.insert_document_chat_message_checked_conn(
+            conn,
+            document_id,
+            chat_id,
+            user.user_id,
+            role,
+            text,
+            "ok",
+            refs if isinstance(refs, list) else None,
+            limits.max_messages_per_thread,
+        )
+        if not row.get("doc_exists") or not row.get("thread_exists"):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+        if (
+            limits.max_messages_per_thread is not None
+            and row.get("msg_count") is not None
+            and int(row["msg_count"]) >= limits.max_messages_per_thread
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Message limit reached",
+            )
+        if not row.get("id"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Message not saved",
+            )
+        logger.info(
+            "(test) timing doc=%s chat=%s phase=message_insert ms=%.1f",
+            document_id,
+            chat_id,
+            (time.perf_counter() - t_insert) * 1000,
+        )
+        logger.info(
+            "(test) timing doc=%s chat=%s phase=message_post_total ms=%.1f len=%s",
+            document_id,
+            chat_id,
+            (time.perf_counter() - t_total) * 1000,
+            len(text.strip()),
+        )
     return {
         "message": {
             "id": str(row["id"]),
@@ -703,19 +913,6 @@ async def create_document_chat_assistant_message(
     payload: ChatAnswerRequest,
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
-    pool = request.app.state.db_pool
-    row = await repository.get_document(pool, document_id, user.user_id)
-    if not row:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-    thread = await repository.get_document_chat_thread(
-        pool,
-        document_id,
-        chat_id,
-        user.user_id,
-    )
-    if not thread:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-
     message = payload.message.strip()
     if not message:
         raise HTTPException(
@@ -723,44 +920,76 @@ async def create_document_chat_assistant_message(
             detail="message is required",
         )
 
+    pool = request.app.state.db_pool
     parser = request.app.state.parser_client
-    embed_payload = await parser.embed_text(message)
-    await _record_usage(
-        pool,
-        user_id=user.user_id,
-        operation="embed",
-        payload=embed_payload if isinstance(embed_payload, dict) else None,
-        document_id=document_id,
-        chat_id=chat_id,
-    )
-    embedding = _extract_embedding(embed_payload)
-    if not isinstance(embedding, list):
-        logger.error(
-            "assistant.embed invalid response type=%s keys=%s",
-            type(embed_payload).__name__,
-            list(embed_payload.keys()) if isinstance(embed_payload, dict) else None,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Invalid embedding response",
-        )
-
     settings = request.app.state.settings
-    top_k, min_k, score_threshold = _resolve_rag_params(settings, payload)
-    matches = await repository.match_documents(
-        pool,
-        query_embedding=embedding,
-        match_count=top_k,
-        document_id=document_id,
-    )
-    context_matches, ref_matches = _split_matches(matches, min_k, score_threshold)
 
-    recent_messages = await repository.list_recent_document_chat_messages(
-        pool,
-        chat_id,
-        user.user_id,
-        limit=4,
-    )
+    top_k, min_k, score_threshold = _resolve_rag_params(settings, payload)
+    client_matches = _normalize_client_matches(payload.client_matches)
+    if client_matches:
+        exists_ok = await repository.document_thread_exists(
+            pool,
+            document_id,
+            chat_id,
+            user.user_id,
+        )
+        if not exists_ok:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+        matches = client_matches[:top_k]
+        async with pool.acquire() as conn:
+            recent_messages = await repository.list_recent_document_chat_messages_conn(
+                conn,
+                chat_id,
+                user.user_id,
+                limit=4,
+            )
+    else:
+        check_task = repository.document_thread_exists(
+            pool,
+            document_id,
+            chat_id,
+            user.user_id,
+        )
+        embed_task = parser.embed_text(message)
+        exists_ok, embed_payload = await asyncio.gather(check_task, embed_task)
+        if not exists_ok:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+        embedding = _extract_embedding(embed_payload)
+        if not isinstance(embedding, list):
+            logger.error(
+                "assistant.embed invalid response type=%s keys=%s",
+                type(embed_payload).__name__,
+                list(embed_payload.keys()) if isinstance(embed_payload, dict) else None,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Invalid embedding response",
+            )
+
+        async with pool.acquire() as conn:
+            await _record_usage_conn(
+                conn,
+                user_id=user.user_id,
+                operation="embed",
+                payload=embed_payload if isinstance(embed_payload, dict) else None,
+                document_id=document_id,
+                chat_id=chat_id,
+            )
+            matches = await repository.match_documents_conn(
+                conn,
+                query_embedding=embedding,
+                match_count=top_k,
+                document_id=document_id,
+            )
+            recent_messages = await repository.list_recent_document_chat_messages_conn(
+                conn,
+                chat_id,
+                user.user_id,
+                limit=4,
+            )
+
+    context_matches, ref_matches = _split_matches(matches, min_k, score_threshold)
     memory_lines: list[str] = []
     for item in recent_messages:
         if item.get("status") in {"error", "stopped"}:
@@ -842,7 +1071,6 @@ async def create_document_chat_assistant_message(
         "- 参照は複数可、段落末尾に付けてください。\n",
     )
 
-    settings = request.app.state.settings
     model = _build_model(settings, payload.mode)
 
     try:
@@ -856,41 +1084,49 @@ async def create_document_chat_assistant_message(
             raise RuntimeError("Answer generation failed")
         _ = _extract_tag_refs(answer, ref_map)
         final_refs = refs if refs else None
-        if payload.message_id:
-            saved = await repository.update_document_chat_message(
-                pool,
-                chat_id,
-                user.user_id,
-                payload.message_id,
-                answer,
-                "ok",
-                final_refs,
-            )
-            if saved is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Message not found",
+        t_save = time.perf_counter()
+        async with pool.acquire() as conn:
+            if payload.message_id:
+                saved = await repository.update_document_chat_message_conn(
+                    conn,
+                    chat_id,
+                    user.user_id,
+                    payload.message_id,
+                    answer,
+                    "ok",
+                    final_refs,
                 )
-        else:
-            saved = await repository.insert_document_chat_message(
-                pool,
+                if saved is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Message not found",
+                    )
+            else:
+                saved = await repository.insert_document_chat_message_conn(
+                    conn,
+                    chat_id,
+                    user.user_id,
+                    "assistant",
+                    answer,
+                    "ok",
+                    final_refs,
+                )
+            logger.info(
+                "(test) timing doc=%s chat=%s phase=save ms=%.1f",
+                document_id,
                 chat_id,
-                user.user_id,
-                "assistant",
-                answer,
-                "ok",
-                final_refs,
+                (time.perf_counter() - t_save) * 1000,
             )
-        await _record_usage(
-            pool,
-            user_id=user.user_id,
-            operation="answer",
-            payload=answer_payload if isinstance(answer_payload, dict) else None,
-            document_id=document_id,
-            chat_id=chat_id,
-            message_id=str(saved["id"]),
-            model=model,
-        )
+            await _record_usage_conn(
+                conn,
+                user_id=user.user_id,
+                operation="answer",
+                payload=answer_payload if isinstance(answer_payload, dict) else None,
+                document_id=document_id,
+                chat_id=chat_id,
+                message_id=str(saved["id"]),
+                model=model,
+            )
         return {
             "message": {
                 "id": str(saved["id"]),
@@ -905,26 +1141,27 @@ async def create_document_chat_assistant_message(
             "usage": answer_payload.get("usage"),
         }
     except Exception:
-        if payload.message_id:
-            saved = await repository.update_document_chat_message(
-                pool,
-                chat_id,
-                user.user_id,
-                payload.message_id,
-                "",
-                "error",
-                None,
-            )
-        else:
-            saved = await repository.insert_document_chat_message(
-                pool,
-                chat_id,
-                user.user_id,
-                "assistant",
-                "",
-                "error",
-                None,
-            )
+        async with pool.acquire() as conn:
+            if payload.message_id:
+                saved = await repository.update_document_chat_message_conn(
+                    conn,
+                    chat_id,
+                    user.user_id,
+                    payload.message_id,
+                    "",
+                    "error",
+                    None,
+                )
+            else:
+                saved = await repository.insert_document_chat_message_conn(
+                    conn,
+                    chat_id,
+                    user.user_id,
+                    "assistant",
+                    "",
+                    "error",
+                    None,
+                )
         if saved is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -962,17 +1199,20 @@ async def stream_document_chat_assistant_message(
         return
 
     pool = websocket.scope["app"].state.db_pool
-    row = await repository.get_document(pool, document_id, user.user_id)
-    if not row:
-        await websocket.close(code=1008)
-        return
-    thread = await repository.get_document_chat_thread(
+    t_check = time.perf_counter()
+    ok = await repository.document_thread_exists(
         pool,
         document_id,
         chat_id,
         user.user_id,
     )
-    if not thread:
+    logger.info(
+        "(test) timing doc=%s chat=%s phase=document_thread_exists ms=%.1f",
+        document_id,
+        chat_id,
+        (time.perf_counter() - t_check) * 1000,
+    )
+    if not ok:
         await websocket.close(code=1008)
         return
 
@@ -993,28 +1233,46 @@ async def stream_document_chat_assistant_message(
         return
 
     parser = websocket.scope["app"].state.parser_client
-    embed_payload = await parser.embed_text(message)
-    await _record_usage(
-        pool,
-        user_id=user.user_id,
-        operation="embed",
-        payload=embed_payload if isinstance(embed_payload, dict) else None,
-        document_id=document_id,
-        chat_id=chat_id,
-    )
-    embedding = _extract_embedding(embed_payload)
-    if not isinstance(embedding, list):
-        await websocket.close(code=1011)
-        return
-
     settings = websocket.scope["app"].state.settings
     top_k, min_k, score_threshold = _resolve_rag_params(settings, payload)
-    matches = await repository.match_documents(
-        pool,
-        query_embedding=embedding,
-        match_count=top_k,
-        document_id=document_id,
-    )
+    client_matches = _normalize_client_matches(payload.client_matches)
+    if client_matches:
+        matches = client_matches[:top_k]
+    else:
+        t_embed = time.perf_counter()
+        embed_payload = await parser.embed_text(message)
+        logger.info(
+            "(test) timing doc=%s chat=%s phase=embed ms=%.1f",
+            document_id,
+            chat_id,
+            (time.perf_counter() - t_embed) * 1000,
+        )
+        await _record_usage(
+            pool,
+            user_id=user.user_id,
+            operation="embed",
+            payload=embed_payload if isinstance(embed_payload, dict) else None,
+            document_id=document_id,
+            chat_id=chat_id,
+        )
+        embedding = _extract_embedding(embed_payload)
+        if not isinstance(embedding, list):
+            await websocket.close(code=1011)
+            return
+        t_match = time.perf_counter()
+        matches = await repository.match_documents(
+            pool,
+            query_embedding=embedding,
+            match_count=top_k,
+            document_id=document_id,
+        )
+        logger.info(
+            "(test) timing doc=%s chat=%s phase=match ms=%.1f matches=%s",
+            document_id,
+            chat_id,
+            (time.perf_counter() - t_match) * 1000,
+            len(matches),
+        )
     context_matches, ref_matches = _split_matches(matches, min_k, score_threshold)
 
     recent_messages = await repository.list_recent_document_chat_messages(
@@ -1107,8 +1365,9 @@ async def stream_document_chat_assistant_message(
     usage = None
     parser_error: str | None = None
     try:
+        t_llm = time.perf_counter()
         logger.info(
-            "assistant.ws start doc=%s chat=%s model=%s question_len=%s context_len=%s",
+            "(test) assistant.ws start doc=%s chat=%s model=%s question_len=%s context_len=%s",
             document_id,
             chat_id,
             model,
@@ -1137,6 +1396,12 @@ async def stream_document_chat_assistant_message(
                 break
             elif event_type == "done":
                 break
+        logger.info(
+            "(test) timing doc=%s chat=%s phase=llm ms=%.1f",
+            document_id,
+            chat_id,
+            (time.perf_counter() - t_llm) * 1000,
+        )
 
         answer = "".join(answer_parts).strip()
         if parser_error or not answer:

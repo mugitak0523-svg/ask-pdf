@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import time
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -14,7 +15,7 @@ from app.services.plans import get_plan_limits, resolve_user_plan
 from app.services.usage import extract_usage
 
 router = APIRouter()
-logger = logging.getLogger("askpdf.global_chat")
+logger = logging.getLogger("uvicorn.error")
 
 
 class GlobalChatMessageRequest(BaseModel):
@@ -148,16 +149,36 @@ async def _record_usage(
 
 
 async def _resolve_limits(pool, user_id: str):
+    t_plan = time.perf_counter()
     plan = await resolve_user_plan(pool, user_id)
+    logger.info(
+        "(test) timing user=%s phase=resolve_plan ms=%.1f",
+        user_id,
+        (time.perf_counter() - t_plan) * 1000,
+    )
     limits = get_plan_limits(plan)
     return plan, limits
 
 
 async def _enforce_message_limit(pool, user_id: str, chat_id: str) -> None:
+    t_limits = time.perf_counter()
     _, limits = await _resolve_limits(pool, user_id)
+    logger.info(
+        "(test) timing user=%s chat=%s phase=resolve_limits ms=%.1f",
+        user_id,
+        chat_id,
+        (time.perf_counter() - t_limits) * 1000,
+    )
     if limits.max_messages_per_thread is None:
         return
+    t_count = time.perf_counter()
     count = await repository.count_global_chat_messages(pool, chat_id, user_id, role="user")
+    logger.info(
+        "(test) timing user=%s chat=%s phase=count_messages ms=%.1f",
+        user_id,
+        chat_id,
+        (time.perf_counter() - t_count) * 1000,
+    )
     if count >= limits.max_messages_per_thread:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -248,8 +269,15 @@ async def create_global_chat_message(
     payload: GlobalChatMessageRequest,
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
+    t_total = time.perf_counter()
     pool = request.app.state.db_pool
+    t_thread = time.perf_counter()
     thread = await repository.get_global_chat_thread(pool, chat_id, user.user_id)
+    logger.info(
+        "(test) timing global_chat=%s phase=get_thread ms=%.1f",
+        chat_id,
+        (time.perf_counter() - t_thread) * 1000,
+    )
     if not thread:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     role = payload.role
@@ -258,7 +286,14 @@ async def create_global_chat_message(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="role must be user")
     if not isinstance(text, str) or not text.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="text is required")
+    t_limit = time.perf_counter()
     await _enforce_message_limit(pool, user.user_id, chat_id)
+    logger.info(
+        "(test) timing global_chat=%s phase=message_limit ms=%.1f",
+        chat_id,
+        (time.perf_counter() - t_limit) * 1000,
+    )
+    t_insert = time.perf_counter()
     row = await repository.insert_global_chat_message(
         pool,
         chat_id,
@@ -267,6 +302,17 @@ async def create_global_chat_message(
         text.strip(),
         "ok",
         payload.refs if isinstance(payload.refs, list) else None,
+    )
+    logger.info(
+        "(test) timing global_chat=%s phase=message_insert ms=%.1f",
+        chat_id,
+        (time.perf_counter() - t_insert) * 1000,
+    )
+    logger.info(
+        "(test) timing global_chat=%s phase=message_post_total ms=%.1f len=%s",
+        chat_id,
+        (time.perf_counter() - t_total) * 1000,
+        len(text.strip()),
     )
     return {
         "message": {
@@ -297,7 +343,13 @@ async def create_global_chat_assistant_message(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="message is required")
 
     parser = request.app.state.parser_client
+    t_embed = time.perf_counter()
     embed_payload = await parser.embed_text(message)
+    logger.info(
+        "(test) timing global_chat=%s phase=embed ms=%.1f",
+        chat_id,
+        (time.perf_counter() - t_embed) * 1000,
+    )
     await _record_usage(
         pool,
         user_id=user.user_id,
@@ -315,11 +367,18 @@ async def create_global_chat_assistant_message(
     settings = request.app.state.settings
     document_count = await repository.count_documents(pool, user.user_id)
     top_k, min_k, score_threshold = _resolve_rag_params(settings, payload, document_count)
+    t_match = time.perf_counter()
     matches = await repository.match_user_documents(
         pool,
         user_id=user.user_id,
         query_embedding=embedding,
         match_count=min(top_k * 3, 120),
+    )
+    logger.info(
+        "(test) timing global_chat=%s phase=match ms=%.1f matches=%s",
+        chat_id,
+        (time.perf_counter() - t_match) * 1000,
+        len(matches),
     )
     context_matches, ref_matches = _split_matches(matches, min_k, score_threshold)
     # expand with extra matches so "effective" count reaches top_k
@@ -449,15 +508,22 @@ async def create_global_chat_assistant_message(
     model = _build_model(settings, payload.mode)
 
     try:
+        t_llm = time.perf_counter()
         answer_payload = await parser.create_answer(
             question=message,
             context="\n\n".join(context_parts),
             model=model,
         )
+        logger.info(
+            "(test) timing global_chat=%s phase=llm ms=%.1f",
+            chat_id,
+            (time.perf_counter() - t_llm) * 1000,
+        )
         answer = str(answer_payload.get("answer") or "").strip()
         if not answer:
             raise RuntimeError("Answer generation failed")
         final_refs = refs if refs else None
+        t_save = time.perf_counter()
         if payload.message_id:
             saved = await repository.update_global_chat_message(
                 pool,
@@ -480,6 +546,11 @@ async def create_global_chat_assistant_message(
                 "ok",
                 final_refs,
             )
+        logger.info(
+            "(test) timing global_chat=%s phase=save ms=%.1f",
+            chat_id,
+            (time.perf_counter() - t_save) * 1000,
+        )
         await _record_usage(
             pool,
             user_id=user.user_id,

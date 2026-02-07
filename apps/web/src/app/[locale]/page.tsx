@@ -61,6 +61,15 @@ type ReferenceRequest = {
   pages: Record<number, number[]>;
 };
 
+type ChatPerf = {
+  postStart?: number;
+  postEnd?: number;
+  wsStart?: number;
+  wsOpen?: number;
+  firstDelta?: number;
+  done?: number;
+};
+
 type ThemeMode = "system" | "light" | "dark";
 type PlanName = "guest" | "free" | "plus" | "pro";
 
@@ -69,6 +78,20 @@ type PlanLimits = {
   maxFileMb: number | null;
   maxMessagesPerThread: number | null;
   maxThreadsPerDocument: number | null;
+};
+
+type ClientChunk = {
+  id: string;
+  documentId: string;
+  content: string;
+  metadata: any;
+  embedding: Float32Array;
+  norm: number;
+};
+
+type ChunkCache = {
+  loadedAt: number;
+  chunks: ClientChunk[];
 };
 
 const DEFAULT_PLAN_LIMITS: Record<PlanName, PlanLimits> = {
@@ -80,6 +103,9 @@ const DEFAULT_PLAN_LIMITS: Record<PlanName, PlanLimits> = {
 
 const STORAGE_KEY = "askpdf.ui.v1";
 const DOCUMENTS_SEEN_KEY = "askpdf.docs.seen.v1";
+const CLIENT_MATCH_MAX = 20;
+const RAG_SEARCH_MODE = (process.env.NEXT_PUBLIC_RAG_SEARCH_MODE ?? "client").toLowerCase();
+const USE_CLIENT_RAG = RAG_SEARCH_MODE === "client";
 
 const normalizeRefs = (value: unknown): ChatRef[] | undefined => {
   if (Array.isArray(value)) return value as ChatRef[];
@@ -612,6 +638,8 @@ export default function Home() {
   const chatSocketRef = useRef<WebSocket | null>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
   const isNearBottomRef = useRef(true);
+  const chatPerfRef = useRef<ChatPerf | null>(null);
+  const globalChatPerfRef = useRef<ChatPerf | null>(null);
   const refAbortRef = useRef<AbortController | null>(null);
   const chatMessagesAbortRef = useRef<AbortController | null>(null);
   const chatsAbortRef = useRef<AbortController | null>(null);
@@ -619,6 +647,8 @@ export default function Home() {
   const documentsAbortRef = useRef<AbortController | null>(null);
   const signedUrlAbortRef = useRef<AbortController | null>(null);
   const seenDocsCacheRef = useRef(false);
+  const documentChunkCacheRef = useRef<Map<string, ChunkCache>>(new Map());
+  const documentChunkLoadRef = useRef<Map<string, Promise<ChunkCache | null>>>(new Map());
 
   const scrollChatToBottom = (behavior: ScrollBehavior = "auto") => {
     const target = chatMessagesRef.current;
@@ -1560,6 +1590,8 @@ export default function Home() {
       if (!response.ok) {
         throw new Error(`Failed to delete document (${response.status})`);
       }
+      documentChunkCacheRef.current.delete(documentId);
+      documentChunkLoadRef.current.delete(documentId);
       setDocuments((prev) => prev.filter((doc) => doc.id !== documentId));
       setOpenDocuments((prev) => prev.filter((doc) => doc.id !== documentId));
       if (selectedDocumentId === documentId) {
@@ -1827,6 +1859,9 @@ export default function Home() {
         throw new Error("Not authenticated");
       }
       setSelectedDocumentToken(accessToken);
+      if (USE_CLIENT_RAG) {
+        void loadDocumentChunkCache(doc.id, accessToken);
+      }
       const threads = await loadChats(doc.id, accessToken, {
         autoOpen: options.autoOpenChat ?? true,
       });
@@ -2126,12 +2161,137 @@ export default function Home() {
     return t("time.yearsAgo", { count: Math.max(1, diffYears) });
   };
 
+  const buildEmbeddingVector = (value: unknown) => {
+    if (!Array.isArray(value)) return null;
+    const numbers = value
+      .map((item) => (typeof item === "number" ? item : Number(item)))
+      .filter((item) => Number.isFinite(item));
+    if (numbers.length === 0) return null;
+    return new Float32Array(numbers);
+  };
+
+  const calcVectorNorm = (vector: Float32Array) => {
+    let sum = 0;
+    for (let i = 0; i < vector.length; i += 1) {
+      const val = vector[i];
+      sum += val * val;
+    }
+    return Math.sqrt(sum);
+  };
+
+  const dotProduct = (a: Float32Array, b: Float32Array) => {
+    const len = Math.min(a.length, b.length);
+    let sum = 0;
+    for (let i = 0; i < len; i += 1) {
+      sum += a[i] * b[i];
+    }
+    return sum;
+  };
+
+  const loadDocumentChunkCache = async (documentId: string, accessToken: string) => {
+    if (!documentId) return null;
+    const cached = documentChunkCacheRef.current.get(documentId);
+    if (cached) return cached;
+    const inflight = documentChunkLoadRef.current.get(documentId);
+    if (inflight) return inflight;
+    const promise = (async () => {
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/documents/${documentId}/chunks`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load chunks (${response.status})`);
+      }
+      const payload = await response.json();
+      const items = Array.isArray(payload.chunks) ? payload.chunks : [];
+      const chunks: ClientChunk[] = [];
+      for (const item of items) {
+        const embedding = buildEmbeddingVector(item?.embedding);
+        if (!embedding) continue;
+        const norm = calcVectorNorm(embedding);
+        if (!Number.isFinite(norm) || norm === 0) continue;
+        chunks.push({
+          id: String(item.id),
+          documentId: String(item.documentId ?? documentId),
+          content: String(item.content ?? ""),
+          metadata: item.metadata ?? null,
+          embedding,
+          norm,
+        });
+      }
+      const cache: ChunkCache = {
+        loadedAt: Date.now(),
+        chunks,
+      };
+      documentChunkCacheRef.current.set(documentId, cache);
+      return cache;
+    })();
+    documentChunkLoadRef.current.set(documentId, promise);
+    try {
+      return await promise;
+    } catch {
+      return null;
+    } finally {
+      documentChunkLoadRef.current.delete(documentId);
+    }
+  };
+
+  const fetchQueryEmbedding = async (
+    text: string,
+    documentId: string,
+    accessToken: string
+  ) => {
+    const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+    const response = await fetch(`${baseUrl}/embeddings`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ text, document_id: documentId }),
+    });
+    if (!response.ok) return null;
+    const payload = await response.json();
+    return Array.isArray(payload.embedding) ? payload.embedding : null;
+  };
+
+  const getClientMatches = async (
+    question: string,
+    documentId: string,
+    accessToken: string
+  ) => {
+    if (!USE_CLIENT_RAG) return null;
+    const cache = documentChunkCacheRef.current.get(documentId);
+    if (!cache || cache.chunks.length === 0) return null;
+    const embedding = await fetchQueryEmbedding(question, documentId, accessToken);
+    if (!embedding) return null;
+    const query = buildEmbeddingVector(embedding);
+    if (!query) return null;
+    const queryNorm = calcVectorNorm(query);
+    if (!Number.isFinite(queryNorm) || queryNorm === 0) return null;
+    const scored = cache.chunks.map((chunk) => ({
+      chunk,
+      similarity: dotProduct(query, chunk.embedding) / (queryNorm * chunk.norm),
+    }));
+    scored.sort((a, b) => b.similarity - a.similarity);
+    return scored.slice(0, CLIENT_MATCH_MAX).map(({ chunk, similarity }) => ({
+      id: chunk.id,
+      content: chunk.content,
+      metadata: chunk.metadata,
+      similarity,
+      documentId: chunk.documentId,
+    }));
+  };
+
 
   const sendMessage = async () => {
     const trimmed = chatInput.trim();
     if (!trimmed) return;
     if (chatSending) return;
     if (!selectedDocumentId || !activeChatId) return;
+    chatPerfRef.current = { postStart: performance.now() };
     const userMessageCount = chatMessages.filter((msg) => msg.role === "user").length;
     if (
       planLimits.maxMessagesPerThread !== null &&
@@ -2186,6 +2346,9 @@ export default function Home() {
           )
         );
       }
+      if (chatPerfRef.current) {
+        chatPerfRef.current.postEnd = performance.now();
+      }
     } catch (error) {
       const messageText =
         error instanceof Error ? error.message : "Failed to send message";
@@ -2198,6 +2361,7 @@ export default function Home() {
     if (!trimmed) return;
     if (globalChatSending) return;
     if (!globalChatId) return;
+    globalChatPerfRef.current = { postStart: performance.now() };
     const userMessageCount = globalChatMessages.filter((msg) => msg.role === "user").length;
     if (
       planLimits.maxMessagesPerThread !== null &&
@@ -2254,6 +2418,9 @@ export default function Home() {
           )
         );
       }
+      if (globalChatPerfRef.current) {
+        globalChatPerfRef.current.postEnd = performance.now();
+      }
       await requestGlobalChatAnswer(trimmed, {
         accessToken,
         pendingId,
@@ -2286,6 +2453,9 @@ export default function Home() {
         : [...prev, pending]
     );
     try {
+      const perf = globalChatPerfRef.current ?? {};
+      perf.wsStart = performance.now();
+      globalChatPerfRef.current = perf;
       const accessToken =
         options.accessToken ?? (await supabase.auth.getSession()).data.session?.access_token;
       if (!accessToken) {
@@ -2307,11 +2477,17 @@ export default function Home() {
           }),
         }
       );
+      if (globalChatPerfRef.current) {
+        globalChatPerfRef.current.wsOpen = performance.now();
+      }
       if (!answerResponse.ok) {
         throw new Error(`Failed to get answer (${answerResponse.status})`);
       }
       const answerPayload = await answerResponse.json();
       const savedAnswer = answerPayload?.message;
+      if (globalChatPerfRef.current && !globalChatPerfRef.current.firstDelta) {
+        globalChatPerfRef.current.firstDelta = performance.now();
+      }
       setGlobalChatMessages((prev) =>
         prev.map((item) =>
           item.id === pendingId
@@ -2331,6 +2507,21 @@ export default function Home() {
             : item
         )
       );
+      if (globalChatPerfRef.current) {
+        globalChatPerfRef.current.done = performance.now();
+        const perfDone = globalChatPerfRef.current;
+        const postMs =
+          perfDone.postStart && perfDone.postEnd ? perfDone.postEnd - perfDone.postStart : undefined;
+        const answerRequestMs =
+          perfDone.wsStart && perfDone.wsOpen ? perfDone.wsOpen - perfDone.wsStart : undefined;
+        const totalMs =
+          perfDone.postStart && perfDone.done ? perfDone.done - perfDone.postStart : undefined;
+        console.info("[perf(test)] global-chat", {
+          postMs,
+          answerRequestMs,
+          totalMs,
+        });
+      }
       requestAnimationFrame(() => {
         scrollGlobalChatToBottom("smooth");
       });
@@ -2371,11 +2562,18 @@ export default function Home() {
     setChatError(null);
     streamingMessageIdRef.current = pendingId;
     try {
+      const perf = chatPerfRef.current ?? {};
+      perf.wsStart = performance.now();
+      chatPerfRef.current = perf;
       const session = await supabase.auth.getSession();
       const accessToken = session.data.session?.access_token;
       if (!accessToken) {
         throw new Error("Not authenticated");
       }
+      const clientMatches =
+        USE_CLIENT_RAG && selectedDocumentId && accessToken
+          ? await getClientMatches(question, selectedDocumentId, accessToken)
+          : null;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const wsUrl = `${baseUrl.replace(/^http/, "ws")}/documents/${selectedDocumentId}/chats/${activeChatId}/assistant/ws?token=${encodeURIComponent(
         accessToken
@@ -2383,12 +2581,19 @@ export default function Home() {
       await new Promise<void>((resolve, reject) => {
         const socket = new WebSocket(wsUrl);
         chatSocketRef.current = socket;
-        const payload = JSON.stringify({
+        const payloadObj: Record<string, any> = {
           message: question,
           message_id: options.existingId ?? null,
           mode: chatMode,
-        });
+        };
+        if (clientMatches && clientMatches.length > 0) {
+          payloadObj.client_matches = clientMatches;
+        }
+        const payload = JSON.stringify(payloadObj);
         socket.addEventListener("open", () => {
+          if (chatPerfRef.current) {
+            chatPerfRef.current.wsOpen = performance.now();
+          }
           socket.send(payload);
         });
         socket.addEventListener("message", (event) => {
@@ -2402,6 +2607,9 @@ export default function Home() {
           if (data.type === "delta") {
             const deltaText = String(data.delta ?? "");
             if (!deltaText) return;
+            if (chatPerfRef.current && !chatPerfRef.current.firstDelta) {
+              chatPerfRef.current.firstDelta = performance.now();
+            }
             setChatMessages((prev) =>
               prev.map((item) =>
                 item.id === pendingId
@@ -2448,6 +2656,37 @@ export default function Home() {
               )
             );
           } else if (data.type === "done") {
+            if (chatPerfRef.current) {
+              chatPerfRef.current.done = performance.now();
+              const perfDone = chatPerfRef.current;
+              const postMs =
+                perfDone.postStart && perfDone.postEnd
+                  ? perfDone.postEnd - perfDone.postStart
+                  : undefined;
+              const postToWsOpenMs =
+                perfDone.postEnd && perfDone.wsOpen
+                  ? perfDone.wsOpen - perfDone.postEnd
+                  : undefined;
+              const wsOpenToFirstDeltaMs =
+                perfDone.wsOpen && perfDone.firstDelta
+                  ? perfDone.firstDelta - perfDone.wsOpen
+                  : undefined;
+              const totalToFirstDeltaMs =
+                perfDone.postStart && perfDone.firstDelta
+                  ? perfDone.firstDelta - perfDone.postStart
+                  : undefined;
+              const totalToDoneMs =
+                perfDone.postStart && perfDone.done
+                  ? perfDone.done - perfDone.postStart
+                  : undefined;
+              console.info("[perf(test)] pdf-chat", {
+                postMs,
+                postToWsOpenMs,
+                wsOpenToFirstDeltaMs,
+                totalToFirstDeltaMs,
+                totalToDoneMs,
+              });
+            }
             socket.close();
             resolve();
           }
@@ -2459,6 +2698,18 @@ export default function Home() {
         socket.addEventListener("close", (event) => {
           chatSocketRef.current = null;
           streamingMessageIdRef.current = null;
+          if (event.code !== 1000 && chatPerfRef.current) {
+            chatPerfRef.current.done = performance.now();
+            const perfDone = chatPerfRef.current;
+            const totalToDoneMs =
+              perfDone.postStart && perfDone.done
+                ? perfDone.done - perfDone.postStart
+                : undefined;
+            console.info("[perf(test)] pdf-chat closed", {
+              code: event.code,
+              totalToDoneMs,
+            });
+          }
           if (event.code !== 1000) {
             reject(new Error("WebSocket closed"));
           } else {

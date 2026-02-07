@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from datetime import datetime
 from typing import Any
 
 import asyncpg
 
+logger = logging.getLogger("uvicorn.error")
 
 def _vector_literal(values: list[float]) -> str:
     return "[" + ",".join(str(v) for v in values) + "]"
@@ -73,7 +76,13 @@ async def get_document(
     document_id: str,
     user_id: str,
 ) -> dict[str, Any] | None:
+    t_acquire = time.perf_counter()
     async with pool.acquire() as conn:
+        logger.info(
+            "(test) timing db_acquire op=get_document ms=%.1f",
+            (time.perf_counter() - t_acquire) * 1000,
+        )
+        t_query = time.perf_counter()
         row = await conn.fetchrow(
             """
             select id, title, storage_path, metadata, result, created_at
@@ -83,7 +92,104 @@ async def get_document(
             document_id,
             user_id,
         )
+        logger.info(
+            "(test) timing db_query op=get_document ms=%.1f",
+            (time.perf_counter() - t_query) * 1000,
+        )
     return dict(row) if row else None
+
+
+async def document_exists(
+    pool: asyncpg.Pool,
+    document_id: str,
+    user_id: str,
+) -> bool:
+    t_acquire = time.perf_counter()
+    async with pool.acquire() as conn:
+        logger.info(
+            "(test) timing db_acquire op=document_exists ms=%.1f",
+            (time.perf_counter() - t_acquire) * 1000,
+        )
+        t_query = time.perf_counter()
+        row = await conn.fetchrow(
+            """
+            select 1
+            from documents
+            where id = $1 and user_id = $2
+            """,
+            document_id,
+            user_id,
+        )
+        logger.info(
+            "(test) timing db_query op=document_exists ms=%.1f",
+            (time.perf_counter() - t_query) * 1000,
+        )
+    return bool(row)
+
+
+async def document_exists_conn(
+    conn: asyncpg.Connection,
+    document_id: str,
+    user_id: str,
+) -> bool:
+    t_query = time.perf_counter()
+    row = await conn.fetchrow(
+        """
+        select 1
+        from documents
+        where id = $1 and user_id = $2
+        """,
+        document_id,
+        user_id,
+    )
+    logger.info(
+        "(test) timing db_query op=document_exists ms=%.1f",
+        (time.perf_counter() - t_query) * 1000,
+    )
+    return bool(row)
+
+
+async def document_thread_exists(
+    pool: asyncpg.Pool,
+    document_id: str,
+    chat_id: str,
+    user_id: str,
+) -> bool:
+    t_acquire = time.perf_counter()
+    async with pool.acquire() as conn:
+        logger.info(
+            "(test) timing db_acquire op=document_thread_exists ms=%.1f",
+            (time.perf_counter() - t_acquire) * 1000,
+        )
+        return await document_thread_exists_conn(conn, document_id, chat_id, user_id)
+
+
+async def document_thread_exists_conn(
+    conn: asyncpg.Connection,
+    document_id: str,
+    chat_id: str,
+    user_id: str,
+) -> bool:
+    t_query = time.perf_counter()
+    row = await conn.fetchrow(
+        """
+        select 1
+        from documents d
+        join document_chat_threads t on t.document_id = d.id
+        where d.id = $1
+          and d.user_id = $2
+          and t.id = $3
+          and t.user_id = $2
+        """,
+        document_id,
+        user_id,
+        chat_id,
+    )
+    logger.info(
+        "(test) timing db_query op=document_thread_exists ms=%.1f",
+        (time.perf_counter() - t_query) * 1000,
+    )
+    return bool(row)
 
 
 async def update_document_title(
@@ -181,6 +287,24 @@ async def match_documents(
             match_count,
             document_id,
         )
+    return [dict(row) for row in rows]
+
+
+async def match_documents_conn(
+    conn: asyncpg.Connection,
+    query_embedding: list[float],
+    match_count: int = 5,
+    document_id: str | None = None,
+) -> list[dict[str, Any]]:
+    vector_literal = _vector_literal(query_embedding)
+    rows = await conn.fetch(
+        """
+        select * from match_documents($1::vector, $2, $3::uuid)
+        """,
+        vector_literal,
+        match_count,
+        document_id,
+    )
     return [dict(row) for row in rows]
 
 
@@ -384,7 +508,13 @@ async def count_document_chat_messages(
     user_id: str,
     role: str | None = None,
 ) -> int:
+    t_acquire = time.perf_counter()
     async with pool.acquire() as conn:
+        logger.info(
+            "(test) timing db_acquire op=count_document_chat_messages ms=%.1f",
+            (time.perf_counter() - t_acquire) * 1000,
+        )
+        t_query = time.perf_counter()
         if role:
             row = await conn.fetchrow(
                 """
@@ -406,6 +536,45 @@ async def count_document_chat_messages(
                 chat_id,
                 user_id,
             )
+        logger.info(
+            "(test) timing db_query op=count_document_chat_messages ms=%.1f",
+            (time.perf_counter() - t_query) * 1000,
+        )
+    return int(row["total"] or 0)
+
+
+async def count_document_chat_messages_conn(
+    conn: asyncpg.Connection,
+    chat_id: str,
+    user_id: str,
+    role: str | None = None,
+) -> int:
+    t_query = time.perf_counter()
+    if role:
+        row = await conn.fetchrow(
+            """
+            select count(*) as total
+            from document_chat_messages
+            where chat_id = $1 and user_id = $2 and role = $3
+            """,
+            chat_id,
+            user_id,
+            role,
+        )
+    else:
+        row = await conn.fetchrow(
+            """
+            select count(*) as total
+            from document_chat_messages
+            where chat_id = $1 and user_id = $2
+            """,
+            chat_id,
+            user_id,
+        )
+    logger.info(
+        "(test) timing db_query op=count_document_chat_messages ms=%.1f",
+        (time.perf_counter() - t_query) * 1000,
+    )
     return int(row["total"] or 0)
 
 
@@ -428,6 +597,27 @@ async def list_recent_document_chat_messages(
             user_id,
             limit,
         )
+    return [dict(row) for row in rows][::-1]
+
+
+async def list_recent_document_chat_messages_conn(
+    conn: asyncpg.Connection,
+    chat_id: str,
+    user_id: str,
+    limit: int = 4,
+) -> list[dict[str, Any]]:
+    rows = await conn.fetch(
+        """
+        select id, role, content, refs, status, created_at
+        from document_chat_messages
+        where chat_id = $1 and user_id = $2
+        order by created_at desc
+        limit $3
+        """,
+        chat_id,
+        user_id,
+        limit,
+    )
     return [dict(row) for row in rows][::-1]
 
 
@@ -501,7 +691,13 @@ async def insert_document_chat_message(
     status: str | None = None,
     refs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    t_acquire = time.perf_counter()
     async with pool.acquire() as conn:
+        logger.info(
+            "(test) timing db_acquire op=insert_document_chat_message ms=%.1f",
+            (time.perf_counter() - t_acquire) * 1000,
+        )
+        t_update = time.perf_counter()
         await conn.execute(
             """
             update document_chat_threads
@@ -511,6 +707,11 @@ async def insert_document_chat_message(
             chat_id,
             user_id,
         )
+        logger.info(
+            "(test) timing db_query op=insert_document_chat_message_update ms=%.1f",
+            (time.perf_counter() - t_update) * 1000,
+        )
+        t_insert = time.perf_counter()
         row = await conn.fetchrow(
             """
             insert into document_chat_messages (chat_id, user_id, role, content, status, refs)
@@ -524,7 +725,126 @@ async def insert_document_chat_message(
             status,
             json.dumps(refs) if refs is not None else None,
         )
+        logger.info(
+            "(test) timing db_query op=insert_document_chat_message_insert ms=%.1f",
+            (time.perf_counter() - t_insert) * 1000,
+        )
     return dict(row)
+
+
+async def insert_document_chat_message_conn(
+    conn: asyncpg.Connection,
+    chat_id: str,
+    user_id: str,
+    role: str,
+    content: str,
+    status: str | None = None,
+    refs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    t_update = time.perf_counter()
+    await conn.execute(
+        """
+        update document_chat_threads
+        set updated_at = now()
+        where id = $1 and user_id = $2
+        """,
+        chat_id,
+        user_id,
+    )
+    logger.info(
+        "(test) timing db_query op=insert_document_chat_message_update ms=%.1f",
+        (time.perf_counter() - t_update) * 1000,
+    )
+    t_insert = time.perf_counter()
+    row = await conn.fetchrow(
+        """
+        insert into document_chat_messages (chat_id, user_id, role, content, status, refs)
+        values ($1, $2, $3, $4, $5, $6::jsonb)
+        returning id, role, content, status, refs, created_at
+        """,
+        chat_id,
+        user_id,
+        role,
+        content,
+        status,
+        json.dumps(refs) if refs is not None else None,
+    )
+    logger.info(
+        "(test) timing db_query op=insert_document_chat_message_insert ms=%.1f",
+        (time.perf_counter() - t_insert) * 1000,
+    )
+    return dict(row)
+
+
+async def insert_document_chat_message_checked_conn(
+    conn: asyncpg.Connection,
+    document_id: str,
+    chat_id: str,
+    user_id: str,
+    role: str,
+    content: str,
+    status: str | None = None,
+    refs: list[dict[str, Any]] | None = None,
+    max_messages_per_thread: int | None = None,
+) -> dict[str, Any]:
+    t_query = time.perf_counter()
+    row = await conn.fetchrow(
+        """
+        with doc_ok as (
+            select 1
+            from documents
+            where id = $1 and user_id = $2
+        ),
+        thread_ok as (
+            select 1
+            from document_chat_threads
+            where id = $3 and document_id = $1 and user_id = $2
+        ),
+        msg_count as (
+            select count(*)::int as total
+            from document_chat_messages
+            where chat_id = $3 and user_id = $2 and role = 'user'
+        ),
+        ins as (
+            insert into document_chat_messages (chat_id, user_id, role, content, status, refs)
+            select $3, $2, $4, $5, $6, $7::jsonb
+            where exists (select 1 from doc_ok)
+              and exists (select 1 from thread_ok)
+              and ($8::int is null or (select total from msg_count) < $8)
+            returning id, role, content, status, refs, created_at
+        ),
+        upd as (
+            update document_chat_threads
+            set updated_at = now()
+            where id = $3 and user_id = $2 and exists (select 1 from ins)
+        )
+        select
+            exists(select 1 from doc_ok) as doc_exists,
+            exists(select 1 from thread_ok) as thread_exists,
+            (select total from msg_count) as msg_count,
+            ins.id,
+            ins.role,
+            ins.content,
+            ins.status,
+            ins.refs,
+            ins.created_at
+        from (select 1) base
+        left join ins on true
+        """,
+        document_id,
+        user_id,
+        chat_id,
+        role,
+        content,
+        status,
+        json.dumps(refs) if refs is not None else None,
+        max_messages_per_thread,
+    )
+    logger.info(
+        "(test) timing db_query op=insert_document_chat_message_checked ms=%.1f",
+        (time.perf_counter() - t_query) * 1000,
+    )
+    return dict(row) if row else {}
 
 
 async def update_document_chat_message(
@@ -553,6 +873,34 @@ async def update_document_chat_message(
             chat_id,
             user_id,
         )
+    return dict(row) if row else None
+
+
+async def update_document_chat_message_conn(
+    conn: asyncpg.Connection,
+    chat_id: str,
+    user_id: str,
+    message_id: str,
+    content: str,
+    status: str | None = None,
+    refs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    row = await conn.fetchrow(
+        """
+        update document_chat_messages
+        set content = $1,
+            status = $2,
+            refs = $3::jsonb
+        where id = $4 and chat_id = $5 and user_id = $6
+        returning id, role, content, status, refs, created_at
+        """,
+        content,
+        status,
+        json.dumps(refs) if refs is not None else None,
+        message_id,
+        chat_id,
+        user_id,
+    )
     return dict(row) if row else None
 
 
@@ -607,7 +955,13 @@ async def get_global_chat_thread(
     chat_id: str,
     user_id: str,
 ) -> dict[str, Any] | None:
+    t_acquire = time.perf_counter()
     async with pool.acquire() as conn:
+        logger.info(
+            "(test) timing db_acquire op=get_global_chat_thread ms=%.1f",
+            (time.perf_counter() - t_acquire) * 1000,
+        )
+        t_query = time.perf_counter()
         row = await conn.fetchrow(
             """
             select id, title, updated_at
@@ -616,6 +970,10 @@ async def get_global_chat_thread(
             """,
             chat_id,
             user_id,
+        )
+        logger.info(
+            "(test) timing db_query op=get_global_chat_thread ms=%.1f",
+            (time.perf_counter() - t_query) * 1000,
         )
     return dict(row) if row else None
 
@@ -684,7 +1042,13 @@ async def count_global_chat_messages(
     user_id: str,
     role: str | None = None,
 ) -> int:
+    t_acquire = time.perf_counter()
     async with pool.acquire() as conn:
+        logger.info(
+            "(test) timing db_acquire op=count_global_chat_messages ms=%.1f",
+            (time.perf_counter() - t_acquire) * 1000,
+        )
+        t_query = time.perf_counter()
         row = await conn.fetchrow(
             """
             select count(*) as count
@@ -696,6 +1060,10 @@ async def count_global_chat_messages(
             chat_id,
             user_id,
             role,
+        )
+        logger.info(
+            "(test) timing db_query op=count_global_chat_messages ms=%.1f",
+            (time.perf_counter() - t_query) * 1000,
         )
     return int(row["count"]) if row else 0
 
@@ -709,7 +1077,13 @@ async def insert_global_chat_message(
     status: str | None = None,
     refs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    t_acquire = time.perf_counter()
     async with pool.acquire() as conn:
+        logger.info(
+            "(test) timing db_acquire op=insert_global_chat_message ms=%.1f",
+            (time.perf_counter() - t_acquire) * 1000,
+        )
+        t_update = time.perf_counter()
         await conn.execute(
             """
             update global_chat_threads
@@ -719,6 +1093,11 @@ async def insert_global_chat_message(
             chat_id,
             user_id,
         )
+        logger.info(
+            "(test) timing db_query op=insert_global_chat_message_update ms=%.1f",
+            (time.perf_counter() - t_update) * 1000,
+        )
+        t_insert = time.perf_counter()
         row = await conn.fetchrow(
             """
             insert into global_chat_messages (chat_id, user_id, role, content, status, refs)
@@ -731,6 +1110,10 @@ async def insert_global_chat_message(
             content,
             status,
             json.dumps(refs) if refs is not None else None,
+        )
+        logger.info(
+            "(test) timing db_query op=insert_global_chat_message_insert ms=%.1f",
+            (time.perf_counter() - t_insert) * 1000,
         )
     return dict(row)
 
@@ -799,7 +1182,13 @@ async def get_user_plan(
     pool: asyncpg.Pool,
     user_id: str,
 ) -> str | None:
+    t_acquire = time.perf_counter()
     async with pool.acquire() as conn:
+        logger.info(
+            "(test) timing db_acquire op=get_user_plan ms=%.1f",
+            (time.perf_counter() - t_acquire) * 1000,
+        )
+        t_query = time.perf_counter()
         try:
             row = await conn.fetchrow(
                 """
@@ -811,6 +1200,33 @@ async def get_user_plan(
             )
         except asyncpg.UndefinedTableError:
             return None
+        logger.info(
+            "(test) timing db_query op=get_user_plan ms=%.1f",
+            (time.perf_counter() - t_query) * 1000,
+        )
+    return str(row["plan"]) if row and row.get("plan") else None
+
+
+async def get_user_plan_conn(
+    conn: asyncpg.Connection,
+    user_id: str,
+) -> str | None:
+    t_query = time.perf_counter()
+    try:
+        row = await conn.fetchrow(
+            """
+            select plan
+            from user_plans
+            where user_id = $1
+            """,
+            user_id,
+        )
+    except asyncpg.UndefinedTableError:
+        return None
+    logger.info(
+        "(test) timing db_query op=get_user_plan ms=%.1f",
+        (time.perf_counter() - t_query) * 1000,
+    )
     return str(row["plan"]) if row and row.get("plan") else None
 
 
@@ -869,6 +1285,60 @@ async def insert_usage_log(
         )
 
 
+async def insert_usage_log_conn(
+    conn: asyncpg.Connection,
+    user_id: str,
+    operation: str,
+    document_id: str | None = None,
+    chat_id: str | None = None,
+    global_chat_id: str | None = None,
+    message_id: str | None = None,
+    global_message_id: str | None = None,
+    model: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    total_tokens: int | None = None,
+    pages: int | None = None,
+    raw_usage: dict[str, Any] | None = None,
+    raw_request: dict[str, Any] | None = None,
+) -> None:
+    await conn.execute(
+        """
+        insert into usage_logs (
+            user_id,
+            operation,
+            document_id,
+            chat_id,
+            global_chat_id,
+            message_id,
+            global_chat_message_id,
+            model,
+            input_tokens,
+            output_tokens,
+            total_tokens,
+            pages,
+            raw_usage,
+            raw_request
+        )
+        values ($1, $2, $3::uuid, $4::uuid, $5::uuid, $6::uuid, $7::uuid, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb)
+        """,
+        user_id,
+        operation,
+        document_id,
+        chat_id,
+        global_chat_id,
+        message_id,
+        global_message_id,
+        model,
+        input_tokens,
+        output_tokens,
+        total_tokens,
+        pages,
+        json.dumps(raw_usage) if raw_usage is not None else None,
+        json.dumps(raw_request) if raw_request is not None else None,
+    )
+
+
 async def get_usage_summary(
     pool: asyncpg.Pool,
     user_id: str,
@@ -925,6 +1395,32 @@ async def get_document_chunk(
             user_id,
         )
     return dict(row) if row else None
+
+
+async def list_document_chunks_with_embeddings(
+    pool: asyncpg.Pool,
+    document_id: str,
+    user_id: str,
+) -> list[dict[str, Any]]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            select
+                document_chunks.id,
+                document_chunks.document_id,
+                document_chunks.content,
+                document_chunks.metadata,
+                document_chunks.embedding::text as embedding
+            from document_chunks
+            join documents on documents.id = document_chunks.document_id
+            where document_chunks.document_id = $1
+              and documents.user_id = $2
+            order by document_chunks.id
+            """,
+            document_id,
+            user_id,
+        )
+    return [dict(row) for row in rows]
 
 
 async def get_document_chunk_content(
