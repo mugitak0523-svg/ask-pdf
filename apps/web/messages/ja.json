@@ -189,7 +189,7 @@
     },
     "viewer": {
       "noDocument": "PDF未選択",
-      "empty": "PDFがここに表示されます",
+      "empty": "アップロードまたはPDFを選択してください",
       "selectPdf": "PDFを選択してください"
     },
     "chat": {

@@ -749,7 +749,7 @@ export default function Home() {
       if (!container) return;
       const rect = container.getBoundingClientRect();
       const nextWidth = rect.right - moveEvent.clientX;
-      const maxWidth = rect.width / 2;
+      const maxWidth = rect.width * 0.8;
       const clamped = Math.min(Math.max(nextWidth, 280), maxWidth);
       setChatWidth(clamped);
     };
@@ -3515,7 +3515,28 @@ export default function Home() {
                 }}
               />
             ) : (
-              <div className="empty-state">{t("viewer.empty")}</div>
+              <div className="empty-state">
+                <div className="empty-state__icon" aria-hidden="true">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="icon icon-tabler icons-tabler-outline icon-tabler-file"
+                  >
+                    <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                    <path d="M14 3v4a1 1 0 0 0 1 1h4" />
+                    <path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2" />
+                  </svg>
+                </div>
+                <div className="empty-state__title">{t("viewer.noDocument")}</div>
+                <div className="empty-state__subtitle">{t("viewer.empty")}</div>
+              </div>
             )}
             {tooltipContainer
               ? createPortal(
@@ -4451,7 +4472,26 @@ export default function Home() {
                   }
                   aria-label={chatSending ? t("chat.stop") : t("chat.send")}
                 >
-                  {chatSending ? "■" : "↑"}
+                  {chatSending ? (
+                    "■"
+                  ) : (
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="24"
+                      height="24"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                      <path d="M10 14l11 -11" />
+                      <path d="M21 3l-6.5 18a.55 .55 0 0 1 -1 0l-3.5 -7l-7 -3.5a.55 .55 0 0 1 0 -1l18 -6.5" />
+                    </svg>
+                  )}
                 </button>
               </div>
             </div>
