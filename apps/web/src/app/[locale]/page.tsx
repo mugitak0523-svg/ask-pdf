@@ -729,12 +729,7 @@ export default function Home() {
       gridTemplateColumns: chatOpen
         ? `minmax(0, 1fr) 6px ${chatWidth}px`
         : "minmax(0, 1fr) 0px 0px",
-    }),
-    [chatOpen, chatWidth]
-  );
-  const topbarStyle = useMemo(
-    () => ({
-      gridTemplateColumns: chatOpen
+      ["--main-columns" as any]: chatOpen
         ? `minmax(0, 1fr) 6px ${chatWidth}px`
         : "minmax(0, 1fr) 0px 0px",
     }),
@@ -3370,31 +3365,15 @@ export default function Home() {
       </section>
 
       <div className="right-col">
-      <header className="topbar" style={topbarStyle}>
-        <div className="topbar__left">
-          <div className="topbar__doc">
-            {selectedDocumentTitle ? (
-              <span className="label">{selectedDocumentTitle}</span>
-            ) : (
-              <span className="label">{t("viewer.noDocument")}</span>
-            )}
-          </div>
-        </div>
-        <div className="viewer__actions">
-          {isAuthed ? null : (
-            <div className="auth-links">
-              <Link className="ghost" href="/login">
-                {t("auth.signIn")}
-              </Link>
-              <Link className="primary" href="/signup">
-                {t("auth.signUp")}
-              </Link>
-            </div>
-          )}
-        </div>
-      </header>
-
       <section className="main" style={mainStyle} ref={containerRef}>
+        <div className="main-toolbar">
+          <div className="main-toolbar__left">
+            <span className="main-toolbar__title">
+              {selectedDocumentTitle ? selectedDocumentTitle : t("viewer.noDocument")}
+            </span>
+          </div>
+          <div className="main-toolbar__right" />
+        </div>
         <section className="viewer">
           <div
             className={`viewer__tabs-wrap ${tabsOverflow ? "is-overflow" : ""} ${
@@ -3406,9 +3385,25 @@ export default function Home() {
               type="button"
               className={`viewer__tabs-nav ${tabsOverflow ? "" : "is-hidden"}`}
               onClick={() => scrollTabs("left")}
-              aria-label={t("aria.scrollLeft")}
+              aria-label="scroll left"
             >
-              ≪
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="icon icon-tabler icons-tabler-outline icon-tabler-chevrons-left"
+                aria-hidden="true"
+              >
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path d="M11 7l-5 5l5 5" />
+                <path d="M17 7l-5 5l5 5" />
+              </svg>
             </button>
             <div className="viewer__tabs" ref={tabsRef}>
               {openDocuments.map((doc) => (
@@ -3443,9 +3438,25 @@ export default function Home() {
               type="button"
               className={`viewer__tabs-nav ${tabsOverflow ? "" : "is-hidden"}`}
               onClick={() => scrollTabs("right")}
-              aria-label={t("aria.scrollRight")}
+              aria-label="scroll right"
             >
-              ≫
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="icon icon-tabler icons-tabler-outline icon-tabler-chevrons-right"
+                aria-hidden="true"
+              >
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path d="M7 7l5 5l-5 5" />
+                <path d="M13 7l5 5l-5 5" />
+              </svg>
             </button>
           </div>
           <div className="viewer__canvas">
@@ -3672,6 +3683,28 @@ export default function Home() {
                     ←
                   </button>
                 )}
+                <span className="chat__header-icon" aria-hidden="true">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#536DFE"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="icon icon-tabler icons-tabler-outline icon-tabler-robot-face"
+                  >
+                    <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                    <path d="M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2" />
+                    <path d="M9 16c1 .667 2 1 3 1s2 -.333 3 -1" />
+                    <path d="M9 7l-1 -4" />
+                    <path d="M15 7l1 -4" />
+                    <path d="M9 12v-1" />
+                    <path d="M15 12v-1" />
+                  </svg>
+                </span>
                 {editingChatTitle && activeChatId && !showThreadList ? (
                   <input
                     className="chat__header-input"
@@ -3710,6 +3743,28 @@ export default function Home() {
               </div>
             ) : (
               <div className="chat__header-left">
+                <span className="chat__header-icon" aria-hidden="true">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#536DFE"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="icon icon-tabler icons-tabler-outline icon-tabler-robot-face"
+                  >
+                    <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                    <path d="M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2" />
+                    <path d="M9 16c1 .667 2 1 3 1s2 -.333 3 -1" />
+                    <path d="M9 7l-1 -4" />
+                    <path d="M15 7l1 -4" />
+                    <path d="M9 12v-1" />
+                    <path d="M15 12v-1" />
+                  </svg>
+                </span>
                 <span className="chat__header-title">{activeChatTitle}</span>
               </div>
             )}

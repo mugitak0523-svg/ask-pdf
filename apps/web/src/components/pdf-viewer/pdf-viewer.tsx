@@ -1822,23 +1822,23 @@ export function PdfViewer({
         </button>
       </div>
       <button type="button" class="pdf-embed__popup-btn" data-action="highlight">
-        <svg class="pdf-embed__popup-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <g transform="translate(12 12) scale(1.1) translate(-12 -12)">
-            <path
-              d="M4 16.5V20h3.5L18.8 8.7l-3.5-3.5L4 16.5z"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linejoin="round"
-            />
-            <path
-              d="M13.8 5.2l3.5 3.5"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-            />
-          </g>
+        <svg
+          class="pdf-embed__popup-icon"
+          xmlns="http://www.w3.org/2000/svg"
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+          <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+          <path d="M13.5 6.5l4 4" />
+          <path d="M16 19h6" />
         </svg>
         Highlight
         <span class="pdf-embed__popup-shortcut">
@@ -1847,23 +1847,22 @@ export function PdfViewer({
         </span>
       </button>
       <button type="button" class="pdf-embed__popup-btn" data-action="underline">
-        <svg class="pdf-embed__popup-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <g transform="translate(12 12) scale(1.1) translate(-12 -12)">
-            <path
-              d="M8 4v7a4 4 0 0 0 8 0V4"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-            />
-            <path
-              d="M5 20h14"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-            />
-          </g>
+        <svg
+          class="pdf-embed__popup-icon"
+          xmlns="http://www.w3.org/2000/svg"
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+          <path d="M7 5v5a5 5 0 0 0 10 0v-5" />
+          <path d="M5 19h14" />
         </svg>
         Underline
         <span class="pdf-embed__popup-shortcut">
