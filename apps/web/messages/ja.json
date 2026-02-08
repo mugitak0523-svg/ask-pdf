@@ -163,6 +163,10 @@
     "sidebar": {
       "collapse": "閉じる",
       "expand": "開く",
+      "collapseList": "一覧を折りたたむ",
+      "expandList": "一覧を開く",
+      "documents": "PDF一覧",
+      "settings": "設定",
       "upload": "アップロード",
       "uploading": "アップロード中...",
       "search": "検索",

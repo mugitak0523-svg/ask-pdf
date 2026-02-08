@@ -35,7 +35,9 @@ export default function LoginPage() {
     <main className="auth-page">
       <div className="auth-card">
         <div className="auth-brand">
-          <span className="logo">◎</span>
+          <span className="logo" aria-hidden="true">
+            <img className="logo__icon" src="/icon.svg" alt="" />
+          </span>
           <span className="brand">AskPDF</span>
         </div>
         <h1>サインイン</h1>

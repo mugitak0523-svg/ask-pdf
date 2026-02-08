@@ -163,6 +163,10 @@
     "sidebar": {
       "collapse": "Close",
       "expand": "Expand",
+      "collapseList": "Hide list",
+      "expandList": "Show list",
+      "documents": "PDFs",
+      "settings": "Settings",
       "upload": "Upload",
       "uploading": "Uploading...",
       "search": "Search",
