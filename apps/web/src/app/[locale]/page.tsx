@@ -3535,7 +3535,17 @@ export default function Home() {
                   </svg>
                 </div>
                 <div className="empty-state__title">{t("viewer.noDocument")}</div>
-                <div className="empty-state__subtitle">{t("viewer.empty")}</div>
+                <div className="empty-state__subtitle">
+                  <button
+                    type="button"
+                    className="empty-state__link"
+                    onClick={handleUploadClick}
+                    disabled={!isAuthed || uploading}
+                  >
+                    {t("viewer.uploadAction")}
+                  </button>
+                  <span>{t("viewer.emptySuffix")}</span>
+                </div>
               </div>
             )}
             {tooltipContainer

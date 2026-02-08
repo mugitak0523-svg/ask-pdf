@@ -190,7 +190,9 @@
     "viewer": {
       "noDocument": "No PDF selected",
       "empty": "PDF will appear here",
-      "selectPdf": "Select a PDF"
+      "selectPdf": "Select a PDF",
+      "uploadAction": "Subir",
+      "emptySuffix": "o selecciona un PDF"
     },
     "chat": {
       "allChatList": "All chats",

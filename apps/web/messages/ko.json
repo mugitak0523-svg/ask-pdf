@@ -190,7 +190,9 @@
     "viewer": {
       "noDocument": "No PDF selected",
       "empty": "PDF will appear here",
-      "selectPdf": "Select a PDF"
+      "selectPdf": "Select a PDF",
+      "uploadAction": "업로드",
+      "emptySuffix": "또는 PDF를 선택"
     },
     "chat": {
       "allChatList": "All chats",

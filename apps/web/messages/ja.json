@@ -190,7 +190,9 @@
     "viewer": {
       "noDocument": "PDF未選択",
       "empty": "アップロードまたはPDFを選択してください",
-      "selectPdf": "PDFを選択してください"
+      "selectPdf": "PDFを選択してください",
+      "uploadAction": "アップロード",
+      "emptySuffix": "またはPDFを選択"
     },
     "chat": {
       "allChatList": "全体チャット一覧",
