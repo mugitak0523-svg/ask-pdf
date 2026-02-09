@@ -41,7 +41,7 @@ async def list_documents(
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            select id, title, storage_path, metadata, created_at
+            select id, title
             from documents
             where user_id = $1
             order by created_at desc

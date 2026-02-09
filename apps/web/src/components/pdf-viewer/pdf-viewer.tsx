@@ -1789,6 +1789,7 @@ export function PdfViewer({
     const popup = document.createElement("div");
     popup.className = "pdf-embed__popup";
     popup.innerHTML = `
+      <div class="pdf-embed__popup-header">Annotation</div>
       <div class="pdf-embed__popup-palette" aria-label="Highlight colors">
         <button type="button" class="pdf-embed__palette-color is-selected" style="--swatch:#ffd84d" data-color="#ffd84d">
           <span class="pdf-embed__palette-check">✓</span>
