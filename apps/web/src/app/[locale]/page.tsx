@@ -225,6 +225,8 @@ export default function Home() {
   const chatMessagesRef = useRef<HTMLDivElement | null>(null);
   const [showChatJump, setShowChatJump] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [loadingMoreMessages, setLoadingMoreMessages] = useState(false);
   const [refPreviewMap, setRefPreviewMap] = useState<
     Record<string, { text: string; metadata?: Record<string, unknown>; documentTitle?: string }>
   >({});
@@ -1082,19 +1084,47 @@ export default function Home() {
   useEffect(() => {
     const target = chatMessagesRef.current;
     if (!target) return;
+    let loadingOlder = false;
     const onScroll = () => {
       const threshold = 16;
       const distance =
         target.scrollHeight - target.scrollTop - target.clientHeight;
       setShowChatJump(distance > threshold);
       isNearBottomRef.current = distance <= 120;
+      if (
+        target.scrollTop <= 24 &&
+        hasMoreMessages &&
+        !loadingMoreMessages &&
+        !loadingOlder &&
+        selectedDocumentId &&
+        activeChatId &&
+        selectedDocumentToken
+      ) {
+        loadingOlder = true;
+        const before = chatMessages[0]?.createdAt;
+        void loadChatMessages(
+          selectedDocumentId,
+          activeChatId,
+          selectedDocumentToken,
+          { before, append: true }
+        ).finally(() => {
+          loadingOlder = false;
+        });
+      }
     };
     onScroll();
     target.addEventListener("scroll", onScroll);
     return () => {
       target.removeEventListener("scroll", onScroll);
     };
-  }, []);
+  }, [
+    hasMoreMessages,
+    loadingMoreMessages,
+    selectedDocumentId,
+    activeChatId,
+    selectedDocumentToken,
+    chatMessages,
+  ]);
 
   useEffect(() => {
     if (showThreadList || !selectedDocumentId || chatMessages.length === 0) {
@@ -1115,24 +1145,34 @@ export default function Home() {
   const loadChatMessages = async (
     documentId: string,
     chatId: string,
-    accessToken: string
+    accessToken: string,
+    options: { before?: string; append?: boolean; limit?: number } = {}
   ) => {
-    setChatLoading(true);
+    const { before, append = false, limit = 6 } = options;
+    if (append) {
+      setLoadingMoreMessages(true);
+    } else {
+      setChatLoading(true);
+    }
     setChatError(null);
     try {
       chatMessagesAbortRef.current?.abort();
       const controller = new AbortController();
       chatMessagesAbortRef.current = controller;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
-      const response = await fetch(
-        `${baseUrl}/documents/${documentId}/chats/${chatId}/messages`,
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-          signal: controller.signal,
-        }
+      const url = new URL(
+        `${baseUrl}/documents/${documentId}/chats/${chatId}/messages`
       );
+      url.searchParams.set("limit", String(limit));
+      if (before) {
+        url.searchParams.set("before", before);
+      }
+      const response = await fetch(url.toString(), {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        signal: controller.signal,
+      });
       if (!response.ok) {
         throw new Error(`Failed to load chat messages (${response.status})`);
       }
@@ -1154,13 +1194,26 @@ export default function Home() {
         refs: normalizeRefs(item.refs),
         createdAt: String(item.createdAt ?? new Date().toISOString()),
       }));
-      setChatMessages(messages);
-      requestAnimationFrame(() => {
+      setHasMoreMessages(Boolean(payload?.has_more));
+      if (append) {
+        const scrollRoot = chatMessagesRef.current;
+        const prevHeight = scrollRoot?.scrollHeight ?? 0;
+        const prevTop = scrollRoot?.scrollTop ?? 0;
+        setChatMessages((prev) => [...messages, ...prev]);
         requestAnimationFrame(() => {
-          scrollChatToBottom("auto");
-          isNearBottomRef.current = true;
+          if (!scrollRoot) return;
+          const nextHeight = scrollRoot.scrollHeight;
+          scrollRoot.scrollTop = nextHeight - prevHeight + prevTop;
         });
-      });
+      } else {
+        setChatMessages(messages);
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            scrollChatToBottom("auto");
+            isNearBottomRef.current = true;
+          });
+        });
+      }
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         return;
@@ -1173,6 +1226,7 @@ export default function Home() {
         chatMessagesAbortRef.current = null;
       }
       setChatLoading(false);
+      setLoadingMoreMessages(false);
     }
   };
 
@@ -1218,6 +1272,7 @@ export default function Home() {
         setChatThreads([]);
         setActiveChatId(null);
         setChatMessages([]);
+        setHasMoreMessages(false);
         setShowThreadList(true);
         return [];
       } else {
@@ -1241,11 +1296,59 @@ export default function Home() {
       setChatThreads([]);
       setActiveChatId(null);
       setChatMessages([]);
+      setHasMoreMessages(false);
       return [];
     } finally {
       if (chatsAbortRef.current) {
         chatsAbortRef.current = null;
       }
+    }
+  };
+
+  const loadLatestChat = async (
+    documentId: string,
+    accessToken: string
+  ): Promise<{ id: string; title: string | null; updatedAt: string | null } | null> => {
+    setChatError(null);
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/documents/${documentId}/chats/latest`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load latest chat (${response.status})`);
+      }
+      const payload = await response.json();
+      const chat = payload?.chat;
+      if (!chat) {
+        setChatThreads([]);
+        setActiveChatId(null);
+        setChatMessages([]);
+        setHasMoreMessages(false);
+        setShowThreadList(false);
+        return null;
+      }
+      const normalized = {
+        id: String(chat.id),
+        title: chat.title ?? null,
+        updatedAt: chat.updated_at ?? null,
+      };
+      setChatThreads([normalized]);
+      setActiveChatId(normalized.id);
+      setShowThreadList(false);
+      await loadChatMessages(documentId, normalized.id, accessToken);
+      return normalized;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load latest chat";
+      setChatError(message);
+      setChatThreads([]);
+      setActiveChatId(null);
+      setChatMessages([]);
+      setHasMoreMessages(false);
+      setShowThreadList(false);
+      return null;
     }
   };
 
@@ -1706,6 +1809,8 @@ export default function Home() {
     setChatMessages([]);
     setChatThreads([]);
     setActiveChatId(null);
+    setHasMoreMessages(false);
+    setLoadingMoreMessages(false);
     setShowThreadList(false);
     setAllChatThreads([]);
     try {
@@ -1720,23 +1825,21 @@ export default function Home() {
       }
       const chatsTask = (async () => {
         const chatsStart = performance.now();
-        const threads = await loadChats(doc.id, accessToken, {
-          autoOpen: options.autoOpenChat ?? true,
-        });
+        if (options.restoreChatId) {
+          const target = options.restoreChatId;
+          setActiveChatId(target);
+          setShowThreadList(false);
+          await loadChatMessages(doc.id, target, accessToken);
+        } else if (options.autoOpenChat ?? true) {
+          await loadLatestChat(doc.id, accessToken);
+        } else {
+          await loadChats(doc.id, accessToken, { autoOpen: false });
+        }
         console.info(
           "[perf] loadChats",
           Math.round(performance.now() - chatsStart),
           "ms"
         );
-        if (options.restoreChatId) {
-          const target = options.restoreChatId;
-          const exists = threads.some((thread) => thread.id === target);
-          if (exists) {
-            setActiveChatId(target);
-            setShowThreadList(false);
-            await loadChatMessages(doc.id, target, accessToken);
-          }
-        }
       })().catch((error) => {
         console.warn("[loadChats] failed", error);
       });

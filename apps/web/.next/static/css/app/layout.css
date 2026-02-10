@@ -2405,6 +2405,18 @@ button {
   padding: 0;
 }
 
+.chat__load-more {
+  display: flex;
+  justify-content: center;
+}
+
+.chat__load-more .list-reload {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+}
+
 .chat__thread-list {
   display: flex;
   flex-direction: column;

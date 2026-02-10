@@ -5,6 +5,7 @@ import re
 import logging
 import asyncio
 import time
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status, WebSocket, WebSocketDisconnect
@@ -751,6 +752,30 @@ async def list_document_chats(
     return {"chats": threads}
 
 
+@router.get("/documents/{document_id}/chats/latest")
+async def get_latest_document_chat(
+    request: Request,
+    document_id: str,
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    start = time.perf_counter()
+    pool = request.app.state.db_pool
+    exists = await repository.document_exists(pool, document_id, user.user_id)
+    if not exists:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    thread = await repository.get_latest_document_chat_thread(
+        pool, document_id, user.user_id
+    )
+    logger.info(
+        "latest_document_chat user=%s doc=%s hit=%s ms=%.1f",
+        user.user_id,
+        document_id,
+        "yes" if thread else "no",
+        (time.perf_counter() - start) * 1000,
+    )
+    return {"chat": thread}
+
+
 @router.post("/documents/{document_id}/chats")
 async def create_document_chat(
     request: Request,
@@ -829,13 +854,32 @@ async def list_document_chat_messages(
     document_id: str,
     chat_id: str,
     user: AuthUser = AuthDependency,
+    limit: int = 6,
+    before: str | None = None,
 ) -> dict[str, Any]:
     start = time.perf_counter()
     pool = request.app.state.db_pool
     exists = await repository.document_exists(pool, document_id, user.user_id)
     if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-    rows = await repository.list_document_chat_messages(pool, chat_id, user.user_id)
+    safe_limit = max(1, min(int(limit), 200))
+    before_dt: datetime | None = None
+    if before:
+        try:
+            if before.endswith("Z"):
+                before = before.replace("Z", "+00:00")
+            before_dt = datetime.fromisoformat(before)
+            if before_dt.tzinfo is None:
+                before_dt = before_dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            before_dt = None
+    rows = await repository.list_document_chat_messages(
+        pool, chat_id, user.user_id, safe_limit + 1, before_dt
+    )
+    has_more = len(rows) > safe_limit
+    if has_more:
+        rows = rows[:safe_limit]
+    rows = list(reversed(rows))
     messages = []
     for item in rows:
         messages.append(
@@ -858,7 +902,7 @@ async def list_document_chat_messages(
         len(messages),
         (time.perf_counter() - start) * 1000,
     )
-    return {"messages": messages}
+    return {"messages": messages, "has_more": has_more}
 
 
 @router.post("/documents/{document_id}/chats/{chat_id}/messages")

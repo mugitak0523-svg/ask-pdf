@@ -452,6 +452,39 @@ async def list_document_chat_threads(
     return [dict(row) for row in rows]
 
 
+async def get_latest_document_chat_thread(
+    pool: asyncpg.Pool,
+    document_id: str,
+    user_id: str,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select
+                threads.id,
+                threads.title,
+                threads.created_at,
+                threads.updated_at,
+                last_message.content as last_message
+            from document_chat_threads as threads
+            left join lateral (
+                select content
+                from document_chat_messages
+                where chat_id = threads.id
+                  and user_id = $2
+                order by created_at desc
+                limit 1
+            ) as last_message on true
+            where document_id = $1 and user_id = $2
+            order by updated_at desc, created_at desc
+            limit 1
+            """,
+            document_id,
+            user_id,
+        )
+    return dict(row) if row else None
+
+
 async def count_document_chat_threads(
     pool: asyncpg.Pool,
     document_id: str,
@@ -494,6 +527,8 @@ async def list_document_chat_messages(
     pool: asyncpg.Pool,
     chat_id: str,
     user_id: str,
+    limit: int | None = None,
+    before: datetime | None = None,
 ) -> list[dict[str, Any]]:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -501,10 +536,14 @@ async def list_document_chat_messages(
             select id, role, content, refs, status, created_at
             from document_chat_messages
             where chat_id = $1 and user_id = $2
-            order by created_at asc
+              and ($3::timestamptz is null or created_at < $3::timestamptz)
+            order by created_at desc
+            limit $4
             """,
             chat_id,
             user_id,
+            before,
+            limit or 100,
         )
     return [dict(row) for row in rows]
 
