@@ -662,6 +662,10 @@ export default function Home() {
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
   const [selectedDocumentUrl, setSelectedDocumentUrl] = useState<string | null>(null);
   const [selectedDocumentTitle, setSelectedDocumentTitle] = useState<string | null>(null);
+  const [selectedDocumentResult, setSelectedDocumentResult] = useState<any | null>(null);
+  const [selectedDocumentAnnotations, setSelectedDocumentAnnotations] = useState<
+    Record<number, Record<number, any[]>> | null
+  >(null);
   const [selectedDocumentToken, setSelectedDocumentToken] = useState<string | null>(null);
   const [viewerLoading, setViewerLoading] = useState(false);
   const [viewerError, setViewerError] = useState<string | null>(null);
@@ -1682,6 +1686,8 @@ export default function Home() {
       return [...prev, { id: doc.id, title: doc.title }];
     });
     setSelectedDocumentUrl(null);
+    setSelectedDocumentResult(null);
+    setSelectedDocumentAnnotations(null);
     setViewerError(null);
     setViewerLoading(true);
     setReferenceRequest(null);
@@ -1701,9 +1707,15 @@ export default function Home() {
       if (USE_CLIENT_RAG) {
         void loadDocumentChunkCache(doc.id, accessToken);
       }
+      const chatsStart = performance.now();
       const threads = await loadChats(doc.id, accessToken, {
         autoOpen: options.autoOpenChat ?? true,
       });
+      console.info(
+        "[perf] loadChats",
+        Math.round(performance.now() - chatsStart),
+        "ms"
+      );
       if (options.restoreChatId) {
         const target = options.restoreChatId;
         const exists = threads.some((thread) => thread.id === target);
@@ -1717,7 +1729,8 @@ export default function Home() {
       signedUrlAbortRef.current?.abort();
       const controller = new AbortController();
       signedUrlAbortRef.current = controller;
-      const response = await fetch(`${baseUrl}/documents/${doc.id}/signed-url`, {
+      const signedStart = performance.now();
+      const response = await fetch(`${baseUrl}/documents/${doc.id}/bundle`, {
         headers: {
           Authorization: `Bearer ${accessToken}`,
         },
@@ -1732,6 +1745,15 @@ export default function Home() {
         throw new Error("Signed URL is missing");
       }
       setSelectedDocumentUrl(url);
+      setSelectedDocumentResult(payload.result ?? null);
+      setSelectedDocumentAnnotations(
+        payload.annotations && typeof payload.annotations === "object" ? payload.annotations : {}
+      );
+      console.info(
+        "[perf] bundle",
+        Math.round(performance.now() - signedStart),
+        "ms"
+      );
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         return;
@@ -1752,6 +1774,8 @@ export default function Home() {
       setSelectedDocumentId(null);
       setSelectedDocumentTitle(t("settingsTitle"));
       setSelectedDocumentUrl(null);
+      setSelectedDocumentResult(null);
+      setSelectedDocumentAnnotations(null);
       setViewerError(null);
       setViewerLoading(false);
       setReferenceRequest(null);
@@ -1775,6 +1799,8 @@ export default function Home() {
         setSelectedDocumentId(null);
         setSelectedDocumentTitle(null);
         setSelectedDocumentUrl(null);
+        setSelectedDocumentResult(null);
+        setSelectedDocumentAnnotations(null);
         setViewerError(null);
         setChatMessages([]);
         setChatThreads([]);
@@ -3513,6 +3539,8 @@ export default function Home() {
                 url={selectedDocumentUrl}
                 documentId={selectedDocumentId}
                 accessToken={selectedDocumentToken}
+                initialResult={selectedDocumentResult}
+                initialAnnotations={selectedDocumentAnnotations}
                 referenceRequest={referenceRequest}
                 onClearReferenceRequest={() => {
                   setReferenceRequest(null);

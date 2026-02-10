@@ -85,6 +85,51 @@ async def get_document(
     return dict(row) if row else None
 
 
+async def get_document_storage_path(
+    pool: asyncpg.Pool,
+    document_id: str,
+    user_id: str,
+) -> str | None:
+    """Fast path used by signed-url; avoids fetching large jsonb columns like result."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select storage_path
+            from documents
+            where id = $1 and user_id = $2
+            """,
+            document_id,
+            user_id,
+        )
+    if not row:
+        return None
+    value = row.get("storage_path")
+    return str(value) if value is not None else None
+
+
+async def get_document_bundle(
+    pool: asyncpg.Pool,
+    document_id: str,
+    user_id: str,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select
+                d.storage_path,
+                d.result,
+                a.data as annotations
+            from documents as d
+            left join document_annotations as a
+              on a.document_id = d.id and a.user_id = d.user_id
+            where d.id = $1 and d.user_id = $2
+            """,
+            document_id,
+            user_id,
+        )
+    return dict(row) if row else None
+
+
 async def document_exists(
     pool: asyncpg.Pool,
     document_id: str,
@@ -384,19 +429,20 @@ async def list_document_chat_threads(
         rows = await conn.fetch(
             """
             select
-                id,
-                title,
-                created_at,
-                updated_at,
-                (
-                    select content
-                    from document_chat_messages
-                    where chat_id = document_chat_threads.id
-                      and user_id = $2
-                    order by created_at desc
-                    limit 1
-                ) as last_message
-            from document_chat_threads
+                threads.id,
+                threads.title,
+                threads.created_at,
+                threads.updated_at,
+                last_message.content as last_message
+            from document_chat_threads as threads
+            left join lateral (
+                select content
+                from document_chat_messages
+                where chat_id = threads.id
+                  and user_id = $2
+                order by created_at desc
+                limit 1
+            ) as last_message on true
             where document_id = $1 and user_id = $2
             order by updated_at desc, created_at desc
             """,

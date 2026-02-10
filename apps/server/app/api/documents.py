@@ -4,6 +4,7 @@ import json
 import re
 import logging
 import asyncio
+import time
 from typing import Any, Literal
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status, WebSocket, WebSocketDisconnect
@@ -300,8 +301,15 @@ async def list_documents(
     request: Request,
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
+    start = time.perf_counter()
     pool = request.app.state.db_pool
     rows = await repository.list_documents(pool, user.user_id)
+    logger.info(
+        "list_documents user=%s count=%d ms=%.1f",
+        user.user_id,
+        len(rows),
+        (time.perf_counter() - start) * 1000,
+    )
     return {"documents": rows}
 
 
@@ -357,18 +365,77 @@ async def get_document_signed_url(
     document_id: str,
     user: AuthUser = AuthDependency,
 ) -> dict[str, str]:
+    start = time.perf_counter()
     pool = request.app.state.db_pool
-    row = await repository.get_document(pool, document_id, user.user_id)
-    if not row:
+    storage_path = await repository.get_document_storage_path(pool, document_id, user.user_id)
+    if not storage_path:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     storage_client: StorageClient = request.app.state.storage_client
-    signed_url = storage_client.create_signed_url(str(row["storage_path"]))
+    db_ms = (time.perf_counter() - start) * 1000
+    sign_start = time.perf_counter()
+    signed_url = storage_client.create_signed_url(storage_path)
     if not signed_url:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create signed URL",
         )
+    logger.info(
+        "signed_url user=%s doc=%s db_ms=%.1f sign_ms=%.1f total_ms=%.1f",
+        user.user_id,
+        document_id,
+        db_ms,
+        (time.perf_counter() - sign_start) * 1000,
+        (time.perf_counter() - start) * 1000,
+    )
     return {"signed_url": signed_url}
+
+
+@router.get("/documents/{document_id}/bundle")
+async def get_document_bundle(
+    request: Request,
+    document_id: str,
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    start = time.perf_counter()
+    pool = request.app.state.db_pool
+    bundle = await repository.get_document_bundle(pool, document_id, user.user_id)
+    if not bundle:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    storage_path = bundle.get("storage_path")
+    if not storage_path:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Missing storage path")
+    storage_client: StorageClient = request.app.state.storage_client
+    db_ms = (time.perf_counter() - start) * 1000
+    sign_start = time.perf_counter()
+    signed_url = storage_client.create_signed_url(str(storage_path))
+    if not signed_url:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create signed URL",
+        )
+    result = bundle.get("result")
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except json.JSONDecodeError:
+            result = None
+    annotations = bundle.get("annotations") if bundle else None
+    if isinstance(annotations, str):
+        try:
+            annotations = json.loads(annotations)
+        except json.JSONDecodeError:
+            annotations = {}
+    if not isinstance(annotations, dict):
+        annotations = {}
+    logger.info(
+        "bundle user=%s doc=%s db_ms=%.1f sign_ms=%.1f total_ms=%.1f",
+        user.user_id,
+        document_id,
+        db_ms,
+        (time.perf_counter() - sign_start) * 1000,
+        (time.perf_counter() - start) * 1000,
+    )
+    return {"signed_url": signed_url, "result": result, "annotations": annotations}
 
 
 @router.get("/documents/{document_id}/text-positions")
@@ -568,8 +635,8 @@ async def get_document_annotations(
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
     pool = request.app.state.db_pool
-    row = await repository.get_document(pool, document_id, user.user_id)
-    if not row:
+    exists = await repository.document_exists(pool, document_id, user.user_id)
+    if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     data_row = await repository.get_document_annotations(pool, document_id, user.user_id)
     data = data_row.get("data") if data_row else {}
@@ -591,8 +658,8 @@ async def upsert_document_annotations(
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
     pool = request.app.state.db_pool
-    row = await repository.get_document(pool, document_id, user.user_id)
-    if not row:
+    exists = await repository.document_exists(pool, document_id, user.user_id)
+    if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     annotations = payload.get("annotations")
     if not isinstance(annotations, dict):
@@ -616,8 +683,8 @@ async def get_document_chat(
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
     pool = request.app.state.db_pool
-    row = await repository.get_document(pool, document_id, user.user_id)
-    if not row:
+    exists = await repository.document_exists(pool, document_id, user.user_id)
+    if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     data_row = await repository.get_document_chat(pool, document_id, user.user_id)
     data = data_row.get("data") if data_row else {}
@@ -639,8 +706,8 @@ async def upsert_document_chat(
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
     pool = request.app.state.db_pool
-    row = await repository.get_document(pool, document_id, user.user_id)
-    if not row:
+    exists = await repository.document_exists(pool, document_id, user.user_id)
+    if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     chat = payload.get("chat")
     if not isinstance(chat, dict):
@@ -663,11 +730,19 @@ async def list_document_chats(
     document_id: str,
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
+    start = time.perf_counter()
     pool = request.app.state.db_pool
-    row = await repository.get_document(pool, document_id, user.user_id)
-    if not row:
+    exists = await repository.document_exists(pool, document_id, user.user_id)
+    if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     threads = await repository.list_document_chat_threads(pool, document_id, user.user_id)
+    logger.info(
+        "list_document_chats user=%s doc=%s count=%d ms=%.1f",
+        user.user_id,
+        document_id,
+        len(threads),
+        (time.perf_counter() - start) * 1000,
+    )
     return {"chats": threads}
 
 
@@ -679,8 +754,8 @@ async def create_document_chat(
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
     pool = request.app.state.db_pool
-    row = await repository.get_document(pool, document_id, user.user_id)
-    if not row:
+    exists = await repository.document_exists(pool, document_id, user.user_id)
+    if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     await _enforce_thread_limit(pool, user.user_id, document_id)
     title = payload.get("title") if isinstance(payload, dict) else None
@@ -750,9 +825,10 @@ async def list_document_chat_messages(
     chat_id: str,
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
+    start = time.perf_counter()
     pool = request.app.state.db_pool
-    row = await repository.get_document(pool, document_id, user.user_id)
-    if not row:
+    exists = await repository.document_exists(pool, document_id, user.user_id)
+    if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     rows = await repository.list_document_chat_messages(pool, chat_id, user.user_id)
     messages = []
@@ -769,6 +845,14 @@ async def list_document_chat_messages(
                 else None,
             }
         )
+    logger.info(
+        "list_document_chat_messages user=%s doc=%s chat=%s count=%d ms=%.1f",
+        user.user_id,
+        document_id,
+        chat_id,
+        len(messages),
+        (time.perf_counter() - start) * 1000,
+    )
     return {"messages": messages}
 
 

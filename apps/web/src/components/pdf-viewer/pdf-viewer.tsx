@@ -7,6 +7,8 @@ type PdfViewerProps = {
   url: string;
   documentId: string | null;
   accessToken: string | null;
+  initialResult?: any | null;
+  initialAnnotations?: Record<number, Record<number, Annotation[]>> | null;
   onAddToChat?: (text: string) => void;
   onClearReferenceRequest?: () => void;
   referenceRequest?: {
@@ -98,6 +100,8 @@ export function PdfViewer({
   url,
   documentId,
   accessToken,
+  initialResult,
+  initialAnnotations,
   onAddToChat,
   onClearReferenceRequest,
   referenceRequest,
@@ -135,6 +139,8 @@ export function PdfViewer({
     Record<number, Record<number, Annotation[]>>
   >({});
   const annotationsHydratedRef = useRef(false);
+  const skipNextAnnotationSaveRef = useRef(true);
+  const lastLoadedAnnotationsRef = useRef<string | null>(null);
   const wordRectsRef = useRef<Record<number, WordRect[]>>({});
   const selectionRef = useRef<HTMLDivElement | null>(null);
   const popupRef = useRef<HTMLDivElement | null>(null);
@@ -182,7 +188,7 @@ export function PdfViewer({
   const maxZoom = 2.4;
   const zoomStep = 0.15;
 
-  const renderLoadingText = (text: string) => (
+const renderLoadingText = (text: string) => (
     <span className="loading-fade" aria-label={text}>
       {text.split("").map((char, index) => (
         <span
@@ -197,12 +203,135 @@ export function PdfViewer({
     </span>
   );
 
-  const reloadAnnotations = useCallback(async () => {
+  const applyDocumentResult = useCallback((result: any) => {
+    setDocumentResult(result);
+    const pages = Array.isArray(result?.pages) ? result.pages : [];
+    if (pages.length > 0) {
+      setPageMeta((prev) => {
+        const merged = { ...prev };
+        for (const page of pages) {
+          const pageNumber = Number(page.pageNumber ?? page.page_number);
+          if (!pageNumber) continue;
+          const widthInch = Number(page.width ?? page.widthInch);
+          const heightInch = Number(page.height ?? page.heightInch);
+          merged[pageNumber] = {
+            width: prev[pageNumber]?.width ?? 0,
+            height: prev[pageNumber]?.height ?? 0,
+            widthInch: Number.isFinite(widthInch) ? widthInch : prev[pageNumber]?.widthInch ?? 0,
+            heightInch: Number.isFinite(heightInch) ? heightInch : prev[pageNumber]?.heightInch ?? 0,
+          };
+        }
+        return merged;
+      });
+    }
+
+    const nextRects: Record<number, WordRect[]> = {};
+    const nextWords: Record<number, { wordIndex: number; text: string }[]> = {};
+
+    const polygonToRect = (polygon: number[]) => {
+      const xs = [];
+      const ys = [];
+      for (let i = 0; i < polygon.length; i += 2) {
+        xs.push(polygon[i]);
+        ys.push(polygon[i + 1]);
+      }
+      const left = Math.min(...xs);
+      const right = Math.max(...xs);
+      const top = Math.min(...ys);
+      const bottom = Math.max(...ys);
+      return { left, top, width: right - left, height: bottom - top };
+    };
+
+    for (const page of pages) {
+      const pageNumber = Number(page.pageNumber ?? page.page_number);
+      const width = Number(page.width ?? page.widthInch);
+      const height = Number(page.height ?? page.heightInch);
+      if (!pageNumber || !Number.isFinite(width) || !Number.isFinite(height)) continue;
+      const words = Array.isArray(page.words) ? page.words : [];
+      const lines = Array.isArray(page.lines) ? page.lines : [];
+      const wordToLine = new Map<number, number>();
+      lines.forEach((line, index) => {
+        const indexes = Array.isArray(line.word_indexes)
+          ? line.word_indexes
+          : Array.isArray(line.wordIndexes)
+            ? line.wordIndexes
+            : [];
+        for (const wordIndex of indexes) {
+          if (Number.isFinite(wordIndex)) {
+            wordToLine.set(Number(wordIndex), index);
+          }
+        }
+      });
+      for (const word of words) {
+        if (!Array.isArray(word.polygon)) continue;
+        const rect = polygonToRect(word.polygon);
+        const wordIndex = Number(word.word_index ?? word.wordIndex);
+        if (!Number.isFinite(wordIndex)) continue;
+        const matched = (() => {
+          for (const line of lines) {
+            const indexes = Array.isArray(line.word_indexes)
+              ? line.word_indexes
+              : Array.isArray(line.wordIndexes)
+                ? line.wordIndexes
+                : [];
+            if (indexes.includes(wordIndex)) {
+              if (!Array.isArray(line.polygon)) return null;
+              const lineRect = polygonToRect(line.polygon);
+              return {
+                top: lineRect.top / height,
+                height: lineRect.height / height,
+              };
+            }
+          }
+          return null;
+        })();
+        if (!nextRects[pageNumber]) nextRects[pageNumber] = [];
+        const normalized = {
+          wordIndex,
+          lineId: wordToLine.get(wordIndex) ?? null,
+          left: rect.left / width,
+          top: rect.top / height,
+          width: rect.width / width,
+          height: rect.height / height,
+        };
+        if (matched) {
+          normalized.top = matched.top;
+          normalized.height = matched.height;
+        }
+        nextRects[pageNumber].push(normalized);
+      }
+      nextWords[pageNumber] = words
+        .map((word) => ({
+          wordIndex: Number(word.word_index ?? word.wordIndex ?? word.index ?? -1),
+          text: String(word.content ?? word.text ?? ""),
+        }))
+        .filter((word) => Number.isFinite(word.wordIndex) && word.wordIndex >= 0)
+        .sort((a, b) => a.wordIndex - b.wordIndex);
+    }
+    for (const key of Object.keys(nextRects)) {
+      nextRects[Number(key)].sort((a, b) => a.wordIndex - b.wordIndex);
+    }
+    wordRectsRef.current = nextRects;
+    wordTextRef.current = nextWords;
+  }, []);
+
+  const reloadAnnotations = useCallback(async (options?: { force?: boolean }) => {
     if (!documentId || !accessToken) {
       setAnnotations({});
       annotationsHydratedRef.current = false;
       setAnnotationsLoading(false);
       setAnnotationsHydrated(false);
+      skipNextAnnotationSaveRef.current = true;
+      lastLoadedAnnotationsRef.current = JSON.stringify({});
+      return;
+    }
+    if (!options?.force && initialAnnotations && typeof initialAnnotations === "object") {
+      setAnnotations(initialAnnotations);
+      annotationsHydratedRef.current = true;
+      setAnnotationsLoading(false);
+      setAnnotationsHydrated(true);
+      skipNextAnnotationSaveRef.current = true;
+      lastLoadedAnnotationsRef.current = JSON.stringify(initialAnnotations);
       return;
     }
     annotationsHydratedRef.current = false;
@@ -226,13 +355,17 @@ export function PdfViewer({
       }
       const payload = await response.json();
       const data = payload?.annotations;
+      let nextAnnotations: Record<number, Record<number, Annotation[]>> = {};
       if (data && typeof data === "object" && !Array.isArray(data)) {
-        setAnnotations(data as Record<number, Record<number, Annotation[]>>);
+        nextAnnotations = data as Record<number, Record<number, Annotation[]>>;
+        setAnnotations(nextAnnotations);
       } else {
         setAnnotations({});
       }
       annotationsHydratedRef.current = true;
       setAnnotationsHydrated(true);
+      skipNextAnnotationSaveRef.current = true;
+      lastLoadedAnnotationsRef.current = JSON.stringify(nextAnnotations);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         return;
@@ -240,13 +373,15 @@ export function PdfViewer({
       setAnnotations({});
       annotationsHydratedRef.current = true;
       setAnnotationsHydrated(true);
+      skipNextAnnotationSaveRef.current = true;
+      lastLoadedAnnotationsRef.current = JSON.stringify({});
     } finally {
       if (annotationsAbortRef.current) {
         annotationsAbortRef.current = null;
       }
       setAnnotationsLoading(false);
     }
-  }, [accessToken, documentId]);
+  }, [accessToken, documentId, initialAnnotations]);
 
   const readPdfState = () => {
     if (typeof window === "undefined") return {};
@@ -618,6 +753,7 @@ export function PdfViewer({
     setSearchQuery("");
     setSearchCount(0);
     setPageInput("");
+    skipNextAnnotationSaveRef.current = true;
     if (!documentId) {
       setZoom(1);
       setShowThumbs(true);
@@ -812,6 +948,14 @@ export function PdfViewer({
     const saveAnnotations = async () => {
       if (!documentId || !accessToken) return;
       if (!annotationsHydratedRef.current) return;
+      if (skipNextAnnotationSaveRef.current) {
+        skipNextAnnotationSaveRef.current = false;
+        return;
+      }
+      const serialized = JSON.stringify(annotations);
+      if (lastLoadedAnnotationsRef.current === serialized) {
+        return;
+      }
       try {
         const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
         await fetch(`${baseUrl}/documents/${documentId}/annotations`, {
@@ -822,6 +966,7 @@ export function PdfViewer({
           },
           body: JSON.stringify({ annotations }),
         });
+        lastLoadedAnnotationsRef.current = serialized;
       } catch {
         return;
       }
@@ -1068,6 +1213,10 @@ export function PdfViewer({
         setDocumentResult(null);
         return;
       }
+      if (initialResult && typeof initialResult === "object") {
+        applyDocumentResult(initialResult);
+        return;
+      }
       try {
         resultAbortRef.current?.abort();
         const controller = new AbortController();
@@ -1081,115 +1230,7 @@ export function PdfViewer({
         });
         if (!response.ok) return;
         const result = await response.json();
-        setDocumentResult(result);
-        const pages = Array.isArray(result.pages) ? result.pages : [];
-        if (pages.length > 0) {
-          setPageMeta((prev) => {
-            const merged = { ...prev };
-            for (const page of pages) {
-              const pageNumber = Number(page.pageNumber ?? page.page_number);
-              if (!pageNumber) continue;
-              const widthInch = Number(page.width ?? page.widthInch);
-              const heightInch = Number(page.height ?? page.heightInch);
-              merged[pageNumber] = {
-                width: prev[pageNumber]?.width ?? 0,
-                height: prev[pageNumber]?.height ?? 0,
-                widthInch: Number.isFinite(widthInch) ? widthInch : prev[pageNumber]?.widthInch ?? 0,
-                heightInch: Number.isFinite(heightInch) ? heightInch : prev[pageNumber]?.heightInch ?? 0,
-              };
-            }
-            return merged;
-          });
-        }
-
-        const nextRects: Record<number, WordRect[]> = {};
-        const nextWords: Record<number, { wordIndex: number; text: string }[]> = {};
-
-        const polygonToRect = (polygon: number[]) => {
-          const xs = [];
-          const ys = [];
-          for (let i = 0; i < polygon.length; i += 2) {
-            xs.push(polygon[i]);
-            ys.push(polygon[i + 1]);
-          }
-          const left = Math.min(...xs);
-          const right = Math.max(...xs);
-          const top = Math.min(...ys);
-          const bottom = Math.max(...ys);
-          return { left, top, width: right - left, height: bottom - top };
-        };
-
-        for (const page of pages) {
-          const pageNumber = Number(page.pageNumber ?? page.page_number);
-          const width = Number(page.width ?? page.widthInch);
-          const height = Number(page.height ?? page.heightInch);
-          if (!pageNumber || !Number.isFinite(width) || !Number.isFinite(height)) continue;
-          const words = Array.isArray(page.words) ? page.words : [];
-          const lines = Array.isArray(page.lines) ? page.lines : [];
-          const wordToLine = new Map<number, number>();
-          lines.forEach((line, index) => {
-            const indexes = Array.isArray(line.word_indexes)
-              ? line.word_indexes
-              : Array.isArray(line.wordIndexes)
-                ? line.wordIndexes
-                : [];
-            for (const wordIndex of indexes) {
-              if (Number.isFinite(wordIndex)) {
-                wordToLine.set(Number(wordIndex), index);
-              }
-            }
-          });
-          for (const word of words) {
-            if (!Array.isArray(word.polygon)) continue;
-            const rect = polygonToRect(word.polygon);
-            const wordIndex = Number(word.word_index ?? word.wordIndex);
-            if (!Number.isFinite(wordIndex)) continue;
-            const matched = (() => {
-              for (const line of lines) {
-                const indexes = Array.isArray(line.word_indexes)
-                  ? line.word_indexes
-                  : Array.isArray(line.wordIndexes)
-                    ? line.wordIndexes
-                    : [];
-                if (indexes.includes(wordIndex)) {
-                  if (!Array.isArray(line.polygon)) return null;
-                  const lineRect = polygonToRect(line.polygon);
-                  return {
-                    top: lineRect.top / height,
-                    height: lineRect.height / height,
-                  };
-                }
-              }
-              return null;
-            })();
-            if (!nextRects[pageNumber]) nextRects[pageNumber] = [];
-            const normalized = {
-              wordIndex,
-              lineId: wordToLine.get(wordIndex) ?? null,
-              left: rect.left / width,
-              top: rect.top / height,
-              width: rect.width / width,
-              height: rect.height / height,
-            };
-            if (matched) {
-              normalized.top = matched.top;
-              normalized.height = matched.height;
-            }
-            nextRects[pageNumber].push(normalized);
-          }
-          nextWords[pageNumber] = words
-            .map((word) => ({
-              wordIndex: Number(word.word_index ?? word.wordIndex ?? word.index ?? -1),
-              text: String(word.content ?? word.text ?? ""),
-            }))
-            .filter((word) => Number.isFinite(word.wordIndex) && word.wordIndex >= 0)
-            .sort((a, b) => a.wordIndex - b.wordIndex);
-        }
-        for (const key of Object.keys(nextRects)) {
-          nextRects[Number(key)].sort((a, b) => a.wordIndex - b.wordIndex);
-        }
-        wordRectsRef.current = nextRects;
-        wordTextRef.current = nextWords;
+        applyDocumentResult(result);
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
           return;
@@ -1202,7 +1243,7 @@ export function PdfViewer({
       }
     };
     void loadResult();
-  }, [documentId, accessToken]);
+  }, [documentId, accessToken, initialResult, applyDocumentResult]);
 
   const runSearch = (normalizedQuery: string, shouldScroll: boolean) => {
     clearSearchHighlights();
@@ -2541,7 +2582,7 @@ export function PdfViewer({
             <button
               type="button"
               className="pdf-embed__hint-action"
-              onClick={() => void reloadAnnotations()}
+              onClick={() => void reloadAnnotations({ force: true })}
               aria-label={t("annotationsReload")}
               data-tooltip={t("annotationsReload")}
             >
