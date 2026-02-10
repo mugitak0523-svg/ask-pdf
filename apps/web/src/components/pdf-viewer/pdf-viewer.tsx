@@ -47,6 +47,16 @@ type Annotation = {
 const PDF_STATE_KEY = "askpdf.pdfState.v1";
 const PDF_CACHE_MAX = 3;
 const pdfBufferCache = new Map<string, { buffer: ArrayBuffer; ts: number }>();
+const PDF_CACHE_DB = "askpdf.pdfCache.v1";
+const PDF_CACHE_STORE = "pdfBuffers";
+
+type PdfCacheEntry =
+  | ArrayBuffer
+  | {
+      buffer: ArrayBuffer;
+      annotations?: Record<number, Record<number, Annotation[]>>;
+      updatedAt?: number;
+    };
 
 const cloneBuffer = (buffer: ArrayBuffer) => buffer.slice(0);
 
@@ -57,13 +67,97 @@ const getCachedPdfBuffer = (key: string) => {
   return entry.buffer;
 };
 
+const openPdfCacheDb = (): Promise<IDBDatabase | null> => {
+  if (typeof window === "undefined" || !("indexedDB" in window)) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const request = indexedDB.open(PDF_CACHE_DB, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(PDF_CACHE_STORE)) {
+        db.createObjectStore(PDF_CACHE_STORE);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => resolve(null);
+  });
+};
+
+const getCachedPdfBufferFromIdb = async (key: string) => {
+  const db = await openPdfCacheDb();
+  if (!db) return null;
+  return new Promise<PdfCacheEntry | null>((resolve) => {
+    const tx = db.transaction(PDF_CACHE_STORE, "readonly");
+    const store = tx.objectStore(PDF_CACHE_STORE);
+    const request = store.get(key);
+    request.onsuccess = () => resolve(request.result ?? null);
+    request.onerror = () => resolve(null);
+  });
+};
+
+const setCachedPdfBufferToIdb = async (key: string, buffer: ArrayBuffer) => {
+  const db = await openPdfCacheDb();
+  if (!db) return;
+  return new Promise<void>((resolve) => {
+    const tx = db.transaction(PDF_CACHE_STORE, "readwrite");
+    const store = tx.objectStore(PDF_CACHE_STORE);
+    store.put({ buffer }, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+};
+
+const updateCachedPdfAnnotationsInIdb = async (
+  key: string,
+  annotations: Record<number, Record<number, Annotation[]>>
+) => {
+  const db = await openPdfCacheDb();
+  if (!db) return;
+  return new Promise<void>((resolve) => {
+    const tx = db.transaction(PDF_CACHE_STORE, "readwrite");
+    const store = tx.objectStore(PDF_CACHE_STORE);
+    const getReq = store.get(key);
+    getReq.onsuccess = () => {
+      const value = getReq.result;
+      let buffer: ArrayBuffer | null = null;
+      if (value instanceof ArrayBuffer) {
+        buffer = value;
+      } else if (value && value.buffer instanceof ArrayBuffer) {
+        buffer = value.buffer;
+      }
+      if (!buffer) {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+        return;
+      }
+      store.put({ buffer, annotations, updatedAt: Date.now() }, key);
+    };
+    getReq.onerror = () => resolve();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+};
+
 const getSafePdfBuffer = async (cacheKey: string, url: string) => {
   const cached = getCachedPdfBuffer(cacheKey);
   if (cached) {
     try {
-      return cached;
+      return { buffer: cached, annotations: null };
     } catch {
       pdfBufferCache.delete(cacheKey);
+    }
+  }
+  const idbCached = await getCachedPdfBufferFromIdb(cacheKey);
+  if (idbCached) {
+    if (idbCached instanceof ArrayBuffer) {
+      setCachedPdfBuffer(cacheKey, idbCached);
+      return { buffer: idbCached, annotations: null };
+    }
+    if (idbCached && idbCached.buffer instanceof ArrayBuffer) {
+      setCachedPdfBuffer(cacheKey, idbCached.buffer);
+      return {
+        buffer: idbCached.buffer,
+        annotations: idbCached.annotations ?? null,
+      };
     }
   }
   const response = await fetch(url);
@@ -72,7 +166,8 @@ const getSafePdfBuffer = async (cacheKey: string, url: string) => {
   }
   const buffer = await response.arrayBuffer();
   setCachedPdfBuffer(cacheKey, buffer);
-  return buffer;
+  void setCachedPdfBufferToIdb(cacheKey, buffer);
+  return { buffer, annotations: null };
 };
 
 const setCachedPdfBuffer = (key: string, buffer: ArrayBuffer) => {
@@ -141,6 +236,10 @@ export function PdfViewer({
   const annotationsHydratedRef = useRef(false);
   const skipNextAnnotationSaveRef = useRef(true);
   const lastLoadedAnnotationsRef = useRef<string | null>(null);
+  const prefetchedAnnotationsRef = useRef<Record<number, Record<number, Annotation[]>> | null>(
+    null
+  );
+  const cacheKeyRef = useRef<string | null>(null);
   const wordRectsRef = useRef<Record<number, WordRect[]>>({});
   const selectionRef = useRef<HTMLDivElement | null>(null);
   const popupRef = useRef<HTMLDivElement | null>(null);
@@ -323,6 +422,19 @@ const renderLoadingText = (text: string) => (
       setAnnotationsHydrated(false);
       skipNextAnnotationSaveRef.current = true;
       lastLoadedAnnotationsRef.current = JSON.stringify({});
+      return;
+    }
+    if (
+      prefetchedAnnotationsRef.current &&
+      typeof prefetchedAnnotationsRef.current === "object"
+    ) {
+      setAnnotations(prefetchedAnnotationsRef.current);
+      annotationsHydratedRef.current = true;
+      setAnnotationsLoading(false);
+      setAnnotationsHydrated(true);
+      skipNextAnnotationSaveRef.current = true;
+      lastLoadedAnnotationsRef.current = JSON.stringify(prefetchedAnnotationsRef.current);
+      prefetchedAnnotationsRef.current = null;
       return;
     }
     if (!options?.force && initialAnnotations && typeof initialAnnotations === "object") {
@@ -579,8 +691,14 @@ const renderLoadingText = (text: string) => (
         const pdfjs = await import("pdfjs-dist/legacy/build/pdf");
         pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
         const cacheKey = documentId ?? url;
-        const pdfData = await getSafePdfBuffer(cacheKey, url);
-        const loadingTask = pdfjs.getDocument({ data: cloneBuffer(pdfData) });
+        cacheKeyRef.current = cacheKey;
+        const cached = await getSafePdfBuffer(cacheKey, url);
+        if (cached.annotations && typeof cached.annotations === "object") {
+          prefetchedAnnotationsRef.current = cached.annotations;
+        } else {
+          prefetchedAnnotationsRef.current = null;
+        }
+        const loadingTask = pdfjs.getDocument({ data: cloneBuffer(cached.buffer) });
         const pdf = await loadingTask.promise;
         if (cancelled) return;
         setTotalPages(pdf.numPages);
@@ -967,6 +1085,9 @@ const renderLoadingText = (text: string) => (
           body: JSON.stringify({ annotations }),
         });
         lastLoadedAnnotationsRef.current = serialized;
+        if (cacheKeyRef.current) {
+          void updateCachedPdfAnnotationsInIdb(cacheKeyRef.current, annotations);
+        }
       } catch {
         return;
       }

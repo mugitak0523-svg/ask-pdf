@@ -39,7 +39,7 @@ def get_settings() -> Settings:
     api_key = _require_env("PARSER_API_KEY")
     parser_api_prefix = os.getenv("PARSER_API_PREFIX", "").strip()
     database_url = _require_env("DATABASE_URL")
-    supabase_url = _require_env("SUPABASE_URL")
+    supabase_url = _require_env("SUPABASE_URL").rstrip("/") + "/"
     supabase_service_role_key = _require_env("SUPABASE_SERVICE_ROLE_KEY")
     supabase_bucket = os.getenv("SUPABASE_BUCKET", "pdfs")
     supabase_jwt_secret = _require_env("SUPABASE_JWT_SECRET")

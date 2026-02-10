@@ -666,6 +666,17 @@ export default function Home() {
   const [selectedDocumentAnnotations, setSelectedDocumentAnnotations] = useState<
     Record<number, Record<number, any[]>> | null
   >(null);
+  const bundleCacheRef = useRef<
+    Map<
+      string,
+      {
+        signedUrl: string;
+        expiresAt: number;
+        result: any | null;
+        annotations: Record<number, Record<number, any[]>>;
+      }
+    >
+  >(new Map());
   const [selectedDocumentToken, setSelectedDocumentToken] = useState<string | null>(null);
   const [viewerLoading, setViewerLoading] = useState(false);
   const [viewerError, setViewerError] = useState<string | null>(null);
@@ -1730,30 +1741,51 @@ export default function Home() {
       const controller = new AbortController();
       signedUrlAbortRef.current = controller;
       const signedStart = performance.now();
-      const response = await fetch(`${baseUrl}/documents/${doc.id}/bundle`, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        throw new Error(`Failed to load PDF (${response.status})`);
+      const cachedBundle = bundleCacheRef.current.get(doc.id);
+      if (
+        cachedBundle &&
+        cachedBundle.signedUrl &&
+        cachedBundle.expiresAt * 1000 > Date.now() + 30000
+      ) {
+        setSelectedDocumentUrl(cachedBundle.signedUrl);
+        setSelectedDocumentResult(cachedBundle.result ?? null);
+        setSelectedDocumentAnnotations(cachedBundle.annotations ?? {});
+      } else {
+        const response = await fetch(`${baseUrl}/documents/${doc.id}/bundle`, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to load PDF (${response.status})`);
+        }
+        const payload = await response.json();
+        const url = String(payload.signed_url ?? "");
+        if (!url) {
+          throw new Error("Signed URL is missing");
+        }
+        const annotations =
+          payload.annotations && typeof payload.annotations === "object"
+            ? payload.annotations
+            : {};
+        setSelectedDocumentUrl(url);
+        setSelectedDocumentResult(payload.result ?? null);
+        setSelectedDocumentAnnotations(annotations);
+        if (typeof payload.expires_at === "number") {
+          bundleCacheRef.current.set(doc.id, {
+            signedUrl: url,
+            expiresAt: payload.expires_at,
+            result: payload.result ?? null,
+            annotations,
+          });
+        }
+        console.info(
+          "[perf] bundle",
+          Math.round(performance.now() - signedStart),
+          "ms"
+        );
       }
-      const payload = await response.json();
-      const url = String(payload.signed_url ?? "");
-      if (!url) {
-        throw new Error("Signed URL is missing");
-      }
-      setSelectedDocumentUrl(url);
-      setSelectedDocumentResult(payload.result ?? null);
-      setSelectedDocumentAnnotations(
-        payload.annotations && typeof payload.annotations === "object" ? payload.annotations : {}
-      );
-      console.info(
-        "[perf] bundle",
-        Math.round(performance.now() - signedStart),
-        "ms"
-      );
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         return;

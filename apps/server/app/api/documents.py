@@ -373,7 +373,7 @@ async def get_document_signed_url(
     storage_client: StorageClient = request.app.state.storage_client
     db_ms = (time.perf_counter() - start) * 1000
     sign_start = time.perf_counter()
-    signed_url = storage_client.create_signed_url(storage_path)
+    signed_url, expires_at = storage_client.create_signed_url(storage_path)
     if not signed_url:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -387,7 +387,7 @@ async def get_document_signed_url(
         (time.perf_counter() - sign_start) * 1000,
         (time.perf_counter() - start) * 1000,
     )
-    return {"signed_url": signed_url}
+    return {"signed_url": signed_url, "expires_at": expires_at}
 
 
 @router.get("/documents/{document_id}/bundle")
@@ -407,7 +407,7 @@ async def get_document_bundle(
     storage_client: StorageClient = request.app.state.storage_client
     db_ms = (time.perf_counter() - start) * 1000
     sign_start = time.perf_counter()
-    signed_url = storage_client.create_signed_url(str(storage_path))
+    signed_url, expires_at = storage_client.create_signed_url(str(storage_path))
     if not signed_url:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -435,7 +435,12 @@ async def get_document_bundle(
         (time.perf_counter() - sign_start) * 1000,
         (time.perf_counter() - start) * 1000,
     )
-    return {"signed_url": signed_url, "result": result, "annotations": annotations}
+    return {
+        "signed_url": signed_url,
+        "expires_at": expires_at,
+        "result": result,
+        "annotations": annotations,
+    }
 
 
 @router.get("/documents/{document_id}/text-positions")
