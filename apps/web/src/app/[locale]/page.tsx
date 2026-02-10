@@ -1718,24 +1718,28 @@ export default function Home() {
       if (USE_CLIENT_RAG) {
         void loadDocumentChunkCache(doc.id, accessToken);
       }
-      const chatsStart = performance.now();
-      const threads = await loadChats(doc.id, accessToken, {
-        autoOpen: options.autoOpenChat ?? true,
-      });
-      console.info(
-        "[perf] loadChats",
-        Math.round(performance.now() - chatsStart),
-        "ms"
-      );
-      if (options.restoreChatId) {
-        const target = options.restoreChatId;
-        const exists = threads.some((thread) => thread.id === target);
-        if (exists) {
-          setActiveChatId(target);
-          setShowThreadList(false);
-          await loadChatMessages(doc.id, target, accessToken);
+      const chatsTask = (async () => {
+        const chatsStart = performance.now();
+        const threads = await loadChats(doc.id, accessToken, {
+          autoOpen: options.autoOpenChat ?? true,
+        });
+        console.info(
+          "[perf] loadChats",
+          Math.round(performance.now() - chatsStart),
+          "ms"
+        );
+        if (options.restoreChatId) {
+          const target = options.restoreChatId;
+          const exists = threads.some((thread) => thread.id === target);
+          if (exists) {
+            setActiveChatId(target);
+            setShowThreadList(false);
+            await loadChatMessages(doc.id, target, accessToken);
+          }
         }
-      }
+      })().catch((error) => {
+        console.warn("[loadChats] failed", error);
+      });
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       signedUrlAbortRef.current?.abort();
       const controller = new AbortController();
@@ -1786,6 +1790,7 @@ export default function Home() {
           "ms"
         );
       }
+      void chatsTask;
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         return;

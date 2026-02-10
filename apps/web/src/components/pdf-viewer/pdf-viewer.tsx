@@ -239,6 +239,8 @@ export function PdfViewer({
   const prefetchedAnnotationsRef = useRef<Record<number, Record<number, Annotation[]>> | null>(
     null
   );
+  const hasRestoredRef = useRef(false);
+  const deferredRestoreRef = useRef<PdfPersistState | null>(null);
   const cacheKeyRef = useRef<string | null>(null);
   const wordRectsRef = useRef<Record<number, WordRect[]>>({});
   const selectionRef = useRef<HTMLDivElement | null>(null);
@@ -521,6 +523,41 @@ const renderLoadingText = (text: string) => (
     window.localStorage.setItem(PDF_STATE_KEY, JSON.stringify(store));
   };
 
+  const attemptScrollRestore = useCallback(() => {
+    const saved = deferredRestoreRef.current;
+    if (!saved) return false;
+    const container = containerRef.current;
+    if (!container) return false;
+    const scrollRoot = container;
+    const maxScroll = Math.max(0, scrollRoot.scrollHeight - scrollRoot.clientHeight);
+    if (
+      saved.scrollTop !== undefined &&
+      saved.scrollTop !== null &&
+      maxScroll < saved.scrollTop - 8
+    ) {
+      return false;
+    }
+    isRestoringRef.current = true;
+    if (saved.scrollTop !== undefined && saved.scrollTop !== null) {
+      scrollRoot.scrollTop = saved.scrollTop;
+    } else if (saved.page) {
+      const pageNode = container.querySelector(
+        `.pdf-embed__page[data-page-number="${saved.page}"]`
+      ) as HTMLElement | null;
+      pageNode?.scrollIntoView({ behavior: "auto", block: "start" });
+    }
+    if (saved.page) {
+      setPageInput(String(saved.page));
+      setCurrentPage(saved.page);
+    }
+    scrollTopRef.current = scrollRoot.scrollTop;
+    isRestoringRef.current = false;
+    canPersistRef.current = true;
+    hasRestoredRef.current = true;
+    deferredRestoreRef.current = null;
+    return true;
+  }, []);
+
   const updateAnnotationMarkers = () => {
     const markers = markersRef.current;
     const container = containerRef.current;
@@ -703,33 +740,113 @@ const renderLoadingText = (text: string) => (
         if (cancelled) return;
         setTotalPages(pdf.numPages);
         const containerWidth = container.clientWidth || 720;
+        const baseWidth = Math.min(containerWidth, 900);
 
-        const nextMeta: Record<number, PageMeta> = {};
-        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum += 1) {
+        const firstPage = await pdf.getPage(1);
+        if (cancelled) return;
+        const firstViewport = firstPage.getViewport({ scale: 1 });
+        const pageWidth = Math.max(240, Math.floor(baseWidth * zoom));
+        const firstScale = pageWidth / firstViewport.width;
+        const firstScaled = firstPage.getViewport({ scale: firstScale });
+        const placeholderWidth = Math.floor(firstScaled.width);
+        const placeholderHeight = Math.floor(firstScaled.height);
+
+        const pagesToRenderImmediately = Math.min(
+          pdf.numPages,
+          Math.max(1, Math.ceil((container.clientHeight || 720) / placeholderHeight) + 1)
+        );
+
+        const renderPage = async (pageNum: number) => {
+          const pageWrapper = container.querySelector(
+            `.pdf-embed__page[data-page-number="${pageNum}"]`
+          ) as HTMLDivElement | null;
+          if (!pageWrapper || pageWrapper.dataset.rendered === "true") return;
+
           const page = await pdf.getPage(pageNum);
           if (cancelled) return;
-
           const viewport = page.getViewport({ scale: 1 });
-          const baseWidth = Math.min(containerWidth, 900);
-          const pageWidth = Math.max(240, Math.floor(baseWidth * zoom));
           const scale = pageWidth / viewport.width;
           const scaled = page.getViewport({ scale });
 
+          const canvas = pageWrapper.querySelector(
+            ".pdf-embed__canvas"
+          ) as HTMLCanvasElement | null;
+          const overlay = pageWrapper.querySelector(
+            ".pdf-embed__overlay"
+          ) as HTMLDivElement | null;
+          if (!canvas || !overlay) return;
+
+          pageWrapper.style.width = `${Math.floor(scaled.width)}px`;
+          pageWrapper.style.margin = "0 auto";
+          canvas.width = Math.floor(scaled.width);
+          canvas.height = Math.floor(scaled.height);
+          overlay.style.width = `${Math.floor(scaled.width)}px`;
+          overlay.style.height = `${Math.floor(scaled.height)}px`;
+
+          const context = canvas.getContext("2d");
+          if (context) {
+            await page.render({ canvasContext: context, viewport: scaled }).promise;
+          }
+
+          if (thumbs) {
+            const thumbWrapper = thumbs.querySelector(
+              `.pdf-embed__thumb[data-page-number="${pageNum}"]`
+            ) as HTMLButtonElement | null;
+            const thumbCanvas = thumbWrapper?.querySelector(
+              ".pdf-embed__thumb-canvas"
+            ) as HTMLCanvasElement | null;
+            if (thumbWrapper && thumbCanvas) {
+              const thumbViewport = page.getViewport({ scale: 0.18 });
+              thumbCanvas.width = Math.floor(thumbViewport.width);
+              thumbCanvas.height = Math.floor(thumbViewport.height);
+              const thumbContext = thumbCanvas.getContext("2d");
+              if (thumbContext) {
+                await page.render({ canvasContext: thumbContext, viewport: thumbViewport }).promise;
+              }
+            }
+          }
+
+          pageWrapper.dataset.rendered = "true";
+          const existing = pageMetaRef.current[pageNum];
+          const nextMeta = {
+            width: Math.floor(scaled.width),
+            height: Math.floor(scaled.height),
+            widthInch:
+              existing?.widthInch && existing.widthInch > 0
+                ? existing.widthInch
+                : viewport.width,
+            heightInch:
+              existing?.heightInch && existing.heightInch > 0
+                ? existing.heightInch
+                : viewport.height,
+          };
+          pageMetaRef.current = {
+            ...pageMetaRef.current,
+            [pageNum]: nextMeta,
+          };
+          setPageMeta((prev) => ({
+            ...prev,
+            [pageNum]: nextMeta,
+          }));
+        };
+
+        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum += 1) {
           const pageWrapper = document.createElement("div");
           pageWrapper.className = "pdf-embed__page";
           pageWrapper.dataset.pageNumber = String(pageNum);
-          pageWrapper.style.width = `${Math.floor(scaled.width)}px`;
+          pageWrapper.style.width = `${placeholderWidth}px`;
           pageWrapper.style.margin = "0 auto";
+          pageWrapper.style.minHeight = `${placeholderHeight}px`;
 
           const canvas = document.createElement("canvas");
           canvas.className = "pdf-embed__canvas";
-          canvas.width = Math.floor(scaled.width);
-          canvas.height = Math.floor(scaled.height);
+          canvas.width = placeholderWidth;
+          canvas.height = placeholderHeight;
 
           const overlay = document.createElement("div");
           overlay.className = "pdf-embed__overlay";
-          overlay.style.width = `${Math.floor(scaled.width)}px`;
-          overlay.style.height = `${Math.floor(scaled.height)}px`;
+          overlay.style.width = `${placeholderWidth}px`;
+          overlay.style.height = `${placeholderHeight}px`;
           overlay.dataset.pageNumber = String(pageNum);
           overlay.addEventListener("pointermove", handlePointerMove);
           overlay.addEventListener("pointerleave", handlePointerLeave);
@@ -752,10 +869,6 @@ const renderLoadingText = (text: string) => (
           pageWrapper.appendChild(overlay);
           container.appendChild(pageWrapper);
 
-          const context = canvas.getContext("2d");
-          if (!context) continue;
-          await page.render({ canvasContext: context, viewport: scaled }).promise;
-
           if (thumbs) {
             const thumbWrapper = document.createElement("button");
             thumbWrapper.type = "button";
@@ -772,13 +885,6 @@ const renderLoadingText = (text: string) => (
 
             const thumbCanvas = document.createElement("canvas");
             thumbCanvas.className = "pdf-embed__thumb-canvas";
-            const thumbViewport = page.getViewport({ scale: 0.18 });
-            thumbCanvas.width = Math.floor(thumbViewport.width);
-            thumbCanvas.height = Math.floor(thumbViewport.height);
-            const thumbContext = thumbCanvas.getContext("2d");
-            if (thumbContext) {
-              await page.render({ canvasContext: thumbContext, viewport: thumbViewport }).promise;
-            }
 
             const thumbLabel = document.createElement("span");
             thumbLabel.className = "pdf-embed__thumb-label";
@@ -788,29 +894,35 @@ const renderLoadingText = (text: string) => (
             thumbWrapper.appendChild(thumbLabel);
             thumbs.appendChild(thumbWrapper);
           }
-
-          const existing = pageMetaRef.current[pageNum];
-          nextMeta[pageNum] = {
-            width: Math.floor(scaled.width),
-            height: Math.floor(scaled.height),
-            widthInch:
-              existing?.widthInch && existing.widthInch > 0
-                ? existing.widthInch
-                : viewport.width,
-            heightInch:
-              existing?.heightInch && existing.heightInch > 0
-                ? existing.heightInch
-                : viewport.height,
-          };
         }
 
+        for (let pageNum = 1; pageNum <= pagesToRenderImmediately; pageNum += 1) {
+          await renderPage(pageNum);
+          if (cancelled) return;
+          attemptScrollRestore();
+        }
         if (!cancelled) {
-          setPageMeta(nextMeta);
           setState("idle");
           viewerActiveRef.current = true;
           lastViewerActiveAtRef.current = Date.now();
           containerRef.current?.focus();
         }
+
+        const idle =
+          typeof window !== "undefined" && "requestIdleCallback" in window
+            ? (window.requestIdleCallback as (cb: () => void) => number)
+            : (cb: () => void) => window.setTimeout(cb, 0);
+
+        for (let pageNum = pagesToRenderImmediately + 1; pageNum <= pdf.numPages; pageNum += 1) {
+          await new Promise<void>((resolve) => {
+            idle(() => resolve());
+          });
+          if (cancelled) return;
+          await renderPage(pageNum);
+          if (cancelled) return;
+          attemptScrollRestore();
+        }
+
       } catch (error) {
         if (!cancelled) {
           setState("error");
@@ -867,6 +979,7 @@ const renderLoadingText = (text: string) => (
 
   useEffect(() => {
     canPersistRef.current = false;
+    hasRestoredRef.current = false;
     pendingRestoreRef.current = null;
     setSearchQuery("");
     setSearchCount(0);
@@ -884,12 +997,22 @@ const renderLoadingText = (text: string) => (
     } else {
       setShowThumbs(true);
     }
-    if (saved && Number.isFinite(saved.zoom)) {
+    const hasSaved =
+      !!saved &&
+      (Number.isFinite(saved.zoom) ||
+        (saved.scrollTop !== undefined && saved.scrollTop !== null) ||
+        (saved.page !== undefined && saved.page !== null));
+    if (hasSaved) {
       pendingRestoreRef.current = saved;
-      setZoom(clamp(saved.zoom as number, minZoom, maxZoom));
+      if (Number.isFinite(saved?.zoom)) {
+        setZoom(clamp(saved.zoom as number, minZoom, maxZoom));
+      } else {
+        setZoom(1);
+      }
     } else {
       setZoom(1);
       canPersistRef.current = true;
+      hasRestoredRef.current = true;
     }
   }, [documentId, url]);
 
@@ -998,28 +1121,13 @@ const renderLoadingText = (text: string) => (
     }
     const container = containerRef.current;
     if (!container) return;
-    const scrollRoot = container;
-    if (!scrollRoot) return;
     pendingRestoreRef.current = null;
-    isRestoringRef.current = true;
+    canPersistRef.current = false;
+    deferredRestoreRef.current = saved;
     requestAnimationFrame(() => {
-      if (saved.scrollTop !== undefined && saved.scrollTop !== null) {
-        scrollRoot.scrollTop = saved.scrollTop;
-      } else if (saved.page) {
-        const pageNode = container.querySelector(
-          `.pdf-embed__page[data-page-number="${saved.page}"]`
-        ) as HTMLElement | null;
-        pageNode?.scrollIntoView({ behavior: "auto", block: "start" });
-      }
-      if (saved.page) {
-        setPageInput(String(saved.page));
-        setCurrentPage(saved.page);
-      }
-      scrollTopRef.current = scrollRoot.scrollTop;
-      isRestoringRef.current = false;
-      canPersistRef.current = true;
+      attemptScrollRestore();
     });
-  }, [documentId, pageMeta, state]);
+  }, [documentId, pageMeta, state, attemptScrollRestore]);
 
   useEffect(() => {
     if (!documentId) return;
@@ -1029,7 +1137,8 @@ const renderLoadingText = (text: string) => (
     if (!scrollRoot) return;
     const handleScroll = () => {
       scrollTopRef.current = scrollRoot.scrollTop;
-      if (!canPersistRef.current || isRestoringRef.current) return;
+      if (!canPersistRef.current || isRestoringRef.current || !hasRestoredRef.current)
+        return;
       if (saveRafRef.current !== null) {
         cancelAnimationFrame(saveRafRef.current);
       }
@@ -1054,7 +1163,7 @@ const renderLoadingText = (text: string) => (
 
   useEffect(() => {
     if (!documentId) return;
-    if (!canPersistRef.current || isRestoringRef.current) return;
+    if (!canPersistRef.current || isRestoringRef.current || !hasRestoredRef.current) return;
     writePdfState({
       scrollTop: scrollTopRef.current,
       page: currentPage,
