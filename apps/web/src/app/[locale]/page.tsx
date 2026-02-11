@@ -745,6 +745,7 @@ export default function Home() {
     "general" | "account" | "usage" | "messages" | "manual" | "service" | "faq"
   >("general");
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
   const [usageError, setUsageError] = useState<string | null>(null);
@@ -755,6 +756,12 @@ export default function Home() {
   const [limitModalMessage, setLimitModalMessage] = useState<string | null>(null);
   const [planUpdating, setPlanUpdating] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<Exclude<PlanName, "guest">>("plus");
+  const [billingBusy, setBillingBusy] = useState(false);
+  const [billingError, setBillingError] = useState<string | null>(null);
+  const [checkoutNotice, setCheckoutNotice] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
   const [dailyMessageUsage, setDailyMessageUsage] = useState<{
     used: number;
     limit: number | null;
@@ -778,6 +785,27 @@ export default function Home() {
       // Ignore malformed cache
     }
   }, [isHydrated]);
+
+  useEffect(() => {
+    if (!isHydrated || typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const checkout = params.get("checkout");
+    if (checkout === "cancel") {
+      setCheckoutNotice({ type: "error", message: t("billingCheckoutFailed") });
+      params.delete("checkout");
+      const next = `${window.location.pathname}${
+        params.toString() ? `?${params}` : ""
+      }`;
+      window.history.replaceState({}, "", next);
+    } else if (checkout === "success") {
+      setCheckoutNotice({ type: "success", message: t("billingCheckoutSuccess") });
+      params.delete("checkout");
+      const next = `${window.location.pathname}${
+        params.toString() ? `?${params}` : ""
+      }`;
+      window.history.replaceState({}, "", next);
+    }
+  }, [isHydrated, t]);
 
   useEffect(() => {
     if (!isHydrated) return;
@@ -888,10 +916,12 @@ export default function Home() {
       setIsAuthed(Boolean(data.session));
       if (data.session) {
         setUserEmail(data.session.user?.email ?? null);
+        setUserId(data.session.user?.id ?? null);
         void loadDocuments();
         void loadPlan();
       } else {
         setUserEmail(null);
+        setUserId(null);
         setPlan("guest");
         setPlanLimits(DEFAULT_PLAN_LIMITS.guest);
         void loadDocuments();
@@ -907,6 +937,7 @@ export default function Home() {
       }
       if (session) {
         setUserEmail(session.user?.email ?? null);
+        setUserId(session.user?.id ?? null);
         void loadDocuments();
         void loadPlan();
         if (selectedDocumentId) {
@@ -916,6 +947,7 @@ export default function Home() {
         }
       } else {
         setUserEmail(null);
+        setUserId(null);
         setPlan("guest");
         setPlanLimits(DEFAULT_PLAN_LIMITS.guest);
         setDocuments([]);
@@ -1828,6 +1860,152 @@ export default function Home() {
       });
     } catch {
       // ignore
+    }
+  };
+
+  const startCheckout = async (targetPlan: "plus" | "pro") => {
+    setBillingError(null);
+    setBillingBusy(true);
+    try {
+      const auth = await getAuthParams();
+      if (!auth || auth.tokenType !== "supabase") {
+        openLimitModal();
+        return;
+      }
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/billing/checkout`, {
+        method: "POST",
+        headers: {
+          ...auth.headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ plan: targetPlan }),
+      });
+      if (!response.ok) {
+        throw new Error(`Checkout failed (${response.status})`);
+      }
+      const payload = await response.json();
+      if (payload?.url) {
+        window.location.href = payload.url;
+      } else {
+        setCheckoutNotice({ type: "success", message: t("billingCheckoutSuccess") });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Checkout failed";
+      setBillingError(message);
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
+  const openBillingPortal = async () => {
+    setBillingError(null);
+    setBillingBusy(true);
+    try {
+      const auth = await getAuthParams();
+      if (!auth || auth.tokenType !== "supabase") {
+        openLimitModal();
+        return;
+      }
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/billing/portal`, {
+        method: "POST",
+        headers: auth.headers,
+      });
+      if (!response.ok) {
+        throw new Error(`Portal failed (${response.status})`);
+      }
+      const payload = await response.json();
+      if (!payload?.url) {
+        throw new Error("Missing portal URL");
+      }
+      window.location.href = payload.url;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Portal failed";
+      setBillingError(message);
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
+  const cancelSubscription = async () => {
+    setBillingError(null);
+    setBillingBusy(true);
+    try {
+      const auth = await getAuthParams();
+      if (!auth || auth.tokenType !== "supabase") {
+        openLimitModal();
+        return;
+      }
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/billing/cancel`, {
+        method: "POST",
+        headers: auth.headers,
+      });
+      if (!response.ok) {
+        throw new Error(`Cancel failed (${response.status})`);
+      }
+      setCheckoutNotice({ type: "success", message: t("billingCancelRequested") });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Cancel failed";
+      setBillingError(message);
+      setCheckoutNotice({ type: "error", message });
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
+  const scheduleDowngrade = async (targetPlan: "free" | "plus") => {
+    setBillingError(null);
+    setBillingBusy(true);
+    try {
+      const auth = await getAuthParams();
+      if (!auth || auth.tokenType !== "supabase") {
+        openLimitModal();
+        return;
+      }
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/billing/downgrade`, {
+        method: "POST",
+        headers: {
+          ...auth.headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ plan: targetPlan }),
+      });
+      if (!response.ok) {
+        throw new Error(`Downgrade failed (${response.status})`);
+      }
+      setCheckoutNotice({ type: "success", message: t("billingCancelRequested") });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Downgrade failed";
+      setBillingError(message);
+      setCheckoutNotice({ type: "error", message });
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
+  const planCtaLabel =
+    plan === selectedPlan
+      ? t("planCurrent")
+      : selectedPlan === "free"
+        ? t("planDowngrade")
+        : plan === "pro" && selectedPlan === "plus"
+          ? t("planChangeToPlus")
+          : t("planUpgrade");
+
+  const handlePlanCta = () => {
+    if (selectedPlan === "free") {
+      void scheduleDowngrade("free");
+      return;
+    }
+    if (plan === "pro" && selectedPlan === "plus") {
+      void scheduleDowngrade("plus");
+      return;
+    }
+    if (selectedPlan === "plus" || selectedPlan === "pro") {
+      void startCheckout(selectedPlan);
     }
   };
 
@@ -2787,9 +2965,7 @@ export default function Home() {
                 <div className="settings__item-title">{t("username")}</div>
                 <div className="settings__item-desc">{t("usernameDesc")}</div>
               </div>
-              <button type="button" className="settings__btn">
-                {t("change")}
-              </button>
+              <div className="settings__value">{userId ?? "-"}</div>
             </div>
             <div className="settings__item">
               <div>
@@ -2864,14 +3040,13 @@ export default function Home() {
                 <button
                   type="button"
                   className="plan-cta"
-                  disabled={planUpdating || plan === selectedPlan}
-                  onClick={() => void updatePlan(selectedPlan)}
+                  disabled={
+                    billingBusy ||
+                    plan === selectedPlan
+                  }
+                  onClick={handlePlanCta}
                 >
-                  {planUpdating
-                    ? t("planUpdating")
-                    : plan === selectedPlan
-                      ? t("planCurrent")
-                      : t("planUpgrade")}
+                  {billingBusy ? t("planUpdating") : planCtaLabel}
                 </button>
               </div>
             </div>
@@ -2880,10 +3055,18 @@ export default function Home() {
                 <div className="settings__item-title">{t("billing")}</div>
                 <div className="settings__item-desc">{t("billingDesc")}</div>
               </div>
-              <button type="button" className="settings__btn">
+              <button
+                type="button"
+                className="settings__btn"
+                onClick={() => void openBillingPortal()}
+                disabled={!isAuthed || billingBusy}
+              >
                 {t("manage")}
               </button>
             </div>
+            {billingError ? (
+              <div className="settings__hint">{billingError}</div>
+            ) : null}
             <div className="settings__item">
               <div>
                 <div className="settings__item-title">{t("signOut")}</div>
@@ -3918,14 +4101,13 @@ export default function Home() {
                       <button
                         type="button"
                         className="limit-modal__btn limit-modal__btn--primary"
-                        disabled={planUpdating || plan === selectedPlan}
-                        onClick={() => void updatePlan(selectedPlan, { closeModal: true })}
+                        disabled={
+                          billingBusy ||
+                          plan === selectedPlan
+                        }
+                        onClick={handlePlanCta}
                       >
-                        {planUpdating
-                          ? t("planUpdating")
-                          : plan === selectedPlan
-                            ? t("planCurrent")
-                            : t("planUpgrade")}
+                        {billingBusy ? t("planUpdating") : planCtaLabel}
                       </button>
                     ) : (
                       <>
@@ -4025,6 +4207,19 @@ export default function Home() {
         : null}
 
       <div className="right-col">
+      {checkoutNotice ? (
+        <div className={`notice-banner notice-banner--${checkoutNotice.type}`}>
+          <span>{checkoutNotice.message}</span>
+          <button
+            type="button"
+            className="notice-banner__close"
+            aria-label={t("aria.close")}
+            onClick={() => setCheckoutNotice(null)}
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
       <section className="main" style={mainStyle} ref={containerRef}>
         <div className="main-toolbar">
           <div className="main-toolbar__left">

@@ -25,6 +25,11 @@ class Settings:
     rag_top_k: int
     rag_min_k: int
     rag_score_threshold: float
+    stripe_secret_key: str
+    stripe_webhook_secret: str
+    stripe_plus_price_id: str
+    stripe_pro_price_id: str
+    app_base_url: str
 
 
 def _require_env(name: str) -> str:
@@ -54,6 +59,11 @@ def get_settings() -> Settings:
     rag_top_k = int(os.getenv("RAG_TOP_K", "5") or "5")
     rag_min_k = int(os.getenv("RAG_MIN_K", "2") or "2")
     rag_score_threshold = float(os.getenv("RAG_SCORE_THRESHOLD", "0.2") or "0.2")
+    stripe_secret_key = _require_env("STRIPE_SECRET_KEY")
+    stripe_webhook_secret = _require_env("STRIPE_WEBHOOK_SECRET")
+    stripe_plus_price_id = _require_env("STRIPE_PLUS_PRICE_ID")
+    stripe_pro_price_id = _require_env("STRIPE_PRO_PRICE_ID")
+    app_base_url = _require_env("APP_BASE_URL").rstrip("/")
 
     return Settings(
         parser_api_base_url=base_url,
@@ -72,4 +82,9 @@ def get_settings() -> Settings:
         rag_top_k=rag_top_k,
         rag_min_k=rag_min_k,
         rag_score_threshold=rag_score_threshold,
+        stripe_secret_key=stripe_secret_key,
+        stripe_webhook_secret=stripe_webhook_secret,
+        stripe_plus_price_id=stripe_plus_price_id,
+        stripe_pro_price_id=stripe_pro_price_id,
+        app_base_url=app_base_url,
     )

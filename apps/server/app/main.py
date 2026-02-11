@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 
-from app.api import documents, search, usage, plans
+from app.api import billing, documents, search, usage, plans
 from app.config import get_settings
 from app.db.pool import close_pool, create_pool
 from app.services.indexer import Indexer
@@ -67,6 +67,7 @@ def create_app() -> FastAPI:
     app.include_router(search.router)
     app.include_router(usage.router)
     app.include_router(plans.router)
+    app.include_router(billing.router)
 
     return app
 

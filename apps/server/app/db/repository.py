@@ -90,6 +90,24 @@ async def get_document_storage_path(
     document_id: str,
     user_id: str,
 ) -> str | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select storage_path
+            from documents
+            where id = $1 and user_id = $2
+            """,
+            document_id,
+            user_id,
+        )
+    return str(row["storage_path"]) if row and row.get("storage_path") else None
+
+
+async def get_document_storage_path(
+    pool: asyncpg.Pool,
+    document_id: str,
+    user_id: str,
+) -> str | None:
     """Fast path used by signed-url; avoids fetching large jsonb columns like result."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -1051,6 +1069,109 @@ async def get_user_plan_conn(
     except asyncpg.UndefinedTableError:
         return None
     return str(row["plan"]) if row and row.get("plan") else None
+
+
+async def get_user_billing(
+    pool: asyncpg.Pool,
+    user_id: str,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        try:
+            row = await conn.fetchrow(
+                """
+                select
+                    user_id,
+                    plan,
+                    stripe_customer_id,
+                    stripe_subscription_id,
+                    stripe_price_id,
+                    stripe_status,
+                    current_period_end,
+                    stripe_schedule_id
+                from user_plans
+                where user_id = $1
+                """,
+                user_id,
+            )
+        except asyncpg.UndefinedTableError:
+            return None
+    return dict(row) if row else None
+
+
+async def get_user_id_by_stripe_customer_id(
+    pool: asyncpg.Pool,
+    stripe_customer_id: str,
+) -> str | None:
+    async with pool.acquire() as conn:
+        try:
+            row = await conn.fetchrow(
+                """
+                select user_id
+                from user_plans
+                where stripe_customer_id = $1
+                """,
+                stripe_customer_id,
+            )
+        except asyncpg.UndefinedTableError:
+            return None
+    return str(row["user_id"]) if row and row.get("user_id") else None
+
+
+async def upsert_user_billing(
+    pool: asyncpg.Pool,
+    user_id: str,
+    plan: str | None = None,
+    stripe_customer_id: str | None = None,
+    stripe_subscription_id: str | None = None,
+    stripe_price_id: str | None = None,
+    stripe_status: str | None = None,
+    current_period_end=None,
+    stripe_schedule_id: str | None = None,
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            insert into user_plans (
+                user_id,
+                plan,
+                stripe_customer_id,
+                stripe_subscription_id,
+                stripe_price_id,
+                stripe_status,
+                current_period_end,
+                stripe_schedule_id
+            )
+            values ($1, coalesce($2, 'free'), $3, $4, $5, $6, $7, $8)
+            on conflict (user_id) do update set
+                plan = coalesce(excluded.plan, user_plans.plan),
+                stripe_customer_id = coalesce(
+                    excluded.stripe_customer_id,
+                    user_plans.stripe_customer_id
+                ),
+                stripe_subscription_id = coalesce(
+                    excluded.stripe_subscription_id,
+                    user_plans.stripe_subscription_id
+                ),
+                stripe_price_id = coalesce(excluded.stripe_price_id, user_plans.stripe_price_id),
+                stripe_status = coalesce(excluded.stripe_status, user_plans.stripe_status),
+                current_period_end = coalesce(
+                    excluded.current_period_end,
+                    user_plans.current_period_end
+                ),
+                stripe_schedule_id = coalesce(
+                    excluded.stripe_schedule_id,
+                    user_plans.stripe_schedule_id
+                )
+            """,
+            user_id,
+            plan,
+            stripe_customer_id,
+            stripe_subscription_id,
+            stripe_price_id,
+            stripe_status,
+            current_period_end,
+            stripe_schedule_id,
+        )
 
 
 async def set_user_plan(

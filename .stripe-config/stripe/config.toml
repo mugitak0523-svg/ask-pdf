@@ -1,0 +1,9 @@
+color = ''
+project-name = 'default'
+
+[default]
+account_id = 'acct_1Sz882GVc7V7LqXl'
+device_name = 'mugitaakiramotonoMacBook-Pro.local'
+test_mode_api_key = 'sk_test_51Sz882GVc7V7LqXllEqmvKN4v1s56S9nBtse1kKyUEgwVL3PIcccdAO84ECiiAOS5qT81jhovskUdyc4tBG8SrrE00zRhSvaqb'
+test_mode_key_expires_at = '2026-05-12'
+test_mode_pub_key = 'pk_test_51Sz882GVc7V7LqXlFDAnHVJzvbNr84QdiEeEInhVAAEphlKBe3x2WWXDHmNf27NVNuLOfWYdo5Ntg0KFLl9NNMwB00pwH7HwY9'
