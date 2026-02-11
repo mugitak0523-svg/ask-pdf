@@ -63,7 +63,7 @@ type ReferenceRequest = {
 
 
 type ThemeMode = "system" | "light" | "dark";
-type PlanName = "guest" | "free" | "plus" | "pro";
+type PlanName = "guest" | "free" | "plus";
 
 type PlanLimits = {
   maxFiles: number | null;
@@ -89,14 +89,12 @@ type ChunkCache = {
 const DEFAULT_PLAN_LIMITS: Record<PlanName, PlanLimits> = {
   guest: { maxFiles: 1, maxFileMb: 10, maxMessagesPerThread: 5, maxThreadsPerDocument: null },
   free: { maxFiles: 5, maxFileMb: 20, maxMessagesPerThread: 20, maxThreadsPerDocument: null },
-  plus: { maxFiles: 30, maxFileMb: 30, maxMessagesPerThread: 100, maxThreadsPerDocument: null },
-  pro: { maxFiles: null, maxFileMb: 50, maxMessagesPerThread: null, maxThreadsPerDocument: null },
+  plus: { maxFiles: null, maxFileMb: 50, maxMessagesPerThread: null, maxThreadsPerDocument: null },
 };
 
 const PLAN_PRICES: Record<Exclude<PlanName, "guest">, string> = {
   free: "¥0",
   plus: "¥1,280",
-  pro: "¥2,980",
 };
 
 const STORAGE_KEY = "askpdf.ui.v1";
@@ -762,6 +760,36 @@ export default function Home() {
     type: "success" | "error";
     message: string;
   } | null>(null);
+  const [billingSummary, setBillingSummary] = useState<{
+    plan: PlanName | null;
+    status: string | null;
+    currentPeriodEnd: string | null;
+    cancelAtPeriodEnd?: boolean | null;
+    nextPlan: PlanName | null;
+    nextPlanAt: number | null;
+    upcomingInvoice: {
+      amountDue: number | null;
+      currency: string | null;
+      nextPaymentAt: number | null;
+    } | null;
+    invoices: {
+      id: string;
+      status: string | null;
+      amountPaid: number | null;
+      currency: string | null;
+      created: number | null;
+      hostedInvoiceUrl: string | null;
+      lines?: {
+        id?: string | null;
+        description?: string | null;
+        amount?: number | null;
+        currency?: string | null;
+        proration?: boolean | null;
+      }[];
+    }[];
+  } | null>(null);
+  const [billingLoading, setBillingLoading] = useState(false);
+  const [billingFetchError, setBillingFetchError] = useState<string | null>(null);
   const [dailyMessageUsage, setDailyMessageUsage] = useState<{
     used: number;
     limit: number | null;
@@ -832,6 +860,56 @@ export default function Home() {
 
   const formatNumber = (value: number) =>
     Number.isFinite(value) ? value.toLocaleString(locale) : "0";
+
+  const ZERO_DECIMAL_CURRENCIES = new Set([
+    "BIF",
+    "CLP",
+    "DJF",
+    "GNF",
+    "JPY",
+    "KMF",
+    "KRW",
+    "MGA",
+    "PYG",
+    "RWF",
+    "UGX",
+    "VND",
+    "VUV",
+    "XAF",
+    "XOF",
+    "XPF",
+  ]);
+
+  const formatCurrency = (amount: number | null, currency: string | null) => {
+    if (amount === null || !currency) return "-";
+    const upper = currency.toUpperCase();
+    const divisor = ZERO_DECIMAL_CURRENCIES.has(upper) ? 1 : 100;
+    const value = amount / divisor;
+    try {
+      return new Intl.NumberFormat(locale, {
+        style: "currency",
+        currency: upper,
+      }).format(value);
+    } catch {
+      return `${value} ${upper}`;
+    }
+  };
+
+  const formatSignedCurrency = (amount: number | null, currency: string | null) => {
+    if (amount === null || !currency) return "-";
+    const absAmount = Math.abs(amount);
+    const formatted = formatCurrency(absAmount, currency);
+    if (amount < 0) return `-${formatted}`;
+    return `+${formatted}`;
+  };
+
+  const formatDateTime = (value: number | string | null) => {
+    if (!value) return "-";
+    const date =
+      typeof value === "string" ? new Date(value) : new Date(value * 1000);
+    if (Number.isNaN(date.getTime())) return "-";
+    return date.toLocaleString(locale);
+  };
 
   const SETTINGS_TAB_ID = "__settings__";
   const canUseApi = isAuthed || Boolean(guestToken);
@@ -973,6 +1051,48 @@ export default function Home() {
     if (typeof window === "undefined") return;
     window.dispatchEvent(new Event("askpdf:layout"));
   }, [chatOpen]);
+
+  useEffect(() => {
+    if (!isAuthed || settingsSection !== "account") return;
+    let active = true;
+    const load = async () => {
+      setBillingLoading(true);
+      setBillingFetchError(null);
+      try {
+        const auth = await getAuthParams();
+        if (!auth || auth.tokenType !== "supabase") {
+          return;
+        }
+        const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+        const response = await fetch(`${baseUrl}/billing/me`, {
+          headers: auth.headers,
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to load billing (${response.status})`);
+        }
+        const payload = await response.json();
+        if (!active) return;
+        setBillingSummary({
+          plan: payload?.plan ?? null,
+          status: payload?.status ?? null,
+          currentPeriodEnd: payload?.currentPeriodEnd ?? null,
+          nextPlan: payload?.nextPlan ?? null,
+          nextPlanAt: payload?.nextPlanAt ?? null,
+          upcomingInvoice: payload?.upcomingInvoice ?? null,
+          invoices: Array.isArray(payload?.invoices) ? payload.invoices : [],
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to load billing";
+        if (active) setBillingFetchError(message);
+      } finally {
+        if (active) setBillingLoading(false);
+      }
+    };
+    void load();
+    return () => {
+      active = false;
+    };
+  }, [isAuthed, settingsSection]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1809,11 +1929,7 @@ export default function Home() {
       }
       const payload = await response.json();
       const nextPlan =
-        payload?.plan === "free" ||
-        payload?.plan === "plus" ||
-        payload?.plan === "pro"
-          ? payload.plan
-          : "free";
+        payload?.plan === "free" || payload?.plan === "plus" ? payload.plan : "free";
       const limits = payload?.limits ?? {};
       setPlan(nextPlan);
       setSelectedPlan(nextPlan);
@@ -1863,7 +1979,7 @@ export default function Home() {
     }
   };
 
-  const startCheckout = async (targetPlan: "plus" | "pro") => {
+  const startCheckout = async (targetPlan: "plus") => {
     setBillingError(null);
     setBillingBusy(true);
     try {
@@ -1955,7 +2071,7 @@ export default function Home() {
     }
   };
 
-  const scheduleDowngrade = async (targetPlan: "free" | "plus") => {
+  const scheduleDowngrade = async (targetPlan: "free") => {
     setBillingError(null);
     setBillingBusy(true);
     try {
@@ -1991,20 +2107,14 @@ export default function Home() {
       ? t("planCurrent")
       : selectedPlan === "free"
         ? t("planDowngrade")
-        : plan === "pro" && selectedPlan === "plus"
-          ? t("planChangeToPlus")
-          : t("planUpgrade");
+        : t("planUpgrade");
 
   const handlePlanCta = () => {
     if (selectedPlan === "free") {
       void scheduleDowngrade("free");
       return;
     }
-    if (plan === "pro" && selectedPlan === "plus") {
-      void scheduleDowngrade("plus");
-      return;
-    }
-    if (selectedPlan === "plus" || selectedPlan === "pro") {
+    if (selectedPlan === "plus") {
       void startCheckout(selectedPlan);
     }
   };
@@ -2034,9 +2144,7 @@ export default function Home() {
       }
       const payload = await response.json();
       const planName =
-        payload?.plan === "free" || payload?.plan === "plus" || payload?.plan === "pro"
-          ? payload.plan
-          : nextPlan;
+        payload?.plan === "free" || payload?.plan === "plus" ? payload.plan : nextPlan;
       const limits = payload?.limits ?? {};
       setPlan(planName);
       setSelectedPlan(planName);
@@ -2439,9 +2547,7 @@ export default function Home() {
       ? t("planGuest")
       : plan === "plus"
         ? t("planPlus")
-        : plan === "pro"
-          ? t("planPro")
-          : t("planFree");
+        : t("planFree");
 
   const planRows: {
     key: string;
@@ -2455,7 +2561,6 @@ export default function Home() {
         guest: "¥0",
         free: PLAN_PRICES.free,
         plus: PLAN_PRICES.plus,
-        pro: PLAN_PRICES.pro,
       },
     },
     {
@@ -2465,7 +2570,6 @@ export default function Home() {
         guest: String(DEFAULT_PLAN_LIMITS.guest.maxFiles ?? t("common.unlimited")),
         free: String(DEFAULT_PLAN_LIMITS.free.maxFiles ?? t("common.unlimited")),
         plus: String(DEFAULT_PLAN_LIMITS.plus.maxFiles ?? t("common.unlimited")),
-        pro: t("common.unlimited"),
       },
     },
     {
@@ -2475,7 +2579,6 @@ export default function Home() {
         guest: `${DEFAULT_PLAN_LIMITS.guest.maxFileMb ?? "-"}MB`,
         free: `${DEFAULT_PLAN_LIMITS.free.maxFileMb ?? "-"}MB`,
         plus: `${DEFAULT_PLAN_LIMITS.plus.maxFileMb ?? "-"}MB`,
-        pro: `${DEFAULT_PLAN_LIMITS.pro.maxFileMb ?? "-"}MB`,
       },
     },
     {
@@ -2485,7 +2588,6 @@ export default function Home() {
         guest: String(DEFAULT_PLAN_LIMITS.guest.maxMessagesPerThread ?? t("common.unlimited")),
         free: String(DEFAULT_PLAN_LIMITS.free.maxMessagesPerThread ?? t("common.unlimited")),
         plus: String(DEFAULT_PLAN_LIMITS.plus.maxMessagesPerThread ?? t("common.unlimited")),
-        pro: t("common.unlimited"),
       },
     },
   ];
@@ -2973,7 +3075,29 @@ export default function Home() {
                 <div className="settings__item-desc">{t("planDesc")}</div>
               </div>
               <div className="settings__value">
-                {planLabel}
+                <div>{planLabel}</div>
+                {billingSummary?.nextPlan ? (
+                  <div className="settings__subvalue">
+                    {t("planNext", {
+                      plan:
+                        billingSummary.nextPlan === "plus"
+                          ? t("planPlus")
+                          : t("planFree"),
+                      date: formatDateTime(billingSummary.nextPlanAt),
+                    })}
+                  </div>
+                ) : null}
+                {!billingSummary?.nextPlan && billingSummary?.currentPeriodEnd ? (
+                  <div className="settings__subvalue">
+                    {billingSummary.cancelAtPeriodEnd
+                      ? t("planUntilCanceled", {
+                          date: formatDateTime(billingSummary.currentPeriodEnd),
+                        })
+                      : t("planUntil", {
+                          date: formatDateTime(billingSummary.currentPeriodEnd),
+                        })}
+                  </div>
+                ) : null}
               </div>
             </div>
             <div className="settings__item settings__item--stack">
@@ -2987,7 +3111,6 @@ export default function Home() {
                   <div className="plan-table__cell">{t("planGuest")}</div>
                   <div className="plan-table__cell">{t("planFree")}</div>
                   <div className="plan-table__cell">{t("planPlus")}</div>
-                  <div className="plan-table__cell">{t("planPro")}</div>
                 </div>
                 {planRows.map((row) => (
                   <div key={row.key} className="plan-table__row">
@@ -2997,12 +3120,11 @@ export default function Home() {
                     <div className="plan-table__cell">{row.values.guest}</div>
                     <div className="plan-table__cell">{row.values.free}</div>
                     <div className="plan-table__cell">{row.values.plus}</div>
-                    <div className="plan-table__cell">{row.values.pro}</div>
                   </div>
                 ))}
               </div>
               <div className="plan-cards">
-                {(["free", "plus", "pro"] as const).map((planName) => (
+                {(["free", "plus"] as const).map((planName) => (
                   <button
                     key={planName}
                     type="button"
@@ -3014,9 +3136,7 @@ export default function Home() {
                     <div className="plan-card__title">
                       {planName === "free"
                         ? t("planFree")
-                        : planName === "plus"
-                          ? t("planPlus")
-                          : t("planPro")}
+                        : t("planPlus")}
                     </div>
                     <div className="plan-card__price">
                       {PLAN_PRICES[planName]}
@@ -3063,6 +3183,89 @@ export default function Home() {
               >
                 {t("manage")}
               </button>
+            </div>
+            <div className="settings__item settings__item--stack">
+              <div>
+                <div className="settings__item-title">{t("billingNextPayment")}</div>
+                <div className="settings__item-desc">{t("billingNextPaymentDesc")}</div>
+              </div>
+              <div className="billing-summary">
+                {billingLoading ? (
+                  <div className="settings__value">{t("common.loading")}</div>
+                ) : billingFetchError ? (
+                  <div className="settings__value">{t("common.fetchFailed")}</div>
+                ) : billingSummary?.upcomingInvoice ? (
+                  <div className="billing-summary__row">
+                    <div className="billing-summary__amount">
+                      {formatCurrency(
+                        billingSummary.upcomingInvoice.amountDue,
+                        billingSummary.upcomingInvoice.currency
+                      )}
+                    </div>
+                    <div className="billing-summary__date">
+                      {formatDateTime(billingSummary.upcomingInvoice.nextPaymentAt)}
+                    </div>
+                  </div>
+                ) : billingSummary?.currentPeriodEnd ? (
+                  <div className="billing-summary__row">
+                    <div className="billing-summary__amount">{t("common.unset")}</div>
+                    <div className="billing-summary__date">
+                      {formatDateTime(billingSummary.currentPeriodEnd)}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="settings__value">{t("billingNone")}</div>
+                )}
+              </div>
+            </div>
+            <div className="settings__item settings__item--stack">
+              <div>
+                <div className="settings__item-title">{t("billingHistory")}</div>
+                <div className="settings__item-desc">{t("billingHistoryDesc")}</div>
+              </div>
+              <div className="billing-history">
+                {billingLoading ? (
+                  <div className="settings__value">{t("common.loading")}</div>
+                ) : billingFetchError ? (
+                  <div className="settings__value">{t("common.fetchFailed")}</div>
+                ) : billingSummary?.invoices?.length ? (
+                  billingSummary.invoices.map((invoice) => (
+                    <div key={invoice.id} className="billing-history__item">
+                      <div className="billing-history__meta">
+                        <div className="billing-history__amount">
+                          {formatCurrency(invoice.amountPaid, invoice.currency)}
+                        </div>
+                        <div className="billing-history__date">
+                          {formatDateTime(invoice.created)}
+                        </div>
+                      </div>
+                      {invoice.lines?.length ? (
+                        <div className="billing-history__lines">
+                          {invoice.lines.map((line, index) => (
+                            <div
+                              key={line.id ?? `${invoice.id}-line-${index}`}
+                              className="billing-history__line"
+                            >
+                              <div className="billing-history__line-desc">
+                                {line.description || "-"}
+                              </div>
+                              <div className="billing-history__line-amount">
+                                {formatSignedCurrency(
+                                  line.amount ?? null,
+                                  line.currency ?? invoice.currency
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      <div className="billing-history__status">{invoice.status ?? "-"}</div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="settings__value">{t("billingNone")}</div>
+                )}
+              </div>
             </div>
             {billingError ? (
               <div className="settings__hint">{billingError}</div>
@@ -4065,7 +4268,7 @@ export default function Home() {
                       <li>{t("planBenefitChat")}</li>
                     </ul>
                     <div className="limit-modal__plans">
-                      {(["free", "plus", "pro"] as const).map((planName) => (
+                      {(["free", "plus"] as const).map((planName) => (
                         <label
                           key={planName}
                           className={`limit-plan ${
@@ -4083,9 +4286,7 @@ export default function Home() {
                             <div className="limit-plan__name">
                               {planName === "free"
                                 ? t("planFree")
-                                : planName === "plus"
-                                  ? t("planPlus")
-                                  : t("planPro")}
+                                : t("planPlus")}
                             </div>
                             <div className="limit-plan__price">
                               {PLAN_PRICES[planName]}
@@ -4154,13 +4355,6 @@ export default function Home() {
                         >
                           {t("planPlus")}
                         </div>
-                        <div
-                          className={`plan-table__cell ${
-                            selectedPlan === "pro" ? "is-selected" : ""
-                          }`}
-                        >
-                          {t("planPro")}
-                        </div>
                       </div>
                       {planRows.map((row) => (
                         <div key={`modal-${row.key}`} className="plan-table__row">
@@ -4187,13 +4381,6 @@ export default function Home() {
                             }`}
                           >
                             {row.values.plus}
-                          </div>
-                          <div
-                            className={`plan-table__cell ${
-                              selectedPlan === "pro" ? "is-selected" : ""
-                            }`}
-                          >
-                            {row.values.pro}
                           </div>
                         </div>
                       ))}

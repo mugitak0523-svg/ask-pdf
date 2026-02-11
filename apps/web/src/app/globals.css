@@ -1914,6 +1914,89 @@ button {
   cursor: pointer;
 }
 
+.billing-summary {
+  width: 100%;
+}
+
+.billing-summary__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.billing-summary__amount {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.billing-summary__date {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.billing-history {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+
+.billing-history__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.billing-history__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.billing-history__lines {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.billing-history__line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.billing-history__line-desc {
+  max-width: 420px;
+}
+
+.billing-history__line-amount {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.billing-history__amount {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.billing-history__date {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.billing-history__status {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .settings__btn--danger {
   background: var(--danger-bg);
   border-color: var(--danger-border);
@@ -1923,6 +2006,12 @@ button {
 .settings__value {
   font-size: 13px;
   color: var(--text);
+}
+
+.settings__subvalue {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .viewer__tabs-wrap {

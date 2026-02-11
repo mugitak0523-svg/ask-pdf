@@ -1,23 +1,22 @@
 # Stripe 決済 仕様書（年額プランなし）
 
 ## 目的
-- Plus / Pro の月額課金を Stripe で提供する。
+- Plus の月額課金を Stripe で提供する。
 - 既存のプラン管理（`/plans/me`）と整合し、課金状態に応じてプランを変更する。
 - ゲストは決済不可（サインイン誘導）。
 
 ## 対象プラン
 - `guest` / `free`: 無料
 - `plus`: 月額 `¥1,280`
-- `pro`: 月額 `¥2,980`
 - 年額プランは **提供しない**。
 
 ## 課金フロー（Checkout）
-1. ユーザーが UI で Plus / Pro を選択。
+1. ユーザーが UI で Plus を選択。
 2. フロントが `POST /billing/checkout` を呼ぶ。
 3. サーバーが Stripe Checkout Session を作成。
 4. フロントは `session.url` にリダイレクト。
 5. 決済完了後、Stripe が `checkout.session.completed` を Webhook で通知。
-6. サーバーが `user_plans` を更新（`plus` / `pro`）。
+6. サーバーが `user_plans` を更新（`plus`）。
 
 ## プラン管理フロー（Customer Portal）
 1. フロントが `POST /billing/portal` を呼ぶ。
@@ -28,7 +27,7 @@
 
 ## 課金状態とプラン決定ロジック
 - Webhook が **唯一の真実**（UI からの直接 `PATCH /plans/me` は決済済みユーザーには使わない）。
-- `subscription.status` が `active` または `trialing` の場合のみ `plus` / `pro` を付与。
+- `subscription.status` が `active` または `trialing` の場合のみ `plus` を付与。
 - `canceled` / `incomplete` / `past_due` / `unpaid` の場合は `free` に戻す。
 - 無料からのアップグレードは Checkout でのみ実施。
 
@@ -44,18 +43,16 @@
 ## Stripe 構成（Products / Prices）
 Products:
 - `plus`
-- `pro`
 
 Prices（すべて `recurring.interval = month`）:
 - `plus_monthly_jpy_1280`
-- `pro_monthly_jpy_2980`
 
 ## API 仕様
 
 ### `POST /billing/checkout`
 - 認証: 必須（ゲスト不可）
 - リクエスト:
-  - `plan`: `plus` | `pro`
+  - `plan`: `plus`
 - レスポンス:
   - `url`: Checkout へのリダイレクト URL
 - エラー:
@@ -81,13 +78,13 @@ Prices（すべて `recurring.interval = month`）:
 
 処理:
 - `price.id` から `plan` を逆引き。
-- `subscription.status` に応じて `user_plans.plan` を `plus`/`pro`/`free` に更新。
+- `subscription.status` に応じて `user_plans.plan` を `plus`/`free` に更新。
 - `stripe_*` カラムと `current_period_end` を更新。
 
 ## UI 仕様
 - プラン変更モーダルの CTA:
   - 未ログイン: `Sign in` / `Sign up`
-  - ログイン済み: `Upgrade to Plus` / `Upgrade to Pro`
+  - ログイン済み: `Upgrade to Plus`
 - 現在プラン表示（バッジ）は継続。
 - 年額トグル・年額表示は **削除**。
 
@@ -95,7 +92,6 @@ Prices（すべて `recurring.interval = month`）:
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
 - `STRIPE_PLUS_PRICE_ID`
-- `STRIPE_PRO_PRICE_ID`
 - `APP_BASE_URL`（Checkout / Portal の return URL 用）
 
 ## 実装メモ

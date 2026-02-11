@@ -104,6 +104,9 @@
     "planPro": "Pro",
     "planDowngrade": "Freeに変更",
     "planChangeToPlus": "Plusに変更",
+  "planNext": "次のプラン: {plan}（{date}）",
+  "planUntil": "現在のプランは{date}まで有効",
+  "planUntilCanceled": "Plusは{date}で終了",
     "planUpgradeTitle": "プランをアップグレード",
     "planBenefitPdf": "より多くのPDFと大きなファイル",
     "planBenefitChat": "質問をもっと",
@@ -132,6 +135,12 @@
     "billingCheckoutFailed": "支払いに失敗、またはキャンセルされました。再度お試しください。",
     "billingCheckoutSuccess": "支払いが完了しました。プランはまもなく更新されます。",
     "billingCancelRequested": "Freeへの変更を受け付けました。反映まで少しお待ちください。",
+    "billingNextPayment": "次回の支払い",
+    "billingNextPaymentDesc": "次の請求予定",
+    "billingHistory": "支払い履歴",
+    "billingHistoryDesc": "直近の請求",
+  "billingNone": "請求情報がありません",
+  "billingNoneCanceling": "解約予定のため次回の請求はありません",
     "signOut": "サインアウト",
     "signOutDesc": "この端末からログアウト",
     "manage": "管理",
@@ -160,12 +169,6 @@
       "used": "使用ずみ {used}/{limit}",
       "remaining": "今日の残り {value}",
       "reset": "リセットまで {value}"
-    },
-    "usageRing": {
-      "rate": "使用率{value}％",
-      "used": "使用ずみ {used}/{limit}",
-      "remaining": "今日の残り {value}",
-      "reset": "リセットまで {minutes} 分"
     },
     "common": {
       "loading": "読み込み中…",

@@ -19,7 +19,6 @@ def _get_stripe_config(request: Request) -> dict[str, str]:
         "secret_key": settings.stripe_secret_key,
         "webhook_secret": settings.stripe_webhook_secret,
         "price_plus": settings.stripe_plus_price_id,
-        "price_pro": settings.stripe_pro_price_id,
         "app_base_url": settings.app_base_url,
     }
 
@@ -28,13 +27,11 @@ def _init_stripe(secret_key: str) -> None:
     stripe.api_key = secret_key
 
 
-def _plan_from_price(price_id: str | None, price_plus: str, price_pro: str) -> str | None:
+def _plan_from_price(price_id: str | None, price_plus: str) -> str | None:
     if not price_id:
         return None
     if price_id == price_plus:
         return "plus"
-    if price_id == price_pro:
-        return "pro"
     return None
 
 
@@ -42,7 +39,9 @@ def _plan_from_metadata(metadata: dict[str, Any] | None) -> str | None:
     if not metadata:
         return None
     plan = str(metadata.get("plan") or "")
-    return plan if plan in {"plus", "pro"} else None
+    if plan == "pro":
+        return "plus"
+    return plan if plan in {"plus"} else None
 
 
 async def _create_customer(
@@ -141,41 +140,67 @@ async def _update_subscription_price(
 
     return await anyio.to_thread.run_sync(_run)
 
-async def _create_schedule_for_downgrade(
-    *,
-    secret_key: str,
-    subscription: stripe.Subscription,
-    target_price_id: str,
-) -> stripe.SubscriptionSchedule:
-    _init_stripe(secret_key)
-    items = subscription.get("items", {}).get("data", [])
-    if not items:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No subscription items")
-    current_price_id = items[0].get("price", {}).get("id")
-    current_start = subscription.get("current_period_start")
-    current_end = subscription.get("current_period_end")
 
-    def _run() -> stripe.SubscriptionSchedule:
-        return stripe.SubscriptionSchedule.create(
-            customer=subscription.get("customer"),
-            end_behavior="release",
-            phases=[
+async def _list_invoices(secret_key: str, customer_id: str) -> list[dict[str, Any]]:
+    _init_stripe(secret_key)
+
+    def _run() -> stripe.ListObject:
+        return stripe.Invoice.list(customer=customer_id, limit=5)
+
+    invoices = await anyio.to_thread.run_sync(_run)
+    results: list[dict[str, Any]] = []
+    for invoice in invoices.get("data", []):
+        line_items = []
+        for line in invoice.get("lines", {}).get("data", []) or []:
+            period = line.get("period") or {}
+            line_items.append(
                 {
-                    "items": [{"price": current_price_id, "quantity": 1}],
-                    "start_date": current_start,
-                    "end_date": current_end,
-                    "proration_behavior": "none",
-                },
-                {
-                    "items": [{"price": target_price_id, "quantity": 1}],
-                    "start_date": current_end,
-                    "proration_behavior": "none",
-                },
-            ],
+                    "id": line.get("id"),
+                    "description": line.get("description"),
+                    "amount": line.get("amount"),
+                    "currency": line.get("currency") or invoice.get("currency"),
+                    "proration": line.get("proration"),
+                    "periodStart": period.get("start"),
+                    "periodEnd": period.get("end"),
+                }
+            )
+        results.append(
+            {
+                "id": invoice.get("id"),
+                "status": invoice.get("status"),
+                "amountPaid": invoice.get("amount_paid"),
+                "currency": invoice.get("currency"),
+                "created": invoice.get("created"),
+                "hostedInvoiceUrl": invoice.get("hosted_invoice_url"),
+                "lines": line_items,
+                "periodEnd": invoice.get("period_end"),
+            }
+        )
+    return results
+
+
+async def _get_upcoming_invoice(
+    secret_key: str,
+    customer_id: str,
+    subscription_id: str | None,
+) -> dict[str, Any] | None:
+    _init_stripe(secret_key)
+
+    def _run() -> stripe.Invoice:
+        return stripe.Invoice.upcoming(
+            customer=customer_id,
+            subscription=subscription_id,
         )
 
-    return await anyio.to_thread.run_sync(_run)
-
+    try:
+        invoice = await anyio.to_thread.run_sync(_run)
+    except Exception:
+        return None
+    return {
+        "amountDue": invoice.get("amount_due"),
+        "currency": invoice.get("currency"),
+        "nextPaymentAt": invoice.get("next_payment_attempt") or invoice.get("due_date"),
+    }
 
 @router.post("/billing/checkout")
 async def create_checkout(
@@ -184,11 +209,11 @@ async def create_checkout(
     user: AuthUser = AuthDependency,
 ) -> dict[str, str]:
     plan = str(payload.get("plan") or "")
-    if plan not in {"plus", "pro"}:
+    if plan not in {"plus"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid plan")
 
     config = _get_stripe_config(request)
-    price_id = config["price_plus"] if plan == "plus" else config["price_pro"]
+    price_id = config["price_plus"]
 
     pool = request.app.state.db_pool
     billing = await repository.get_user_billing(pool, user.user_id)
@@ -196,13 +221,17 @@ async def create_checkout(
     subscription_id = billing.get("stripe_subscription_id") if billing else None
 
     if subscription_id:
-        await _update_subscription_price(
-            secret_key=config["secret_key"],
-            subscription_id=subscription_id,
-            price_id=price_id,
-            plan=plan,
-        )
-        return {"status": "ok"}
+        subscription = await _retrieve_subscription(config["secret_key"], subscription_id)
+        status_value = subscription.get("status")
+        if status_value not in {"canceled", "incomplete_expired"}:
+            await _update_subscription_price(
+                secret_key=config["secret_key"],
+                subscription_id=subscription_id,
+                price_id=price_id,
+                plan=plan,
+            )
+            return {"status": "ok"}
+        subscription_id = None
 
     if not customer_id:
         customer = await _create_customer(
@@ -226,6 +255,95 @@ async def create_checkout(
         plan=plan,
     )
     return {"url": session.url}
+
+
+@router.get("/billing/me")
+async def get_billing_summary(
+    request: Request,
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    config = _get_stripe_config(request)
+    pool = request.app.state.db_pool
+    billing = await repository.get_user_billing(pool, user.user_id)
+    if not billing:
+        return {"plan": "free", "status": None, "currentPeriodEnd": None, "nextPlan": None}
+
+    customer_id = billing.get("stripe_customer_id")
+    subscription_id = billing.get("stripe_subscription_id")
+    next_plan = None
+    next_plan_at = None
+    cancel_at_period_end = None
+
+    invoices: list[dict[str, Any]] = []
+    upcoming: dict[str, Any] | None = None
+    subscription_fallback: stripe.Subscription | None = None
+    if customer_id:
+        invoices = await _list_invoices(config["secret_key"], customer_id)
+        upcoming = await _get_upcoming_invoice(
+            config["secret_key"],
+            customer_id,
+            subscription_id,
+        )
+        if not subscription_id:
+            try:
+                _init_stripe(config["secret_key"])
+                subs = await anyio.to_thread.run_sync(
+                    lambda: stripe.Subscription.list(customer=customer_id, status="all", limit=1)
+                )
+                data = subs.get("data", []) if subs else []
+                if data:
+                    subscription_fallback = data[0]
+                    subscription_id = subscription_fallback.get("id")
+            except Exception:
+                subscription_fallback = None
+
+    plan_value = billing.get("plan")
+    if plan_value == "pro":
+        plan_value = "plus"
+    current_period_end = billing.get("current_period_end")
+    if subscription_id:
+        try:
+            subscription = (
+                subscription_fallback
+                if subscription_fallback and subscription_fallback.get("id") == subscription_id
+                else await _retrieve_subscription(config["secret_key"], subscription_id)
+            )
+            period_end = subscription.get("current_period_end")
+            if not current_period_end and isinstance(period_end, (int, float)):
+                current_period_end = datetime.fromtimestamp(period_end, tz=timezone.utc)
+                await repository.upsert_user_billing(
+                    request.app.state.db_pool,
+                    user.user_id,
+                    current_period_end=current_period_end,
+                )
+            cancel_at_period_end = subscription.get("cancel_at_period_end")
+            if subscription_id and billing and billing.get("stripe_subscription_id") != subscription_id:
+                await repository.upsert_user_billing(
+                    request.app.state.db_pool,
+                    user.user_id,
+                    stripe_subscription_id=subscription_id,
+                )
+        except Exception:
+            current_period_end = None
+            cancel_at_period_end = None
+    if not current_period_end and invoices:
+        latest = invoices[0]
+        period_end = latest.get("periodEnd")
+        if not period_end and latest.get("lines"):
+            period_end = latest["lines"][0].get("periodEnd")
+        if isinstance(period_end, (int, float)):
+            current_period_end = datetime.fromtimestamp(period_end, tz=timezone.utc)
+
+    return {
+        "plan": plan_value,
+        "status": billing.get("stripe_status"),
+        "currentPeriodEnd": current_period_end.isoformat() if current_period_end else None,
+        "cancelAtPeriodEnd": cancel_at_period_end,
+        "nextPlan": next_plan,
+        "nextPlanAt": next_plan_at,
+        "upcomingInvoice": upcoming,
+        "invoices": invoices,
+    }
 
 
 @router.post("/billing/portal")
@@ -287,7 +405,7 @@ async def schedule_downgrade(
     user: AuthUser = AuthDependency,
 ) -> dict[str, str]:
     target_plan = str(payload.get("plan") or "")
-    if target_plan not in {"free", "plus"}:
+    if target_plan not in {"free"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid plan")
 
     config = _get_stripe_config(request)
@@ -298,26 +416,41 @@ async def schedule_downgrade(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No subscription")
 
     if target_plan == "free":
+        subscription = await _retrieve_subscription(config["secret_key"], subscription_id)
+        schedule_id = subscription.get("schedule")
         _init_stripe(config["secret_key"])
+
+        if schedule_id:
+            def _run_cancel_schedule() -> stripe.SubscriptionSchedule:
+                schedule = stripe.SubscriptionSchedule.retrieve(schedule_id)
+                phases = schedule.get("phases", []) or []
+                current_phase = phases[0] if phases else None
+                if current_phase and current_phase.get("end_date"):
+                    return stripe.SubscriptionSchedule.modify(
+                        schedule_id,
+                        end_behavior="cancel",
+                    )
+                current_end = subscription.get("current_period_end")
+                return stripe.SubscriptionSchedule.modify(
+                    schedule_id,
+                    end_behavior="cancel",
+                    phases=[
+                        {
+                            "items": current_phase.get("items") if current_phase else [],
+                            "start_date": current_phase.get("start_date") if current_phase else None,
+                            "end_date": current_end,
+                            "proration_behavior": "none",
+                        }
+                    ],
+                )
+
+            await anyio.to_thread.run_sync(_run_cancel_schedule)
+            return {"status": "ok"}
 
         def _run_cancel() -> stripe.Subscription:
             return stripe.Subscription.modify(subscription_id, cancel_at_period_end=True)
 
         await anyio.to_thread.run_sync(_run_cancel)
-        return {"status": "ok"}
-
-    if target_plan == "plus":
-        subscription = await _retrieve_subscription(config["secret_key"], subscription_id)
-        schedule = await _create_schedule_for_downgrade(
-            secret_key=config["secret_key"],
-            subscription=subscription,
-            target_price_id=config["price_plus"],
-        )
-        await repository.upsert_user_billing(
-            pool,
-            user.user_id,
-            stripe_schedule_id=schedule.get("id"),
-        )
         return {"status": "ok"}
 
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid plan")
@@ -369,7 +502,7 @@ async def stripe_webhook(request: Request) -> dict[str, str]:
         status_value = subscription.get("status")
         items = subscription.get("items", {}).get("data", [])
         price_id = items[0].get("price", {}).get("id") if items else None
-        plan = _plan_from_price(price_id, config["price_plus"], config["price_pro"])
+        plan = _plan_from_price(price_id, config["price_plus"])
         if not plan:
             plan = _plan_from_metadata(subscription.get("metadata"))
         if status_value not in {"active", "trialing"}:
