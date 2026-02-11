@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 import time
+import unicodedata
 from typing import Any
 from uuid import uuid4
 
@@ -24,15 +26,16 @@ class Indexer:
         filename: str | None,
         user_id: str,
     ) -> dict[str, Any]:
-        safe_name = filename or "document.pdf"
-        storage_path = f"{user_id}/{uuid4()}-{safe_name}"
+        original_name = filename or "document.pdf"
+        safe_storage_name = self._sanitize_storage_name(original_name)
+        storage_path = f"{user_id}/{uuid4()}-{safe_storage_name}"
         await anyio.to_thread.run_sync(
             self._storage.upload_pdf,
             storage_path,
             file_bytes,
         )
 
-        parser_payload = await self._parser.create_document(file_bytes, safe_name)
+        parser_payload = await self._parser.create_document(file_bytes, original_name)
         parser_doc_id = str(parser_payload.get("doc_id") or parser_payload.get("id"))
 
         status_payload = await self._wait_for_parser(parser_doc_id)
@@ -42,7 +45,7 @@ class Indexer:
 
         document_id = await repository.insert_document(
             pool,
-            title=safe_name,
+            title=original_name,
             storage_path=storage_path,
             metadata={
                 "parser_doc_id": parser_doc_id,
@@ -76,6 +79,17 @@ class Indexer:
             "parser_doc_id": parser_doc_id,
             "chunks_count": inserted,
         }
+
+    def _sanitize_storage_name(self, filename: str) -> str:
+        normalized = unicodedata.normalize("NFKD", filename)
+        ascii_name = normalized.encode("ascii", "ignore").decode("ascii")
+        if not ascii_name:
+            ascii_name = "document.pdf"
+        ascii_name = ascii_name.replace(" ", "-")
+        ascii_name = re.sub(r"[^A-Za-z0-9._-]", "", ascii_name)
+        if not ascii_name.lower().endswith(".pdf"):
+            ascii_name = f"{ascii_name}.pdf"
+        return ascii_name
 
     async def _wait_for_parser(
         self,

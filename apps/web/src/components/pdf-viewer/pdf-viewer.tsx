@@ -7,6 +7,8 @@ type PdfViewerProps = {
   url: string;
   documentId: string | null;
   accessToken: string | null;
+  initialResult?: any | null;
+  initialAnnotations?: Record<number, Record<number, Annotation[]>> | null;
   onAddToChat?: (text: string) => void;
   onClearReferenceRequest?: () => void;
   referenceRequest?: {
@@ -45,6 +47,16 @@ type Annotation = {
 const PDF_STATE_KEY = "askpdf.pdfState.v1";
 const PDF_CACHE_MAX = 3;
 const pdfBufferCache = new Map<string, { buffer: ArrayBuffer; ts: number }>();
+const PDF_CACHE_DB = "askpdf.pdfCache.v1";
+const PDF_CACHE_STORE = "pdfBuffers";
+
+type PdfCacheEntry =
+  | ArrayBuffer
+  | {
+      buffer: ArrayBuffer;
+      annotations?: Record<number, Record<number, Annotation[]>>;
+      updatedAt?: number;
+    };
 
 const cloneBuffer = (buffer: ArrayBuffer) => buffer.slice(0);
 
@@ -55,13 +67,97 @@ const getCachedPdfBuffer = (key: string) => {
   return entry.buffer;
 };
 
+const openPdfCacheDb = (): Promise<IDBDatabase | null> => {
+  if (typeof window === "undefined" || !("indexedDB" in window)) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const request = indexedDB.open(PDF_CACHE_DB, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(PDF_CACHE_STORE)) {
+        db.createObjectStore(PDF_CACHE_STORE);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => resolve(null);
+  });
+};
+
+const getCachedPdfBufferFromIdb = async (key: string) => {
+  const db = await openPdfCacheDb();
+  if (!db) return null;
+  return new Promise<PdfCacheEntry | null>((resolve) => {
+    const tx = db.transaction(PDF_CACHE_STORE, "readonly");
+    const store = tx.objectStore(PDF_CACHE_STORE);
+    const request = store.get(key);
+    request.onsuccess = () => resolve(request.result ?? null);
+    request.onerror = () => resolve(null);
+  });
+};
+
+const setCachedPdfBufferToIdb = async (key: string, buffer: ArrayBuffer) => {
+  const db = await openPdfCacheDb();
+  if (!db) return;
+  return new Promise<void>((resolve) => {
+    const tx = db.transaction(PDF_CACHE_STORE, "readwrite");
+    const store = tx.objectStore(PDF_CACHE_STORE);
+    store.put({ buffer }, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+};
+
+const updateCachedPdfAnnotationsInIdb = async (
+  key: string,
+  annotations: Record<number, Record<number, Annotation[]>>
+) => {
+  const db = await openPdfCacheDb();
+  if (!db) return;
+  return new Promise<void>((resolve) => {
+    const tx = db.transaction(PDF_CACHE_STORE, "readwrite");
+    const store = tx.objectStore(PDF_CACHE_STORE);
+    const getReq = store.get(key);
+    getReq.onsuccess = () => {
+      const value = getReq.result;
+      let buffer: ArrayBuffer | null = null;
+      if (value instanceof ArrayBuffer) {
+        buffer = value;
+      } else if (value && value.buffer instanceof ArrayBuffer) {
+        buffer = value.buffer;
+      }
+      if (!buffer) {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+        return;
+      }
+      store.put({ buffer, annotations, updatedAt: Date.now() }, key);
+    };
+    getReq.onerror = () => resolve();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+};
+
 const getSafePdfBuffer = async (cacheKey: string, url: string) => {
   const cached = getCachedPdfBuffer(cacheKey);
   if (cached) {
     try {
-      return cached;
+      return { buffer: cached, annotations: null };
     } catch {
       pdfBufferCache.delete(cacheKey);
+    }
+  }
+  const idbCached = await getCachedPdfBufferFromIdb(cacheKey);
+  if (idbCached) {
+    if (idbCached instanceof ArrayBuffer) {
+      setCachedPdfBuffer(cacheKey, idbCached);
+      return { buffer: idbCached, annotations: null };
+    }
+    if (idbCached && idbCached.buffer instanceof ArrayBuffer) {
+      setCachedPdfBuffer(cacheKey, idbCached.buffer);
+      return {
+        buffer: idbCached.buffer,
+        annotations: idbCached.annotations ?? null,
+      };
     }
   }
   const response = await fetch(url);
@@ -70,7 +166,8 @@ const getSafePdfBuffer = async (cacheKey: string, url: string) => {
   }
   const buffer = await response.arrayBuffer();
   setCachedPdfBuffer(cacheKey, buffer);
-  return buffer;
+  void setCachedPdfBufferToIdb(cacheKey, buffer);
+  return { buffer, annotations: null };
 };
 
 const setCachedPdfBuffer = (key: string, buffer: ArrayBuffer) => {
@@ -98,6 +195,8 @@ export function PdfViewer({
   url,
   documentId,
   accessToken,
+  initialResult,
+  initialAnnotations,
   onAddToChat,
   onClearReferenceRequest,
   referenceRequest,
@@ -135,6 +234,14 @@ export function PdfViewer({
     Record<number, Record<number, Annotation[]>>
   >({});
   const annotationsHydratedRef = useRef(false);
+  const skipNextAnnotationSaveRef = useRef(true);
+  const lastLoadedAnnotationsRef = useRef<string | null>(null);
+  const prefetchedAnnotationsRef = useRef<Record<number, Record<number, Annotation[]>> | null>(
+    null
+  );
+  const hasRestoredRef = useRef(false);
+  const deferredRestoreRef = useRef<PdfPersistState | null>(null);
+  const cacheKeyRef = useRef<string | null>(null);
   const wordRectsRef = useRef<Record<number, WordRect[]>>({});
   const selectionRef = useRef<HTMLDivElement | null>(null);
   const popupRef = useRef<HTMLDivElement | null>(null);
@@ -182,7 +289,7 @@ export function PdfViewer({
   const maxZoom = 2.4;
   const zoomStep = 0.15;
 
-  const renderLoadingText = (text: string) => (
+const renderLoadingText = (text: string) => (
     <span className="loading-fade" aria-label={text}>
       {text.split("").map((char, index) => (
         <span
@@ -197,12 +304,148 @@ export function PdfViewer({
     </span>
   );
 
-  const reloadAnnotations = useCallback(async () => {
+  const applyDocumentResult = useCallback((result: any) => {
+    setDocumentResult(result);
+    const pages = Array.isArray(result?.pages) ? result.pages : [];
+    if (pages.length > 0) {
+      setPageMeta((prev) => {
+        const merged = { ...prev };
+        for (const page of pages) {
+          const pageNumber = Number(page.pageNumber ?? page.page_number);
+          if (!pageNumber) continue;
+          const widthInch = Number(page.width ?? page.widthInch);
+          const heightInch = Number(page.height ?? page.heightInch);
+          merged[pageNumber] = {
+            width: prev[pageNumber]?.width ?? 0,
+            height: prev[pageNumber]?.height ?? 0,
+            widthInch: Number.isFinite(widthInch) ? widthInch : prev[pageNumber]?.widthInch ?? 0,
+            heightInch: Number.isFinite(heightInch) ? heightInch : prev[pageNumber]?.heightInch ?? 0,
+          };
+        }
+        return merged;
+      });
+    }
+
+    const nextRects: Record<number, WordRect[]> = {};
+    const nextWords: Record<number, { wordIndex: number; text: string }[]> = {};
+
+    const polygonToRect = (polygon: number[]) => {
+      const xs = [];
+      const ys = [];
+      for (let i = 0; i < polygon.length; i += 2) {
+        xs.push(polygon[i]);
+        ys.push(polygon[i + 1]);
+      }
+      const left = Math.min(...xs);
+      const right = Math.max(...xs);
+      const top = Math.min(...ys);
+      const bottom = Math.max(...ys);
+      return { left, top, width: right - left, height: bottom - top };
+    };
+
+    for (const page of pages) {
+      const pageNumber = Number(page.pageNumber ?? page.page_number);
+      const width = Number(page.width ?? page.widthInch);
+      const height = Number(page.height ?? page.heightInch);
+      if (!pageNumber || !Number.isFinite(width) || !Number.isFinite(height)) continue;
+      const words = Array.isArray(page.words) ? page.words : [];
+      const lines = Array.isArray(page.lines) ? page.lines : [];
+      const wordToLine = new Map<number, number>();
+      lines.forEach((line, index) => {
+        const indexes = Array.isArray(line.word_indexes)
+          ? line.word_indexes
+          : Array.isArray(line.wordIndexes)
+            ? line.wordIndexes
+            : [];
+        for (const wordIndex of indexes) {
+          if (Number.isFinite(wordIndex)) {
+            wordToLine.set(Number(wordIndex), index);
+          }
+        }
+      });
+      for (const word of words) {
+        if (!Array.isArray(word.polygon)) continue;
+        const rect = polygonToRect(word.polygon);
+        const wordIndex = Number(word.word_index ?? word.wordIndex);
+        if (!Number.isFinite(wordIndex)) continue;
+        const matched = (() => {
+          for (const line of lines) {
+            const indexes = Array.isArray(line.word_indexes)
+              ? line.word_indexes
+              : Array.isArray(line.wordIndexes)
+                ? line.wordIndexes
+                : [];
+            if (indexes.includes(wordIndex)) {
+              if (!Array.isArray(line.polygon)) return null;
+              const lineRect = polygonToRect(line.polygon);
+              return {
+                top: lineRect.top / height,
+                height: lineRect.height / height,
+              };
+            }
+          }
+          return null;
+        })();
+        if (!nextRects[pageNumber]) nextRects[pageNumber] = [];
+        const normalized = {
+          wordIndex,
+          lineId: wordToLine.get(wordIndex) ?? null,
+          left: rect.left / width,
+          top: rect.top / height,
+          width: rect.width / width,
+          height: rect.height / height,
+        };
+        if (matched) {
+          normalized.top = matched.top;
+          normalized.height = matched.height;
+        }
+        nextRects[pageNumber].push(normalized);
+      }
+      nextWords[pageNumber] = words
+        .map((word) => ({
+          wordIndex: Number(word.word_index ?? word.wordIndex ?? word.index ?? -1),
+          text: String(word.content ?? word.text ?? ""),
+        }))
+        .filter((word) => Number.isFinite(word.wordIndex) && word.wordIndex >= 0)
+        .sort((a, b) => a.wordIndex - b.wordIndex);
+    }
+    for (const key of Object.keys(nextRects)) {
+      nextRects[Number(key)].sort((a, b) => a.wordIndex - b.wordIndex);
+    }
+    wordRectsRef.current = nextRects;
+    wordTextRef.current = nextWords;
+  }, []);
+
+  const reloadAnnotations = useCallback(async (options?: { force?: boolean }) => {
     if (!documentId || !accessToken) {
       setAnnotations({});
       annotationsHydratedRef.current = false;
       setAnnotationsLoading(false);
       setAnnotationsHydrated(false);
+      skipNextAnnotationSaveRef.current = true;
+      lastLoadedAnnotationsRef.current = JSON.stringify({});
+      return;
+    }
+    if (
+      prefetchedAnnotationsRef.current &&
+      typeof prefetchedAnnotationsRef.current === "object"
+    ) {
+      setAnnotations(prefetchedAnnotationsRef.current);
+      annotationsHydratedRef.current = true;
+      setAnnotationsLoading(false);
+      setAnnotationsHydrated(true);
+      skipNextAnnotationSaveRef.current = true;
+      lastLoadedAnnotationsRef.current = JSON.stringify(prefetchedAnnotationsRef.current);
+      prefetchedAnnotationsRef.current = null;
+      return;
+    }
+    if (!options?.force && initialAnnotations && typeof initialAnnotations === "object") {
+      setAnnotations(initialAnnotations);
+      annotationsHydratedRef.current = true;
+      setAnnotationsLoading(false);
+      setAnnotationsHydrated(true);
+      skipNextAnnotationSaveRef.current = true;
+      lastLoadedAnnotationsRef.current = JSON.stringify(initialAnnotations);
       return;
     }
     annotationsHydratedRef.current = false;
@@ -226,13 +469,17 @@ export function PdfViewer({
       }
       const payload = await response.json();
       const data = payload?.annotations;
+      let nextAnnotations: Record<number, Record<number, Annotation[]>> = {};
       if (data && typeof data === "object" && !Array.isArray(data)) {
-        setAnnotations(data as Record<number, Record<number, Annotation[]>>);
+        nextAnnotations = data as Record<number, Record<number, Annotation[]>>;
+        setAnnotations(nextAnnotations);
       } else {
         setAnnotations({});
       }
       annotationsHydratedRef.current = true;
       setAnnotationsHydrated(true);
+      skipNextAnnotationSaveRef.current = true;
+      lastLoadedAnnotationsRef.current = JSON.stringify(nextAnnotations);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         return;
@@ -240,13 +487,15 @@ export function PdfViewer({
       setAnnotations({});
       annotationsHydratedRef.current = true;
       setAnnotationsHydrated(true);
+      skipNextAnnotationSaveRef.current = true;
+      lastLoadedAnnotationsRef.current = JSON.stringify({});
     } finally {
       if (annotationsAbortRef.current) {
         annotationsAbortRef.current = null;
       }
       setAnnotationsLoading(false);
     }
-  }, [accessToken, documentId]);
+  }, [accessToken, documentId, initialAnnotations]);
 
   const readPdfState = () => {
     if (typeof window === "undefined") return {};
@@ -273,6 +522,41 @@ export function PdfViewer({
     };
     window.localStorage.setItem(PDF_STATE_KEY, JSON.stringify(store));
   };
+
+  const attemptScrollRestore = useCallback(() => {
+    const saved = deferredRestoreRef.current;
+    if (!saved) return false;
+    const container = containerRef.current;
+    if (!container) return false;
+    const scrollRoot = container;
+    const maxScroll = Math.max(0, scrollRoot.scrollHeight - scrollRoot.clientHeight);
+    if (
+      saved.scrollTop !== undefined &&
+      saved.scrollTop !== null &&
+      maxScroll < saved.scrollTop - 8
+    ) {
+      return false;
+    }
+    isRestoringRef.current = true;
+    if (saved.scrollTop !== undefined && saved.scrollTop !== null) {
+      scrollRoot.scrollTop = saved.scrollTop;
+    } else if (saved.page) {
+      const pageNode = container.querySelector(
+        `.pdf-embed__page[data-page-number="${saved.page}"]`
+      ) as HTMLElement | null;
+      pageNode?.scrollIntoView({ behavior: "auto", block: "start" });
+    }
+    if (saved.page) {
+      setPageInput(String(saved.page));
+      setCurrentPage(saved.page);
+    }
+    scrollTopRef.current = scrollRoot.scrollTop;
+    isRestoringRef.current = false;
+    canPersistRef.current = true;
+    hasRestoredRef.current = true;
+    deferredRestoreRef.current = null;
+    return true;
+  }, []);
 
   const updateAnnotationMarkers = () => {
     const markers = markersRef.current;
@@ -431,6 +715,15 @@ export function PdfViewer({
   useEffect(() => {
     let cancelled = false;
     const render = async () => {
+      if (documentId && hasRestoredRef.current) {
+        deferredRestoreRef.current = {
+          scrollTop: scrollTopRef.current,
+          page: currentPageRef.current,
+          zoom,
+        };
+        hasRestoredRef.current = false;
+        canPersistRef.current = false;
+      }
       setState("loading");
       setErrorMessage(null);
       const container = containerRef.current;
@@ -444,39 +737,125 @@ export function PdfViewer({
         const pdfjs = await import("pdfjs-dist/legacy/build/pdf");
         pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
         const cacheKey = documentId ?? url;
-        const pdfData = await getSafePdfBuffer(cacheKey, url);
-        const loadingTask = pdfjs.getDocument({ data: cloneBuffer(pdfData) });
+        cacheKeyRef.current = cacheKey;
+        const cached = await getSafePdfBuffer(cacheKey, url);
+        if (cached.annotations && typeof cached.annotations === "object") {
+          prefetchedAnnotationsRef.current = cached.annotations;
+        } else {
+          prefetchedAnnotationsRef.current = null;
+        }
+        const loadingTask = pdfjs.getDocument({ data: cloneBuffer(cached.buffer) });
         const pdf = await loadingTask.promise;
         if (cancelled) return;
         setTotalPages(pdf.numPages);
         const containerWidth = container.clientWidth || 720;
+        const baseWidth = Math.min(containerWidth, 900);
 
-        const nextMeta: Record<number, PageMeta> = {};
-        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum += 1) {
+        const firstPage = await pdf.getPage(1);
+        if (cancelled) return;
+        const firstViewport = firstPage.getViewport({ scale: 1 });
+        const pageWidth = Math.max(240, Math.floor(baseWidth * zoom));
+        const firstScale = pageWidth / firstViewport.width;
+        const firstScaled = firstPage.getViewport({ scale: firstScale });
+        const placeholderWidth = Math.floor(firstScaled.width);
+        const placeholderHeight = Math.floor(firstScaled.height);
+
+        const pagesToRenderImmediately = Math.min(
+          pdf.numPages,
+          Math.max(1, Math.ceil((container.clientHeight || 720) / placeholderHeight) + 1)
+        );
+
+        const renderPage = async (pageNum: number) => {
+          const pageWrapper = container.querySelector(
+            `.pdf-embed__page[data-page-number="${pageNum}"]`
+          ) as HTMLDivElement | null;
+          if (!pageWrapper || pageWrapper.dataset.rendered === "true") return;
+
           const page = await pdf.getPage(pageNum);
           if (cancelled) return;
-
           const viewport = page.getViewport({ scale: 1 });
-          const baseWidth = Math.min(containerWidth, 900);
-          const pageWidth = Math.max(240, Math.floor(baseWidth * zoom));
           const scale = pageWidth / viewport.width;
           const scaled = page.getViewport({ scale });
 
+          const canvas = pageWrapper.querySelector(
+            ".pdf-embed__canvas"
+          ) as HTMLCanvasElement | null;
+          const overlay = pageWrapper.querySelector(
+            ".pdf-embed__overlay"
+          ) as HTMLDivElement | null;
+          if (!canvas || !overlay) return;
+
+          pageWrapper.style.width = `${Math.floor(scaled.width)}px`;
+          pageWrapper.style.margin = "0 auto";
+          canvas.width = Math.floor(scaled.width);
+          canvas.height = Math.floor(scaled.height);
+          overlay.style.width = `${Math.floor(scaled.width)}px`;
+          overlay.style.height = `${Math.floor(scaled.height)}px`;
+
+          const context = canvas.getContext("2d");
+          if (context) {
+            await page.render({ canvasContext: context, viewport: scaled }).promise;
+          }
+
+          if (thumbs) {
+            const thumbWrapper = thumbs.querySelector(
+              `.pdf-embed__thumb[data-page-number="${pageNum}"]`
+            ) as HTMLButtonElement | null;
+            const thumbCanvas = thumbWrapper?.querySelector(
+              ".pdf-embed__thumb-canvas"
+            ) as HTMLCanvasElement | null;
+            if (thumbWrapper && thumbCanvas) {
+              const thumbViewport = page.getViewport({ scale: 0.18 });
+              thumbCanvas.width = Math.floor(thumbViewport.width);
+              thumbCanvas.height = Math.floor(thumbViewport.height);
+              const thumbContext = thumbCanvas.getContext("2d");
+              if (thumbContext) {
+                await page.render({ canvasContext: thumbContext, viewport: thumbViewport }).promise;
+              }
+            }
+          }
+
+          pageWrapper.dataset.rendered = "true";
+          const existing = pageMetaRef.current[pageNum];
+          const nextMeta = {
+            width: Math.floor(scaled.width),
+            height: Math.floor(scaled.height),
+            widthInch:
+              existing?.widthInch && existing.widthInch > 0
+                ? existing.widthInch
+                : viewport.width,
+            heightInch:
+              existing?.heightInch && existing.heightInch > 0
+                ? existing.heightInch
+                : viewport.height,
+          };
+          pageMetaRef.current = {
+            ...pageMetaRef.current,
+            [pageNum]: nextMeta,
+          };
+          setPageMeta((prev) => ({
+            ...prev,
+            [pageNum]: nextMeta,
+          }));
+        };
+
+        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum += 1) {
           const pageWrapper = document.createElement("div");
           pageWrapper.className = "pdf-embed__page";
           pageWrapper.dataset.pageNumber = String(pageNum);
-          pageWrapper.style.width = `${Math.floor(scaled.width)}px`;
+          pageWrapper.style.width = `${placeholderWidth}px`;
           pageWrapper.style.margin = "0 auto";
+          pageWrapper.style.minHeight = `${placeholderHeight}px`;
 
           const canvas = document.createElement("canvas");
           canvas.className = "pdf-embed__canvas";
-          canvas.width = Math.floor(scaled.width);
-          canvas.height = Math.floor(scaled.height);
+          canvas.width = placeholderWidth;
+          canvas.height = placeholderHeight;
 
           const overlay = document.createElement("div");
           overlay.className = "pdf-embed__overlay";
-          overlay.style.width = `${Math.floor(scaled.width)}px`;
-          overlay.style.height = `${Math.floor(scaled.height)}px`;
+          overlay.style.width = `${placeholderWidth}px`;
+          overlay.style.height = `${placeholderHeight}px`;
           overlay.dataset.pageNumber = String(pageNum);
           overlay.addEventListener("pointermove", handlePointerMove);
           overlay.addEventListener("pointerleave", handlePointerLeave);
@@ -499,10 +878,6 @@ export function PdfViewer({
           pageWrapper.appendChild(overlay);
           container.appendChild(pageWrapper);
 
-          const context = canvas.getContext("2d");
-          if (!context) continue;
-          await page.render({ canvasContext: context, viewport: scaled }).promise;
-
           if (thumbs) {
             const thumbWrapper = document.createElement("button");
             thumbWrapper.type = "button";
@@ -519,13 +894,6 @@ export function PdfViewer({
 
             const thumbCanvas = document.createElement("canvas");
             thumbCanvas.className = "pdf-embed__thumb-canvas";
-            const thumbViewport = page.getViewport({ scale: 0.18 });
-            thumbCanvas.width = Math.floor(thumbViewport.width);
-            thumbCanvas.height = Math.floor(thumbViewport.height);
-            const thumbContext = thumbCanvas.getContext("2d");
-            if (thumbContext) {
-              await page.render({ canvasContext: thumbContext, viewport: thumbViewport }).promise;
-            }
 
             const thumbLabel = document.createElement("span");
             thumbLabel.className = "pdf-embed__thumb-label";
@@ -535,29 +903,35 @@ export function PdfViewer({
             thumbWrapper.appendChild(thumbLabel);
             thumbs.appendChild(thumbWrapper);
           }
-
-          const existing = pageMetaRef.current[pageNum];
-          nextMeta[pageNum] = {
-            width: Math.floor(scaled.width),
-            height: Math.floor(scaled.height),
-            widthInch:
-              existing?.widthInch && existing.widthInch > 0
-                ? existing.widthInch
-                : viewport.width,
-            heightInch:
-              existing?.heightInch && existing.heightInch > 0
-                ? existing.heightInch
-                : viewport.height,
-          };
         }
 
+        for (let pageNum = 1; pageNum <= pagesToRenderImmediately; pageNum += 1) {
+          await renderPage(pageNum);
+          if (cancelled) return;
+          attemptScrollRestore();
+        }
         if (!cancelled) {
-          setPageMeta(nextMeta);
           setState("idle");
           viewerActiveRef.current = true;
           lastViewerActiveAtRef.current = Date.now();
           containerRef.current?.focus();
         }
+
+        const idle =
+          typeof window !== "undefined" && "requestIdleCallback" in window
+            ? (window.requestIdleCallback as (cb: () => void) => number)
+            : (cb: () => void) => window.setTimeout(cb, 0);
+
+        for (let pageNum = pagesToRenderImmediately + 1; pageNum <= pdf.numPages; pageNum += 1) {
+          await new Promise<void>((resolve) => {
+            idle(() => resolve());
+          });
+          if (cancelled) return;
+          await renderPage(pageNum);
+          if (cancelled) return;
+          attemptScrollRestore();
+        }
+
       } catch (error) {
         if (!cancelled) {
           setState("error");
@@ -614,10 +988,12 @@ export function PdfViewer({
 
   useEffect(() => {
     canPersistRef.current = false;
+    hasRestoredRef.current = false;
     pendingRestoreRef.current = null;
     setSearchQuery("");
     setSearchCount(0);
     setPageInput("");
+    skipNextAnnotationSaveRef.current = true;
     if (!documentId) {
       setZoom(1);
       setShowThumbs(true);
@@ -630,12 +1006,22 @@ export function PdfViewer({
     } else {
       setShowThumbs(true);
     }
-    if (saved && Number.isFinite(saved.zoom)) {
+    const hasSaved =
+      !!saved &&
+      (Number.isFinite(saved.zoom) ||
+        (saved.scrollTop !== undefined && saved.scrollTop !== null) ||
+        (saved.page !== undefined && saved.page !== null));
+    if (hasSaved) {
       pendingRestoreRef.current = saved;
-      setZoom(clamp(saved.zoom as number, minZoom, maxZoom));
+      if (Number.isFinite(saved?.zoom)) {
+        setZoom(clamp(saved.zoom as number, minZoom, maxZoom));
+      } else {
+        setZoom(1);
+      }
     } else {
       setZoom(1);
       canPersistRef.current = true;
+      hasRestoredRef.current = true;
     }
   }, [documentId, url]);
 
@@ -744,28 +1130,13 @@ export function PdfViewer({
     }
     const container = containerRef.current;
     if (!container) return;
-    const scrollRoot = container;
-    if (!scrollRoot) return;
     pendingRestoreRef.current = null;
-    isRestoringRef.current = true;
+    canPersistRef.current = false;
+    deferredRestoreRef.current = saved;
     requestAnimationFrame(() => {
-      if (saved.scrollTop !== undefined && saved.scrollTop !== null) {
-        scrollRoot.scrollTop = saved.scrollTop;
-      } else if (saved.page) {
-        const pageNode = container.querySelector(
-          `.pdf-embed__page[data-page-number="${saved.page}"]`
-        ) as HTMLElement | null;
-        pageNode?.scrollIntoView({ behavior: "auto", block: "start" });
-      }
-      if (saved.page) {
-        setPageInput(String(saved.page));
-        setCurrentPage(saved.page);
-      }
-      scrollTopRef.current = scrollRoot.scrollTop;
-      isRestoringRef.current = false;
-      canPersistRef.current = true;
+      attemptScrollRestore();
     });
-  }, [documentId, pageMeta, state]);
+  }, [documentId, pageMeta, state, attemptScrollRestore]);
 
   useEffect(() => {
     if (!documentId) return;
@@ -775,7 +1146,8 @@ export function PdfViewer({
     if (!scrollRoot) return;
     const handleScroll = () => {
       scrollTopRef.current = scrollRoot.scrollTop;
-      if (!canPersistRef.current || isRestoringRef.current) return;
+      if (!canPersistRef.current || isRestoringRef.current || !hasRestoredRef.current)
+        return;
       if (saveRafRef.current !== null) {
         cancelAnimationFrame(saveRafRef.current);
       }
@@ -800,7 +1172,7 @@ export function PdfViewer({
 
   useEffect(() => {
     if (!documentId) return;
-    if (!canPersistRef.current || isRestoringRef.current) return;
+    if (!canPersistRef.current || isRestoringRef.current || !hasRestoredRef.current) return;
     writePdfState({
       scrollTop: scrollTopRef.current,
       page: currentPage,
@@ -812,6 +1184,14 @@ export function PdfViewer({
     const saveAnnotations = async () => {
       if (!documentId || !accessToken) return;
       if (!annotationsHydratedRef.current) return;
+      if (skipNextAnnotationSaveRef.current) {
+        skipNextAnnotationSaveRef.current = false;
+        return;
+      }
+      const serialized = JSON.stringify(annotations);
+      if (lastLoadedAnnotationsRef.current === serialized) {
+        return;
+      }
       try {
         const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
         await fetch(`${baseUrl}/documents/${documentId}/annotations`, {
@@ -822,6 +1202,10 @@ export function PdfViewer({
           },
           body: JSON.stringify({ annotations }),
         });
+        lastLoadedAnnotationsRef.current = serialized;
+        if (cacheKeyRef.current) {
+          void updateCachedPdfAnnotationsInIdb(cacheKeyRef.current, annotations);
+        }
       } catch {
         return;
       }
@@ -1068,6 +1452,10 @@ export function PdfViewer({
         setDocumentResult(null);
         return;
       }
+      if (initialResult && typeof initialResult === "object") {
+        applyDocumentResult(initialResult);
+        return;
+      }
       try {
         resultAbortRef.current?.abort();
         const controller = new AbortController();
@@ -1081,115 +1469,7 @@ export function PdfViewer({
         });
         if (!response.ok) return;
         const result = await response.json();
-        setDocumentResult(result);
-        const pages = Array.isArray(result.pages) ? result.pages : [];
-        if (pages.length > 0) {
-          setPageMeta((prev) => {
-            const merged = { ...prev };
-            for (const page of pages) {
-              const pageNumber = Number(page.pageNumber ?? page.page_number);
-              if (!pageNumber) continue;
-              const widthInch = Number(page.width ?? page.widthInch);
-              const heightInch = Number(page.height ?? page.heightInch);
-              merged[pageNumber] = {
-                width: prev[pageNumber]?.width ?? 0,
-                height: prev[pageNumber]?.height ?? 0,
-                widthInch: Number.isFinite(widthInch) ? widthInch : prev[pageNumber]?.widthInch ?? 0,
-                heightInch: Number.isFinite(heightInch) ? heightInch : prev[pageNumber]?.heightInch ?? 0,
-              };
-            }
-            return merged;
-          });
-        }
-
-        const nextRects: Record<number, WordRect[]> = {};
-        const nextWords: Record<number, { wordIndex: number; text: string }[]> = {};
-
-        const polygonToRect = (polygon: number[]) => {
-          const xs = [];
-          const ys = [];
-          for (let i = 0; i < polygon.length; i += 2) {
-            xs.push(polygon[i]);
-            ys.push(polygon[i + 1]);
-          }
-          const left = Math.min(...xs);
-          const right = Math.max(...xs);
-          const top = Math.min(...ys);
-          const bottom = Math.max(...ys);
-          return { left, top, width: right - left, height: bottom - top };
-        };
-
-        for (const page of pages) {
-          const pageNumber = Number(page.pageNumber ?? page.page_number);
-          const width = Number(page.width ?? page.widthInch);
-          const height = Number(page.height ?? page.heightInch);
-          if (!pageNumber || !Number.isFinite(width) || !Number.isFinite(height)) continue;
-          const words = Array.isArray(page.words) ? page.words : [];
-          const lines = Array.isArray(page.lines) ? page.lines : [];
-          const wordToLine = new Map<number, number>();
-          lines.forEach((line, index) => {
-            const indexes = Array.isArray(line.word_indexes)
-              ? line.word_indexes
-              : Array.isArray(line.wordIndexes)
-                ? line.wordIndexes
-                : [];
-            for (const wordIndex of indexes) {
-              if (Number.isFinite(wordIndex)) {
-                wordToLine.set(Number(wordIndex), index);
-              }
-            }
-          });
-          for (const word of words) {
-            if (!Array.isArray(word.polygon)) continue;
-            const rect = polygonToRect(word.polygon);
-            const wordIndex = Number(word.word_index ?? word.wordIndex);
-            if (!Number.isFinite(wordIndex)) continue;
-            const matched = (() => {
-              for (const line of lines) {
-                const indexes = Array.isArray(line.word_indexes)
-                  ? line.word_indexes
-                  : Array.isArray(line.wordIndexes)
-                    ? line.wordIndexes
-                    : [];
-                if (indexes.includes(wordIndex)) {
-                  if (!Array.isArray(line.polygon)) return null;
-                  const lineRect = polygonToRect(line.polygon);
-                  return {
-                    top: lineRect.top / height,
-                    height: lineRect.height / height,
-                  };
-                }
-              }
-              return null;
-            })();
-            if (!nextRects[pageNumber]) nextRects[pageNumber] = [];
-            const normalized = {
-              wordIndex,
-              lineId: wordToLine.get(wordIndex) ?? null,
-              left: rect.left / width,
-              top: rect.top / height,
-              width: rect.width / width,
-              height: rect.height / height,
-            };
-            if (matched) {
-              normalized.top = matched.top;
-              normalized.height = matched.height;
-            }
-            nextRects[pageNumber].push(normalized);
-          }
-          nextWords[pageNumber] = words
-            .map((word) => ({
-              wordIndex: Number(word.word_index ?? word.wordIndex ?? word.index ?? -1),
-              text: String(word.content ?? word.text ?? ""),
-            }))
-            .filter((word) => Number.isFinite(word.wordIndex) && word.wordIndex >= 0)
-            .sort((a, b) => a.wordIndex - b.wordIndex);
-        }
-        for (const key of Object.keys(nextRects)) {
-          nextRects[Number(key)].sort((a, b) => a.wordIndex - b.wordIndex);
-        }
-        wordRectsRef.current = nextRects;
-        wordTextRef.current = nextWords;
+        applyDocumentResult(result);
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
           return;
@@ -1202,7 +1482,7 @@ export function PdfViewer({
       }
     };
     void loadResult();
-  }, [documentId, accessToken]);
+  }, [documentId, accessToken, initialResult, applyDocumentResult]);
 
   const runSearch = (normalizedQuery: string, shouldScroll: boolean) => {
     clearSearchHighlights();
@@ -1789,6 +2069,7 @@ export function PdfViewer({
     const popup = document.createElement("div");
     popup.className = "pdf-embed__popup";
     popup.innerHTML = `
+      <div class="pdf-embed__popup-header">Annotation</div>
       <div class="pdf-embed__popup-palette" aria-label="Highlight colors">
         <button type="button" class="pdf-embed__palette-color is-selected" style="--swatch:#ffd84d" data-color="#ffd84d">
           <span class="pdf-embed__palette-check">✓</span>
@@ -1822,23 +2103,23 @@ export function PdfViewer({
         </button>
       </div>
       <button type="button" class="pdf-embed__popup-btn" data-action="highlight">
-        <svg class="pdf-embed__popup-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <g transform="translate(12 12) scale(1.1) translate(-12 -12)">
-            <path
-              d="M4 16.5V20h3.5L18.8 8.7l-3.5-3.5L4 16.5z"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linejoin="round"
-            />
-            <path
-              d="M13.8 5.2l3.5 3.5"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-            />
-          </g>
+        <svg
+          class="pdf-embed__popup-icon"
+          xmlns="http://www.w3.org/2000/svg"
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+          <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+          <path d="M13.5 6.5l4 4" />
+          <path d="M16 19h6" />
         </svg>
         Highlight
         <span class="pdf-embed__popup-shortcut">
@@ -1847,23 +2128,22 @@ export function PdfViewer({
         </span>
       </button>
       <button type="button" class="pdf-embed__popup-btn" data-action="underline">
-        <svg class="pdf-embed__popup-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <g transform="translate(12 12) scale(1.1) translate(-12 -12)">
-            <path
-              d="M8 4v7a4 4 0 0 0 8 0V4"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-            />
-            <path
-              d="M5 20h14"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-            />
-          </g>
+        <svg
+          class="pdf-embed__popup-icon"
+          xmlns="http://www.w3.org/2000/svg"
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+          <path d="M7 5v5a5 5 0 0 0 10 0v-5" />
+          <path d="M5 19h14" />
         </svg>
         Underline
         <span class="pdf-embed__popup-shortcut">
@@ -2541,7 +2821,7 @@ export function PdfViewer({
             <button
               type="button"
               className="pdf-embed__hint-action"
-              onClick={() => void reloadAnnotations()}
+              onClick={() => void reloadAnnotations({ force: true })}
               aria-label={t("annotationsReload")}
               data-tooltip={t("annotationsReload")}
             >

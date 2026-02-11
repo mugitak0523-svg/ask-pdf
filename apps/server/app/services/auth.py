@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from uuid import UUID
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from jose import JWTError, jwk, jwt
@@ -10,6 +11,14 @@ from jose import JWTError, jwk, jwt
 class AuthUser:
     user_id: str
     email: str | None = None
+    is_guest: bool = False
+
+
+def _normalize_guest_token(token: str) -> str | None:
+    try:
+        return str(UUID(token))
+    except (TypeError, ValueError):
+        return None
 
 
 def _get_auth_config_from_app(app) -> tuple[str, str]:
@@ -25,12 +34,25 @@ def _get_jwks_from_app(app) -> list[dict]:
 def get_current_user(
     request: Request,
     authorization: str | None = Header(default=None),
+    x_guest_token: str | None = Header(default=None, alias="X-Guest-Token"),
 ) -> AuthUser:
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
+    token = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.replace("Bearer ", "", 1).strip()
+        try:
+            return get_user_from_token(request, token)
+        except HTTPException:
+            guest_id = _normalize_guest_token(token)
+            if guest_id:
+                return AuthUser(user_id=guest_id, is_guest=True)
+            raise
 
-    token = authorization.replace("Bearer ", "", 1).strip()
-    return get_user_from_token(request, token)
+    if x_guest_token:
+        guest_id = _normalize_guest_token(x_guest_token)
+        if guest_id:
+            return AuthUser(user_id=guest_id, is_guest=True)
+
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
 
 
 def get_user_from_token(request: Request, token: str) -> AuthUser:
@@ -97,6 +119,16 @@ def get_user_from_token_app(app, token: str) -> AuthUser:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
     return AuthUser(user_id=user_id, email=payload.get("email"))
+
+
+def get_user_from_token_or_guest_app(app, token: str, token_type: str | None) -> AuthUser:
+    if token_type == "guest" or token_type is None:
+        guest_id = _normalize_guest_token(token)
+        if guest_id:
+            return AuthUser(user_id=guest_id, is_guest=True)
+        if token_type == "guest":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    return get_user_from_token_app(app, token)
 
 
 AuthDependency = Depends(get_current_user)

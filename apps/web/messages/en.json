@@ -102,6 +102,22 @@
     "planGuest": "Guest",
     "planPlus": "Plus",
     "planPro": "Pro",
+    "planUpgradeTitle": "Upgrade your plan",
+    "planBenefitPdf": "More PDFs and larger files",
+    "planBenefitChat": "More questions",
+    "planPerMonth": "/ month",
+    "planCurrent": "Current plan",
+    "planUpgrade": "Upgrade plan",
+    "planUpdating": "Updating…",
+    "planHint": "You can change anytime.",
+    "planFiles": "{value} PDFs",
+    "planFileSize": "{value}MB max",
+    "planTableTitle": "Plan comparison",
+    "planTableDesc": "See what each plan includes.",
+    "planTablePrice": "Monthly price",
+    "planTableFiles": "Max PDFs",
+    "planTableFileSize": "Max file size",
+    "planTableChats": "Chats per day",
     "usageThisMonth": "Usage this month",
     "usageThisMonthDesc": "Tokens / Pages",
     "usageTab": "Usage",
@@ -134,24 +150,34 @@
     "usage": {
       "summary": "{tokens} tokens / {pages} pages"
     },
+    "usageRing": {
+      "rate": "Usage {value}%",
+      "used": "Used {used}/{limit}",
+      "remaining": "Remaining today {value}",
+      "reset": "Reset in {value}"
+    },
     "common": {
       "loading": "Loading…",
       "fetchFailed": "Failed to fetch",
       "noData": "No data",
       "unset": "Not set",
+      "unlimited": "Unlimited",
       "reload": "Reload",
       "yen": "{value} JPY",
       "errorOccurred": "Something went wrong",
       "on": "On",
       "off": "Off",
       "delete": "Delete",
-      "untitled": "Untitled"
+      "untitled": "Untitled",
+      "limitTitle": "Limit reached",
+      "limitDesc": "This action exceeds your current plan. Upgrade or sign in to continue.",
+      "upgradePlan": "Change plan"
     },
     "errors": {
       "documentLimit": "Document limit reached ({limit})",
       "fileSizeLimit": "File size exceeds {limit}MB",
       "threadLimit": "Thread limit reached ({limit})",
-      "messageLimit": "Message limit reached ({limit})"
+      "messageLimit": "Daily message limit reached ({limit})"
     },
     "auth": {
       "notSignedIn": "Not signed in",
@@ -189,8 +215,10 @@
     },
     "viewer": {
       "noDocument": "No PDF selected",
-      "empty": "PDF will appear here",
-      "selectPdf": "Select a PDF"
+      "empty": "Upload or select a PDF",
+      "selectPdf": "Select a PDF",
+      "uploadAction": "Upload",
+      "emptySuffix": "or select a PDF"
     },
     "chat": {
       "allChatList": "All chats",

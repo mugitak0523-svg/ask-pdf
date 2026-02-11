@@ -87,17 +87,71 @@ type ChunkCache = {
 };
 
 const DEFAULT_PLAN_LIMITS: Record<PlanName, PlanLimits> = {
-  guest: { maxFiles: 3, maxFileMb: 10, maxMessagesPerThread: 10, maxThreadsPerDocument: null },
-  free: { maxFiles: 10, maxFileMb: 20, maxMessagesPerThread: 20, maxThreadsPerDocument: null },
-  plus: { maxFiles: 50, maxFileMb: 30, maxMessagesPerThread: 50, maxThreadsPerDocument: 5 },
+  guest: { maxFiles: 1, maxFileMb: 10, maxMessagesPerThread: 5, maxThreadsPerDocument: null },
+  free: { maxFiles: 5, maxFileMb: 20, maxMessagesPerThread: 20, maxThreadsPerDocument: null },
+  plus: { maxFiles: 30, maxFileMb: 30, maxMessagesPerThread: 100, maxThreadsPerDocument: null },
   pro: { maxFiles: null, maxFileMb: 50, maxMessagesPerThread: null, maxThreadsPerDocument: null },
+};
+
+const PLAN_PRICES: Record<Exclude<PlanName, "guest">, string> = {
+  free: "¥0",
+  plus: "¥1,280",
+  pro: "¥2,980",
 };
 
 const STORAGE_KEY = "askpdf.ui.v1";
 const DOCUMENTS_SEEN_KEY = "askpdf.docs.seen.v1";
+const GUEST_TOKEN_KEY = "askpdf.guest.token.v1";
 const CLIENT_MATCH_MAX = 20;
 const RAG_SEARCH_MODE = (process.env.NEXT_PUBLIC_RAG_SEARCH_MODE ?? "client").toLowerCase();
 const USE_CLIENT_RAG = RAG_SEARCH_MODE === "client";
+
+type AuthParams = {
+  token: string;
+  tokenType: "supabase" | "guest";
+  headers: Record<string, string>;
+};
+
+const isValidUuid = (value: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value
+  );
+
+const getOrCreateGuestToken = () => {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = window.localStorage.getItem(GUEST_TOKEN_KEY);
+    if (stored && isValidUuid(stored)) return stored;
+    const next = crypto.randomUUID();
+    window.localStorage.setItem(GUEST_TOKEN_KEY, next);
+    return next;
+  } catch {
+    return null;
+  }
+};
+
+const getAuthParams = async (): Promise<AuthParams | null> => {
+  const session = await supabase.auth.getSession();
+  const accessToken = session.data.session?.access_token;
+  if (accessToken) {
+    return {
+      token: accessToken,
+      tokenType: "supabase",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    };
+  }
+  const guestToken = getOrCreateGuestToken();
+  if (!guestToken) return null;
+  return {
+    token: guestToken,
+    tokenType: "guest",
+    headers: {
+      "X-Guest-Token": guestToken,
+    },
+  };
+};
 
 const normalizeRefs = (value: unknown): ChatRef[] | undefined => {
   if (Array.isArray(value)) return value as ChatRef[];
@@ -225,6 +279,8 @@ export default function Home() {
   const chatMessagesRef = useRef<HTMLDivElement | null>(null);
   const [showChatJump, setShowChatJump] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [loadingMoreMessages, setLoadingMoreMessages] = useState(false);
   const [refPreviewMap, setRefPreviewMap] = useState<
     Record<string, { text: string; metadata?: Record<string, unknown>; documentTitle?: string }>
   >({});
@@ -386,17 +442,14 @@ export default function Home() {
     if (refPreviewMap[key] || refPreviewInFlight.current.has(key)) return;
     refPreviewInFlight.current.add(key);
     try {
-      const accessToken =
-        (await supabase.auth.getSession()).data.session?.access_token ?? "";
-      if (!accessToken) return;
+      const auth = await getAuthParams();
+      if (!auth) return;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const chunkId = getChunkIdFromRef(refId);
       const url = new URL(`${baseUrl}/document-chunks/${chunkId}`);
       if (documentId) url.searchParams.set("document_id", documentId);
       const response = await fetch(url.toString(), {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
+        headers: auth.headers,
       });
       if (!response.ok) return;
       const data = await response.json();
@@ -587,7 +640,6 @@ export default function Home() {
       }
       if (
         parsed.settingsSection === "general" ||
-        parsed.settingsSection === "ai" ||
         parsed.settingsSection === "account" ||
         parsed.settingsSection === "usage" ||
         parsed.settingsSection === "messages" ||
@@ -653,6 +705,7 @@ export default function Home() {
     "h-12-1"
   );
   const [isAuthed, setIsAuthed] = useState(false);
+  const [guestToken, setGuestToken] = useState<string | null>(null);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [docsLoading, setDocsLoading] = useState(false);
   const [docsError, setDocsError] = useState<string | null>(null);
@@ -662,6 +715,21 @@ export default function Home() {
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
   const [selectedDocumentUrl, setSelectedDocumentUrl] = useState<string | null>(null);
   const [selectedDocumentTitle, setSelectedDocumentTitle] = useState<string | null>(null);
+  const [selectedDocumentResult, setSelectedDocumentResult] = useState<any | null>(null);
+  const [selectedDocumentAnnotations, setSelectedDocumentAnnotations] = useState<
+    Record<number, Record<number, any[]>> | null
+  >(null);
+  const bundleCacheRef = useRef<
+    Map<
+      string,
+      {
+        signedUrl: string;
+        expiresAt: number;
+        result: any | null;
+        annotations: Record<number, Record<number, any[]>>;
+      }
+    >
+  >(new Map());
   const [selectedDocumentToken, setSelectedDocumentToken] = useState<string | null>(null);
   const [viewerLoading, setViewerLoading] = useState(false);
   const [viewerError, setViewerError] = useState<string | null>(null);
@@ -674,7 +742,7 @@ export default function Home() {
   const [referenceRequest, setReferenceRequest] = useState<ReferenceRequest | null>(null);
   const [activeRefId, setActiveRefId] = useState<string | null>(null);
   const [settingsSection, setSettingsSection] = useState<
-    "general" | "ai" | "account" | "usage" | "messages" | "manual" | "service" | "faq"
+    "general" | "account" | "usage" | "messages" | "manual" | "service" | "faq"
   >("general");
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
@@ -683,6 +751,15 @@ export default function Home() {
   const [theme, setTheme] = useState<ThemeMode>("system");
   const [plan, setPlan] = useState<PlanName>("guest");
   const [planLimits, setPlanLimits] = useState<PlanLimits>(DEFAULT_PLAN_LIMITS.guest);
+  const [limitModalOpen, setLimitModalOpen] = useState(false);
+  const [limitModalMessage, setLimitModalMessage] = useState<string | null>(null);
+  const [planUpdating, setPlanUpdating] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<Exclude<PlanName, "guest">>("plus");
+  const [dailyMessageUsage, setDailyMessageUsage] = useState<{
+    used: number;
+    limit: number | null;
+    periodStart: string | null;
+  } | null>(null);
   const restoreRef = useRef<any | null>(null);
   const restoreDoneRef = useRef(false);
   const [isHydrated, setIsHydrated] = useState(false);
@@ -700,6 +777,12 @@ export default function Home() {
     } catch {
       // Ignore malformed cache
     }
+  }, [isHydrated]);
+
+  useEffect(() => {
+    if (!isHydrated) return;
+    const token = getOrCreateGuestToken();
+    setGuestToken(token);
   }, [isHydrated]);
 
   const normalizeUsageBucket = (bucket: any): UsageBucket => ({
@@ -723,18 +806,23 @@ export default function Home() {
     Number.isFinite(value) ? value.toLocaleString(locale) : "0";
 
   const SETTINGS_TAB_ID = "__settings__";
+  const canUseApi = isAuthed || Boolean(guestToken);
+  const openLimitModal = (message?: string | null) => {
+    setLimitModalMessage(message ?? null);
+    setLimitModalOpen(true);
+  };
+
+  useEffect(() => {
+    if (!canUseApi) return;
+    void loadDailyMessageUsage();
+  }, [canUseApi, planLimits.maxMessagesPerThread]);
 
   const mainStyle = useMemo(
     () => ({
       gridTemplateColumns: chatOpen
         ? `minmax(0, 1fr) 6px ${chatWidth}px`
         : "minmax(0, 1fr) 0px 0px",
-    }),
-    [chatOpen, chatWidth]
-  );
-  const topbarStyle = useMemo(
-    () => ({
-      gridTemplateColumns: chatOpen
+      ["--main-columns" as any]: chatOpen
         ? `minmax(0, 1fr) 6px ${chatWidth}px`
         : "minmax(0, 1fr) 0px 0px",
     }),
@@ -749,7 +837,7 @@ export default function Home() {
       if (!container) return;
       const rect = container.getBoundingClientRect();
       const nextWidth = rect.right - moveEvent.clientX;
-      const maxWidth = rect.width / 2;
+      const maxWidth = rect.width * 0.8;
       const clamped = Math.min(Math.max(nextWidth, 280), maxWidth);
       setChatWidth(clamped);
     };
@@ -800,26 +888,31 @@ export default function Home() {
       setIsAuthed(Boolean(data.session));
       if (data.session) {
         setUserEmail(data.session.user?.email ?? null);
-        void loadDocuments(data.session.access_token);
-        void loadPlan(data.session.access_token);
+        void loadDocuments();
+        void loadPlan();
       } else {
         setUserEmail(null);
         setPlan("guest");
         setPlanLimits(DEFAULT_PLAN_LIMITS.guest);
+        void loadDocuments();
+        void loadAllChats();
       }
     });
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
       setIsAuthed(Boolean(session));
+      if (event !== "SIGNED_IN" && event !== "TOKEN_REFRESHED") {
+        return;
+      }
       if (session) {
         setUserEmail(session.user?.email ?? null);
-        void loadDocuments(session.access_token);
-        void loadPlan(session.access_token);
+        void loadDocuments();
+        void loadPlan();
         if (selectedDocumentId) {
-          void loadChats(selectedDocumentId, session.access_token);
+          void loadChats(selectedDocumentId);
         } else {
-          void loadAllChats(session.access_token);
+          void loadAllChats();
         }
       } else {
         setUserEmail(null);
@@ -831,6 +924,8 @@ export default function Home() {
         setChatThreads([]);
         setActiveChatId(null);
         setAllChatThreads([]);
+        void loadDocuments();
+        void loadAllChats();
       }
     });
     return () => {
@@ -953,7 +1048,7 @@ export default function Home() {
     if (restoreDoneRef.current) return;
     if (!restoreRef.current) return;
     if (!isHydrated) return;
-    if (!isAuthed) return;
+    if (!canUseApi) return;
     if (docsLoading) return;
     const restore = restoreRef.current;
     const docMap = new Map(documents.map((doc) => [doc.id, doc.title]));
@@ -1020,10 +1115,10 @@ export default function Home() {
     }
 
     restoreDoneRef.current = true;
-  }, [documents, docsLoading, isAuthed, isHydrated, locale]);
+  }, [documents, docsLoading, canUseApi, isHydrated, locale]);
 
   useEffect(() => {
-    if (!isAuthed || (settingsSection !== "account" && settingsSection !== "usage")) {
+    if (!canUseApi || (settingsSection !== "account" && settingsSection !== "usage")) {
       return;
     }
     let active = true;
@@ -1031,16 +1126,11 @@ export default function Home() {
       setUsageLoading(true);
       setUsageError(null);
       try {
-        const session = await supabase.auth.getSession();
-        const accessToken = session.data.session?.access_token;
-        if (!accessToken) {
-          throw new Error("Not authenticated");
-        }
+        const auth = await getAuthParams();
+        if (!auth) throw new Error("Not authenticated");
         const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
         const response = await fetch(`${baseUrl}/usage/summary`, {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
+          headers: auth.headers,
         });
         if (!response.ok) {
           throw new Error(`Failed to load usage (${response.status})`);
@@ -1067,24 +1157,51 @@ export default function Home() {
     return () => {
       active = false;
     };
-  }, [isAuthed, settingsSection]);
+  }, [canUseApi, settingsSection]);
 
   useEffect(() => {
     const target = chatMessagesRef.current;
     if (!target) return;
+    let loadingOlder = false;
     const onScroll = () => {
       const threshold = 16;
       const distance =
         target.scrollHeight - target.scrollTop - target.clientHeight;
       setShowChatJump(distance > threshold);
       isNearBottomRef.current = distance <= 120;
+      if (
+        target.scrollTop <= 24 &&
+        hasMoreMessages &&
+        !loadingMoreMessages &&
+        !loadingOlder &&
+        selectedDocumentId &&
+        activeChatId &&
+        canUseApi
+      ) {
+        loadingOlder = true;
+        const before = chatMessages[0]?.createdAt;
+        void loadChatMessages(
+          selectedDocumentId,
+          activeChatId,
+          { before, append: true }
+        ).finally(() => {
+          loadingOlder = false;
+        });
+      }
     };
     onScroll();
     target.addEventListener("scroll", onScroll);
     return () => {
       target.removeEventListener("scroll", onScroll);
     };
-  }, []);
+  }, [
+    hasMoreMessages,
+    loadingMoreMessages,
+    selectedDocumentId,
+    activeChatId,
+    canUseApi,
+    chatMessages,
+  ]);
 
   useEffect(() => {
     if (showThreadList || !selectedDocumentId || chatMessages.length === 0) {
@@ -1105,24 +1222,35 @@ export default function Home() {
   const loadChatMessages = async (
     documentId: string,
     chatId: string,
-    accessToken: string
+    options: { before?: string; append?: boolean; limit?: number } = {}
   ) => {
-    setChatLoading(true);
+    const { before, append = false, limit = 6 } = options;
+    if (append) {
+      setLoadingMoreMessages(true);
+    } else {
+      setChatLoading(true);
+    }
     setChatError(null);
     try {
       chatMessagesAbortRef.current?.abort();
       const controller = new AbortController();
       chatMessagesAbortRef.current = controller;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
-      const response = await fetch(
-        `${baseUrl}/documents/${documentId}/chats/${chatId}/messages`,
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-          signal: controller.signal,
-        }
+      const url = new URL(
+        `${baseUrl}/documents/${documentId}/chats/${chatId}/messages`
       );
+      url.searchParams.set("limit", String(limit));
+      if (before) {
+        url.searchParams.set("before", before);
+      }
+      const auth = await getAuthParams();
+      if (!auth) {
+        throw new Error("Not authenticated");
+      }
+      const response = await fetch(url.toString(), {
+        headers: auth.headers,
+        signal: controller.signal,
+      });
       if (!response.ok) {
         throw new Error(`Failed to load chat messages (${response.status})`);
       }
@@ -1144,13 +1272,26 @@ export default function Home() {
         refs: normalizeRefs(item.refs),
         createdAt: String(item.createdAt ?? new Date().toISOString()),
       }));
-      setChatMessages(messages);
-      requestAnimationFrame(() => {
+      setHasMoreMessages(Boolean(payload?.has_more));
+      if (append) {
+        const scrollRoot = chatMessagesRef.current;
+        const prevHeight = scrollRoot?.scrollHeight ?? 0;
+        const prevTop = scrollRoot?.scrollTop ?? 0;
+        setChatMessages((prev) => [...messages, ...prev]);
         requestAnimationFrame(() => {
-          scrollChatToBottom("auto");
-          isNearBottomRef.current = true;
+          if (!scrollRoot) return;
+          const nextHeight = scrollRoot.scrollHeight;
+          scrollRoot.scrollTop = nextHeight - prevHeight + prevTop;
         });
-      });
+      } else {
+        setChatMessages(messages);
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            scrollChatToBottom("auto");
+            isNearBottomRef.current = true;
+          });
+        });
+      }
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         return;
@@ -1163,12 +1304,12 @@ export default function Home() {
         chatMessagesAbortRef.current = null;
       }
       setChatLoading(false);
+      setLoadingMoreMessages(false);
     }
   };
 
   const loadChats = async (
     documentId: string,
-    accessToken: string,
     options: { autoOpen?: boolean } = {}
   ): Promise<
     { id: string; title: string | null; updatedAt: string | null; lastMessage?: string | null }[]
@@ -1180,10 +1321,12 @@ export default function Home() {
       const controller = new AbortController();
       chatsAbortRef.current = controller;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const auth = await getAuthParams();
+      if (!auth) {
+        throw new Error("Not authenticated");
+      }
       const response = await fetch(`${baseUrl}/documents/${documentId}/chats`, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
+        headers: auth.headers,
         signal: controller.signal,
       });
       if (!response.ok) {
@@ -1208,6 +1351,7 @@ export default function Home() {
         setChatThreads([]);
         setActiveChatId(null);
         setChatMessages([]);
+        setHasMoreMessages(false);
         setShowThreadList(true);
         return [];
       } else {
@@ -1216,7 +1360,7 @@ export default function Home() {
           const nextChatId = threads[0].id;
           setActiveChatId(nextChatId);
           setShowThreadList(false);
-          await loadChatMessages(documentId, nextChatId, accessToken);
+          await loadChatMessages(documentId, nextChatId);
         } else {
           setShowThreadList(true);
         }
@@ -1231,6 +1375,7 @@ export default function Home() {
       setChatThreads([]);
       setActiveChatId(null);
       setChatMessages([]);
+      setHasMoreMessages(false);
       return [];
     } finally {
       if (chatsAbortRef.current) {
@@ -1239,17 +1384,67 @@ export default function Home() {
     }
   };
 
-  const loadAllChats = async (accessToken: string) => {
+  const loadLatestChat = async (
+    documentId: string
+  ): Promise<{ id: string; title: string | null; updatedAt: string | null } | null> => {
+    setChatError(null);
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const auth = await getAuthParams();
+      if (!auth) {
+        throw new Error("Not authenticated");
+      }
+      const response = await fetch(`${baseUrl}/documents/${documentId}/chats/latest`, {
+        headers: auth.headers,
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load latest chat (${response.status})`);
+      }
+      const payload = await response.json();
+      const chat = payload?.chat;
+      if (!chat) {
+        setChatThreads([]);
+        setActiveChatId(null);
+        setChatMessages([]);
+        setHasMoreMessages(false);
+        setShowThreadList(false);
+        return null;
+      }
+      const normalized = {
+        id: String(chat.id),
+        title: chat.title ?? null,
+        updatedAt: chat.updated_at ?? null,
+      };
+      setChatThreads([normalized]);
+      setActiveChatId(normalized.id);
+      setShowThreadList(false);
+      await loadChatMessages(documentId, normalized.id);
+      return normalized;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load latest chat";
+      setChatError(message);
+      setChatThreads([]);
+      setActiveChatId(null);
+      setChatMessages([]);
+      setHasMoreMessages(false);
+      setShowThreadList(false);
+      return null;
+    }
+  };
+
+  const loadAllChats = async () => {
     setChatError(null);
     try {
       allChatsAbortRef.current?.abort();
       const controller = new AbortController();
       allChatsAbortRef.current = controller;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const auth = await getAuthParams();
+      if (!auth) {
+        throw new Error("Not authenticated");
+      }
       const response = await fetch(`${baseUrl}/chats`, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
+        headers: auth.headers,
         signal: controller.signal,
       });
       if (!response.ok) {
@@ -1292,14 +1487,15 @@ export default function Home() {
 
   const createChat = async (
     documentId: string,
-    accessToken: string,
     title: string
   ) => {
     const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+    const auth = await getAuthParams();
+    if (!auth) return null;
     const response = await fetch(`${baseUrl}/documents/${documentId}/chats`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${accessToken}`,
+        ...auth.headers,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -1315,7 +1511,7 @@ export default function Home() {
     return { id: chatId, title, updatedAt: new Date().toISOString() };
   };
 
-  const loadDocuments = async (accessToken: string) => {
+  const loadDocuments = async () => {
     setDocsLoading(true);
     setDocsError(null);
     try {
@@ -1323,10 +1519,12 @@ export default function Home() {
       const controller = new AbortController();
       documentsAbortRef.current = controller;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const auth = await getAuthParams();
+      if (!auth) {
+        throw new Error("Not authenticated");
+      }
       const response = await fetch(`${baseUrl}/documents`, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
+        headers: auth.headers,
         signal: controller.signal,
       });
       if (!response.ok) {
@@ -1385,14 +1583,11 @@ export default function Home() {
 
   const handleDownloadDocument = async (documentId: string) => {
     try {
-      const session = await supabase.auth.getSession();
-      const accessToken = session.data.session?.access_token;
-      if (!accessToken) return;
+      const auth = await getAuthParams();
+      if (!auth) return;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const response = await fetch(`${baseUrl}/documents/${documentId}/signed-url`, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
+        headers: auth.headers,
       });
       if (!response.ok) {
         throw new Error(`Failed to get signed url (${response.status})`);
@@ -1421,15 +1616,12 @@ export default function Home() {
   const handleDeleteDocument = async (documentId: string) => {
     if (!documentId) return;
     try {
-      const session = await supabase.auth.getSession();
-      const accessToken = session.data.session?.access_token;
-      if (!accessToken) return;
+      const auth = await getAuthParams();
+      if (!auth) return;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const response = await fetch(`${baseUrl}/documents/${documentId}`, {
         method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
+        headers: auth.headers,
       });
       if (!response.ok) {
         throw new Error(`Failed to delete document (${response.status})`);
@@ -1454,17 +1646,14 @@ export default function Home() {
   const handleDeleteChatThread = async (documentId: string, chatId: string) => {
     if (!documentId || !chatId) return;
     try {
-      const session = await supabase.auth.getSession();
-      const accessToken = session.data.session?.access_token;
-      if (!accessToken) return;
+      const auth = await getAuthParams();
+      if (!auth) return;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const response = await fetch(
         `${baseUrl}/documents/${documentId}/chats/${chatId}`,
         {
           method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
+          headers: auth.headers,
         }
       );
       if (!response.ok) {
@@ -1485,10 +1674,7 @@ export default function Home() {
 
   const handleReloadDocuments = async () => {
     try {
-      const session = await supabase.auth.getSession();
-      const accessToken = session.data.session?.access_token;
-      if (!accessToken) return;
-      await loadDocuments(accessToken);
+      await loadDocuments();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to reload documents";
       setDocsError(message);
@@ -1497,14 +1683,11 @@ export default function Home() {
 
   const handleReloadChatsList = async () => {
     try {
-      const session = await supabase.auth.getSession();
-      const accessToken = session.data.session?.access_token;
-      if (!accessToken) return;
       if (!selectedDocumentId) {
-        await loadAllChats(accessToken);
+        await loadAllChats();
         return;
       }
-      await loadChats(selectedDocumentId, accessToken, { autoOpen: false });
+      await loadChats(selectedDocumentId, { autoOpen: false });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to reload chats";
       setChatError(message);
@@ -1528,18 +1711,15 @@ export default function Home() {
       return;
     }
     try {
-      const session = await supabase.auth.getSession();
-      const accessToken = session.data.session?.access_token;
-      if (!accessToken) {
-        throw new Error("Not authenticated");
-      }
+      const auth = await getAuthParams();
+      if (!auth) throw new Error("Not authenticated");
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const response = await fetch(
         `${baseUrl}/documents/${documentId}/chats/${threadId}`,
         {
           method: "PATCH",
           headers: {
-            Authorization: `Bearer ${accessToken}`,
+            ...auth.headers,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ title: nextTitle }),
@@ -1582,13 +1762,15 @@ export default function Home() {
     setPendingRenameChatId(null);
   }, [pendingRenameChatId]);
 
-  const loadPlan = async (accessToken: string) => {
+  const loadPlan = async () => {
     try {
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const auth = await getAuthParams();
+      if (!auth) {
+        throw new Error("Not authenticated");
+      }
       const response = await fetch(`${baseUrl}/plans/me`, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
+        headers: auth.headers,
       });
       if (!response.ok) {
         throw new Error(`Failed to load plan (${response.status})`);
@@ -1602,6 +1784,7 @@ export default function Home() {
           : "free";
       const limits = payload?.limits ?? {};
       setPlan(nextPlan);
+      setSelectedPlan(nextPlan);
       setPlanLimits({
         maxFiles:
           typeof limits.maxFiles === "number" ? limits.maxFiles : DEFAULT_PLAN_LIMITS[nextPlan].maxFiles,
@@ -1617,13 +1800,96 @@ export default function Home() {
             : DEFAULT_PLAN_LIMITS[nextPlan].maxThreadsPerDocument,
       });
     } catch {
-      setPlan("free");
-      setPlanLimits(DEFAULT_PLAN_LIMITS.free);
+      const fallback = isAuthed ? "free" : "guest";
+      setPlan(fallback);
+      setPlanLimits(DEFAULT_PLAN_LIMITS[fallback]);
+    }
+  };
+
+  const loadDailyMessageUsage = async () => {
+    try {
+      const auth = await getAuthParams();
+      if (!auth) return;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/usage/messages/daily`, {
+        headers: auth.headers,
+      });
+      if (!response.ok) return;
+      const payload = await response.json();
+      setDailyMessageUsage({
+        used: Number(payload?.used ?? 0),
+        limit:
+          typeof payload?.limit === "number"
+            ? payload.limit
+            : payload?.limit === null
+              ? null
+              : null,
+        periodStart: payload?.periodStart ?? null,
+      });
+    } catch {
+      // ignore
+    }
+  };
+
+  const updatePlan = async (
+    nextPlan: Exclude<PlanName, "guest">,
+    options: { closeModal?: boolean } = {}
+  ) => {
+    setPlanUpdating(true);
+    try {
+      const auth = await getAuthParams();
+      if (!auth || auth.tokenType !== "supabase") {
+        openLimitModal();
+        return;
+      }
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/plans/me`, {
+        method: "PATCH",
+        headers: {
+          ...auth.headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ plan: nextPlan }),
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to update plan (${response.status})`);
+      }
+      const payload = await response.json();
+      const planName =
+        payload?.plan === "free" || payload?.plan === "plus" || payload?.plan === "pro"
+          ? payload.plan
+          : nextPlan;
+      const limits = payload?.limits ?? {};
+      setPlan(planName);
+      setSelectedPlan(planName);
+      setPlanLimits({
+        maxFiles:
+          typeof limits.maxFiles === "number" ? limits.maxFiles : DEFAULT_PLAN_LIMITS[planName].maxFiles,
+        maxFileMb:
+          typeof limits.maxFileMb === "number" ? limits.maxFileMb : DEFAULT_PLAN_LIMITS[planName].maxFileMb,
+        maxMessagesPerThread:
+          typeof limits.maxMessagesPerThread === "number"
+            ? limits.maxMessagesPerThread
+            : DEFAULT_PLAN_LIMITS[planName].maxMessagesPerThread,
+        maxThreadsPerDocument:
+          typeof limits.maxThreadsPerDocument === "number"
+            ? limits.maxThreadsPerDocument
+            : DEFAULT_PLAN_LIMITS[planName].maxThreadsPerDocument,
+      });
+      void loadDailyMessageUsage();
+      if (options.closeModal) {
+        setLimitModalOpen(false);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to update plan";
+      setChatError(message);
+    } finally {
+      setPlanUpdating(false);
     }
   };
 
   const handleUploadClick = () => {
-    if (!isAuthed) return;
+    if (!canUseApi) return;
     fileInputRef.current?.click();
   };
 
@@ -1631,7 +1897,8 @@ export default function Home() {
     const file = event.target.files?.[0];
     if (!file) return;
     if (planLimits.maxFiles !== null && documents.length >= planLimits.maxFiles) {
-      setDocsError(t("errors.documentLimit", { limit: planLimits.maxFiles }));
+      const message = t("errors.documentLimit", { limit: planLimits.maxFiles });
+      openLimitModal(message);
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
@@ -1639,32 +1906,39 @@ export default function Home() {
       planLimits.maxFileMb !== null &&
       file.size > planLimits.maxFileMb * 1024 * 1024
     ) {
-      setDocsError(t("errors.fileSizeLimit", { limit: planLimits.maxFileMb }));
+      const message = t("errors.fileSizeLimit", { limit: planLimits.maxFileMb });
+      openLimitModal(message);
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
     setUploading(true);
     setDocsError(null);
     try {
-      const session = await supabase.auth.getSession();
-      const accessToken = session.data.session?.access_token;
-      if (!accessToken) {
-        throw new Error("Not authenticated");
-      }
+      const auth = await getAuthParams();
+      if (!auth) throw new Error("Not authenticated");
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const form = new FormData();
       form.append("file", file);
       const response = await fetch(`${baseUrl}/documents/index`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${accessToken}`,
+          ...auth.headers,
         },
         body: form,
       });
+      if (response.status === 403 || response.status === 413) {
+        const message =
+          response.status === 413
+            ? t("errors.fileSizeLimit", { limit: planLimits.maxFileMb ?? "?" })
+            : t("errors.documentLimit", { limit: planLimits.maxFiles ?? "?" });
+        openLimitModal(message);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
       if (!response.ok) {
         throw new Error(`Upload failed (${response.status})`);
       }
-      await loadDocuments(accessToken);
+      await loadDocuments();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Upload failed";
       setDocsError(message);
@@ -1687,6 +1961,8 @@ export default function Home() {
       return [...prev, { id: doc.id, title: doc.title }];
     });
     setSelectedDocumentUrl(null);
+    setSelectedDocumentResult(null);
+    setSelectedDocumentAnnotations(null);
     setViewerError(null);
     setViewerLoading(true);
     setReferenceRequest(null);
@@ -1694,49 +1970,86 @@ export default function Home() {
     setChatMessages([]);
     setChatThreads([]);
     setActiveChatId(null);
+    setHasMoreMessages(false);
+    setLoadingMoreMessages(false);
     setShowThreadList(false);
     setAllChatThreads([]);
     try {
-      const session = await supabase.auth.getSession();
-      const accessToken = session.data.session?.access_token;
-      if (!accessToken) {
-        throw new Error("Not authenticated");
-      }
-      setSelectedDocumentToken(accessToken);
+      const auth = await getAuthParams();
+      if (!auth) throw new Error("Not authenticated");
+      setSelectedDocumentToken(auth.token);
       if (USE_CLIENT_RAG) {
-        void loadDocumentChunkCache(doc.id, accessToken);
+        void loadDocumentChunkCache(doc.id);
       }
-      const threads = await loadChats(doc.id, accessToken, {
-        autoOpen: options.autoOpenChat ?? true,
-      });
-      if (options.restoreChatId) {
-        const target = options.restoreChatId;
-        const exists = threads.some((thread) => thread.id === target);
-        if (exists) {
+      const chatsTask = (async () => {
+        const chatsStart = performance.now();
+        if (options.restoreChatId) {
+          const target = options.restoreChatId;
           setActiveChatId(target);
           setShowThreadList(false);
-          await loadChatMessages(doc.id, target, accessToken);
+          await loadChatMessages(doc.id, target);
+        } else if (options.autoOpenChat ?? true) {
+          await loadLatestChat(doc.id);
+        } else {
+          await loadChats(doc.id, { autoOpen: false });
         }
-      }
+        console.info(
+          "[perf] loadChats",
+          Math.round(performance.now() - chatsStart),
+          "ms"
+        );
+      })().catch((error) => {
+        console.warn("[loadChats] failed", error);
+      });
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       signedUrlAbortRef.current?.abort();
       const controller = new AbortController();
       signedUrlAbortRef.current = controller;
-      const response = await fetch(`${baseUrl}/documents/${doc.id}/signed-url`, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        throw new Error(`Failed to load PDF (${response.status})`);
+      const signedStart = performance.now();
+      const cachedBundle = bundleCacheRef.current.get(doc.id);
+      if (
+        cachedBundle &&
+        cachedBundle.signedUrl &&
+        cachedBundle.expiresAt * 1000 > Date.now() + 30000
+      ) {
+        setSelectedDocumentUrl(cachedBundle.signedUrl);
+        setSelectedDocumentResult(cachedBundle.result ?? null);
+        setSelectedDocumentAnnotations(cachedBundle.annotations ?? {});
+      } else {
+        const response = await fetch(`${baseUrl}/documents/${doc.id}/bundle`, {
+          headers: auth.headers,
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to load PDF (${response.status})`);
+        }
+        const payload = await response.json();
+        const url = String(payload.signed_url ?? "");
+        if (!url) {
+          throw new Error("Signed URL is missing");
+        }
+        const annotations =
+          payload.annotations && typeof payload.annotations === "object"
+            ? payload.annotations
+            : {};
+        setSelectedDocumentUrl(url);
+        setSelectedDocumentResult(payload.result ?? null);
+        setSelectedDocumentAnnotations(annotations);
+        if (typeof payload.expires_at === "number") {
+          bundleCacheRef.current.set(doc.id, {
+            signedUrl: url,
+            expiresAt: payload.expires_at,
+            result: payload.result ?? null,
+            annotations,
+          });
+        }
+        console.info(
+          "[perf] bundle",
+          Math.round(performance.now() - signedStart),
+          "ms"
+        );
       }
-      const payload = await response.json();
-      const url = String(payload.signed_url ?? "");
-      if (!url) {
-        throw new Error("Signed URL is missing");
-      }
-      setSelectedDocumentUrl(url);
+      void chatsTask;
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         return;
@@ -1757,6 +2070,8 @@ export default function Home() {
       setSelectedDocumentId(null);
       setSelectedDocumentTitle(t("settingsTitle"));
       setSelectedDocumentUrl(null);
+      setSelectedDocumentResult(null);
+      setSelectedDocumentAnnotations(null);
       setViewerError(null);
       setViewerLoading(false);
       setReferenceRequest(null);
@@ -1780,16 +2095,18 @@ export default function Home() {
         setSelectedDocumentId(null);
         setSelectedDocumentTitle(null);
         setSelectedDocumentUrl(null);
+        setSelectedDocumentResult(null);
+        setSelectedDocumentAnnotations(null);
         setViewerError(null);
         setChatMessages([]);
         setChatThreads([]);
         setActiveChatId(null);
-        supabase.auth.getSession().then(({ data }) => {
-          const accessToken = data.session?.access_token;
-          if (accessToken) {
-            void loadAllChats(accessToken);
+        void (async () => {
+          const auth = await getAuthParams();
+          if (auth) {
+            void loadAllChats();
           }
-        });
+        })();
       }
     }
   };
@@ -1863,9 +2180,8 @@ export default function Home() {
     try {
       setActiveRefId(refKey);
       setReferenceRequest(null);
-      const session = await supabase.auth.getSession();
-      const accessToken = session.data.session?.access_token;
-      if (!accessToken) {
+      const auth = await getAuthParams();
+      if (!auth) {
         setActiveRefId(null);
         return;
       }
@@ -1876,9 +2192,7 @@ export default function Home() {
       const response = await fetch(
         `${baseUrl}/documents/${targetDocumentId}/chunks/${chunkId}`,
         {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
+          headers: auth.headers,
           signal: controller.signal,
         }
       );
@@ -1951,6 +2265,53 @@ export default function Home() {
           ? t("planPro")
           : t("planFree");
 
+  const planRows: {
+    key: string;
+    label: string;
+    values: Record<PlanName, string>;
+  }[] = [
+    {
+      key: "price",
+      label: t("planTablePrice"),
+      values: {
+        guest: "¥0",
+        free: PLAN_PRICES.free,
+        plus: PLAN_PRICES.plus,
+        pro: PLAN_PRICES.pro,
+      },
+    },
+    {
+      key: "files",
+      label: t("planTableFiles"),
+      values: {
+        guest: String(DEFAULT_PLAN_LIMITS.guest.maxFiles ?? t("common.unlimited")),
+        free: String(DEFAULT_PLAN_LIMITS.free.maxFiles ?? t("common.unlimited")),
+        plus: String(DEFAULT_PLAN_LIMITS.plus.maxFiles ?? t("common.unlimited")),
+        pro: t("common.unlimited"),
+      },
+    },
+    {
+      key: "size",
+      label: t("planTableFileSize"),
+      values: {
+        guest: `${DEFAULT_PLAN_LIMITS.guest.maxFileMb ?? "-"}MB`,
+        free: `${DEFAULT_PLAN_LIMITS.free.maxFileMb ?? "-"}MB`,
+        plus: `${DEFAULT_PLAN_LIMITS.plus.maxFileMb ?? "-"}MB`,
+        pro: `${DEFAULT_PLAN_LIMITS.pro.maxFileMb ?? "-"}MB`,
+      },
+    },
+    {
+      key: "chats",
+      label: t("planTableChats"),
+      values: {
+        guest: String(DEFAULT_PLAN_LIMITS.guest.maxMessagesPerThread ?? t("common.unlimited")),
+        free: String(DEFAULT_PLAN_LIMITS.free.maxMessagesPerThread ?? t("common.unlimited")),
+        plus: String(DEFAULT_PLAN_LIMITS.plus.maxMessagesPerThread ?? t("common.unlimited")),
+        pro: t("common.unlimited"),
+      },
+    },
+  ];
+
   const formatRelativeTime = (value: string | null) => {
     if (!value) return "";
     const date = new Date(value);
@@ -2008,18 +2369,18 @@ export default function Home() {
     return sum;
   };
 
-  const loadDocumentChunkCache = async (documentId: string, accessToken: string) => {
+  const loadDocumentChunkCache = async (documentId: string) => {
     if (!documentId) return null;
     const cached = documentChunkCacheRef.current.get(documentId);
     if (cached) return cached;
     const inflight = documentChunkLoadRef.current.get(documentId);
     if (inflight) return inflight;
     const promise = (async () => {
+      const auth = await getAuthParams();
+      if (!auth) return null;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const response = await fetch(`${baseUrl}/documents/${documentId}/chunks`, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
+        headers: auth.headers,
       });
       if (!response.ok) {
         throw new Error(`Failed to load chunks (${response.status})`);
@@ -2058,16 +2419,14 @@ export default function Home() {
     }
   };
 
-  const fetchQueryEmbedding = async (
-    text: string,
-    documentId: string,
-    accessToken: string
-  ) => {
+  const fetchQueryEmbedding = async (text: string, documentId: string) => {
+    const auth = await getAuthParams();
+    if (!auth) return null;
     const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
     const response = await fetch(`${baseUrl}/embeddings`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${accessToken}`,
+        ...auth.headers,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ text, document_id: documentId }),
@@ -2077,15 +2436,11 @@ export default function Home() {
     return Array.isArray(payload.embedding) ? payload.embedding : null;
   };
 
-  const getClientMatches = async (
-    question: string,
-    documentId: string,
-    accessToken: string
-  ) => {
+  const getClientMatches = async (question: string, documentId: string) => {
     if (!USE_CLIENT_RAG) return null;
     const cache = documentChunkCacheRef.current.get(documentId);
     if (!cache || cache.chunks.length === 0) return null;
-    const embedding = await fetchQueryEmbedding(question, documentId, accessToken);
+    const embedding = await fetchQueryEmbedding(question, documentId);
     if (!embedding) return null;
     const query = buildEmbeddingVector(embedding);
     if (!query) return null;
@@ -2111,34 +2466,16 @@ export default function Home() {
     if (!trimmed) return;
     if (chatSending) return;
     if (!selectedDocumentId || !activeChatId) return;
-    const userMessageCount = chatMessages.filter((msg) => msg.role === "user").length;
-    if (
-      planLimits.maxMessagesPerThread !== null &&
-      userMessageCount >= planLimits.maxMessagesPerThread
-    ) {
-      setChatError(t("errors.messageLimit", { limit: planLimits.maxMessagesPerThread }));
-      return;
-    }
-    const message: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: "user",
-      text: trimmed,
-      createdAt: new Date().toISOString(),
-    };
-    setChatMessages((prev) => [...prev, message]);
-    setChatInput("");
-    void requestAssistantReply(trimmed);
     try {
-      const session = await supabase.auth.getSession();
-      const accessToken = session.data.session?.access_token;
-      if (!accessToken) return;
+      const auth = await getAuthParams();
+      if (!auth) return;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const response = await fetch(
         `${baseUrl}/documents/${selectedDocumentId}/chats/${activeChatId}/messages`,
         {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${accessToken}`,
+            ...auth.headers,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -2147,24 +2484,28 @@ export default function Home() {
           }),
         }
       );
+      if (response.status === 403) {
+        const messageText = t("errors.messageLimit", {
+          limit: planLimits.maxMessagesPerThread ?? "?",
+        });
+        openLimitModal(messageText);
+        return;
+      }
       if (!response.ok) {
         throw new Error(`Failed to send message (${response.status})`);
       }
       const payload = await response.json();
       const saved = payload?.message;
-      if (saved?.id) {
-        setChatMessages((prev) =>
-          prev.map((item) =>
-            item.id === message.id
-              ? {
-                  ...item,
-                  id: String(saved.id),
-                  createdAt: String(saved.createdAt ?? item.createdAt),
-                }
-              : item
-          )
-        );
-      }
+      if (!saved?.id) return;
+      const message: ChatMessage = {
+        id: String(saved.id),
+        role: "user",
+        text: trimmed,
+        createdAt: String(saved.createdAt ?? new Date().toISOString()),
+      };
+      setChatMessages((prev) => [...prev, message]);
+      setChatInput("");
+      void requestAssistantReply(trimmed);
     } catch (error) {
       const messageText =
         error instanceof Error ? error.message : "Failed to send message";
@@ -2194,19 +2535,16 @@ export default function Home() {
     setChatError(null);
     streamingMessageIdRef.current = pendingId;
     try {
-      const session = await supabase.auth.getSession();
-      const accessToken = session.data.session?.access_token;
-      if (!accessToken) {
-        throw new Error("Not authenticated");
-      }
+      const auth = await getAuthParams();
+      if (!auth) throw new Error("Not authenticated");
       const clientMatches =
-        USE_CLIENT_RAG && selectedDocumentId && accessToken
-          ? await getClientMatches(question, selectedDocumentId, accessToken)
+        USE_CLIENT_RAG && selectedDocumentId
+          ? await getClientMatches(question, selectedDocumentId)
           : null;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const wsUrl = `${baseUrl.replace(/^http/, "ws")}/documents/${selectedDocumentId}/chats/${activeChatId}/assistant/ws?token=${encodeURIComponent(
-        accessToken
-      )}`;
+        auth.token
+      )}&token_type=${encodeURIComponent(auth.tokenType)}`;
       await new Promise<void>((resolve, reject) => {
         const socket = new WebSocket(wsUrl);
         chatSocketRef.current = socket;
@@ -2251,6 +2589,12 @@ export default function Home() {
                 status === "error" && !saved.text
                   ? t("chat.answerFailed")
                   : String(saved.text ?? "");
+              if (saved.status === "ok") {
+                setDailyMessageUsage((prev) => {
+                  if (!prev) return prev;
+                  return { ...prev, used: prev.used + 1 };
+                });
+              }
               setChatMessages((prev) =>
                 prev.map((item) =>
                   item.id === pendingId
@@ -2267,6 +2611,18 @@ export default function Home() {
               );
             }
           } else if (data.type === "error") {
+            const messageText = String(data.message ?? "");
+            if (messageText.toLowerCase().includes("daily message limit")) {
+              openLimitModal(
+                t("errors.messageLimit", {
+                  limit: planLimits.maxMessagesPerThread ?? "?",
+                })
+              );
+              setChatMessages((prev) =>
+                prev.filter((item) => item.id !== pendingId)
+              );
+              return;
+            }
             setChatMessages((prev) =>
               prev.map((item) =>
                 item.id === pendingId
@@ -2412,33 +2768,6 @@ export default function Home() {
         </>
       );
     }
-    if (settingsSection === "ai") {
-      return (
-        <>
-          <h2 className="settings__title">{t("ai")}</h2>
-          <div className="settings__group">
-            <div className="settings__item">
-              <div>
-                <div className="settings__item-title">{t("aiTuning")}</div>
-                <div className="settings__item-desc">{t("aiTuningDesc")}</div>
-              </div>
-              <button type="button" className="settings__btn">
-                {t("open")}
-              </button>
-            </div>
-            <div className="settings__item">
-              <div>
-                <div className="settings__item-title">{t("aiPersonalize")}</div>
-                <div className="settings__item-desc">{t("aiPersonalizeDesc")}</div>
-              </div>
-              <button type="button" className="settings__btn">
-                {t("open")}
-              </button>
-            </div>
-          </div>
-        </>
-      );
-    }
     if (settingsSection === "account") {
       return (
         <>
@@ -2469,6 +2798,81 @@ export default function Home() {
               </div>
               <div className="settings__value">
                 {planLabel}
+              </div>
+            </div>
+            <div className="settings__item settings__item--stack">
+              <div>
+                <div className="settings__item-title">{t("planTableTitle")}</div>
+                <div className="settings__item-desc">{t("planTableDesc")}</div>
+              </div>
+              <div className="plan-table">
+                <div className="plan-table__header">
+                  <div className="plan-table__cell plan-table__cell--feature" />
+                  <div className="plan-table__cell">{t("planGuest")}</div>
+                  <div className="plan-table__cell">{t("planFree")}</div>
+                  <div className="plan-table__cell">{t("planPlus")}</div>
+                  <div className="plan-table__cell">{t("planPro")}</div>
+                </div>
+                {planRows.map((row) => (
+                  <div key={row.key} className="plan-table__row">
+                    <div className="plan-table__cell plan-table__cell--feature">
+                      {row.label}
+                    </div>
+                    <div className="plan-table__cell">{row.values.guest}</div>
+                    <div className="plan-table__cell">{row.values.free}</div>
+                    <div className="plan-table__cell">{row.values.plus}</div>
+                    <div className="plan-table__cell">{row.values.pro}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="plan-cards">
+                {(["free", "plus", "pro"] as const).map((planName) => (
+                  <button
+                    key={planName}
+                    type="button"
+                    className={`plan-card ${
+                      selectedPlan === planName ? "is-selected" : ""
+                    } ${plan === planName ? "is-current" : ""}`}
+                    onClick={() => setSelectedPlan(planName)}
+                  >
+                    <div className="plan-card__title">
+                      {planName === "free"
+                        ? t("planFree")
+                        : planName === "plus"
+                          ? t("planPlus")
+                          : t("planPro")}
+                    </div>
+                    <div className="plan-card__price">
+                      {PLAN_PRICES[planName]}
+                      <span className="plan-card__unit">{t("planPerMonth")}</span>
+                    </div>
+                    <div className="plan-card__meta">
+                      {t("planFiles", {
+                        value:
+                          DEFAULT_PLAN_LIMITS[planName].maxFiles ?? t("common.unlimited"),
+                      })}
+                      ·
+                      {t("planFileSize", {
+                        value: DEFAULT_PLAN_LIMITS[planName].maxFileMb ?? "-",
+                      })}
+                    </div>
+                    {plan === planName ? (
+                      <div className="plan-card__badge">{t("planCurrent")}</div>
+                    ) : null}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="plan-cta"
+                  disabled={planUpdating || plan === selectedPlan}
+                  onClick={() => void updatePlan(selectedPlan)}
+                >
+                  {planUpdating
+                    ? t("planUpdating")
+                    : plan === selectedPlan
+                      ? t("planCurrent")
+                      : t("planUpgrade")}
+                </button>
               </div>
             </div>
             <div className="settings__item">
@@ -2661,25 +3065,17 @@ export default function Home() {
 
   const handleCreateChat = async () => {
     if (!selectedDocumentId) return;
-    if (
-      planLimits.maxThreadsPerDocument !== null &&
-      chatThreads.length >= planLimits.maxThreadsPerDocument
-    ) {
-      setChatError(t("errors.threadLimit", { limit: planLimits.maxThreadsPerDocument }));
-      return;
-    }
-    const session = await supabase.auth.getSession();
-    const accessToken = session.data.session?.access_token;
-    if (!accessToken) return;
+    const auth = await getAuthParams();
+    if (!auth) return;
     const nextIndex = chatThreads.length + 1;
     const title = t("chat.newChatNumber", { count: nextIndex });
-    const created = await createChat(selectedDocumentId, accessToken, title);
+    const created = await createChat(selectedDocumentId, title);
     if (!created) return;
     setChatThreads((prev) => [created, ...prev]);
     setActiveChatId(created.id);
     setChatMessages([]);
     setShowThreadList(false);
-    await loadChatMessages(selectedDocumentId, created.id, accessToken);
+    await loadChatMessages(selectedDocumentId, created.id);
   };
 
   const applyDocumentTitleUpdate = (docId: string, title: string) => {
@@ -2716,16 +3112,13 @@ export default function Home() {
       return;
     }
     try {
-      const session = await supabase.auth.getSession();
-      const accessToken = session.data.session?.access_token;
-      if (!accessToken) {
-        throw new Error("Not authenticated");
-      }
+      const auth = await getAuthParams();
+      if (!auth) throw new Error("Not authenticated");
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const response = await fetch(`${baseUrl}/documents/${docId}`, {
         method: "PATCH",
         headers: {
-          Authorization: `Bearer ${accessToken}`,
+          ...auth.headers,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ title: nextTitle }),
@@ -2764,18 +3157,15 @@ export default function Home() {
       return;
     }
     try {
-      const session = await supabase.auth.getSession();
-      const accessToken = session.data.session?.access_token;
-      if (!accessToken) {
-        throw new Error("Not authenticated");
-      }
+      const auth = await getAuthParams();
+      if (!auth) throw new Error("Not authenticated");
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const response = await fetch(
         `${baseUrl}/documents/${selectedDocumentId}/chats/${activeChatId}`,
         {
           method: "PATCH",
           headers: {
-            Authorization: `Bearer ${accessToken}`,
+            ...auth.headers,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ title: nextTitle }),
@@ -2842,7 +3232,7 @@ export default function Home() {
             type="button"
             className={`history-item sidebar-upload ${uploading ? "is-uploading" : ""}`}
             onClick={handleUploadClick}
-            disabled={!isAuthed || uploading}
+            disabled={!canUseApi || uploading}
           >
             {uploading ? (
               <>
@@ -3045,7 +3435,10 @@ export default function Home() {
                 <circle cx="12" cy="8" r="4" />
                 <path d="M4 20a8 8 0 0 1 16 0" />
               </svg>
-              <span className="label">{t("tooltip.account")}</span>
+              <span className="history-item__label-row">
+                <span className="label history-item__label">{t("tooltip.account")}</span>
+                <span className="history-item__badge plan-badge">{planLabel}</span>
+              </span>
             </button>
           </div>
         </div>
@@ -3123,7 +3516,7 @@ export default function Home() {
             className={`sidebar__list-body ${sidebarListCollapsed ? "is-collapsed" : ""}`}
             onClick={(event) => event.stopPropagation()}
           >
-          {isAuthed ? (
+          {canUseApi ? (
             docsLoading ? (
               <div className="auth-hint auth-hint--inline">
                 <p>{renderLoadingText(t("common.loading"))}</p>
@@ -3154,7 +3547,7 @@ export default function Home() {
               </div>
             ) : docsError ? (
               <div className="auth-hint">
-                <p>{t("common.errorOccurred")}</p>
+                <p>{docsError ?? t("common.errorOccurred")}</p>
               </div>
             ) : documents.length === 0 ? (
               <div className="auth-hint">
@@ -3162,13 +3555,24 @@ export default function Home() {
               </div>
             ) : (
               documents.map((doc) => (
-                <button
+                <div
                   key={doc.id}
-                  className="history-item"
+                  className={`history-item ${
+                    selectedDocumentId === doc.id ? "is-active" : ""
+                  }`}
                   onClick={() => {
                     if (editingDocumentId === doc.id) return;
                     handleSelectDocument(doc);
                   }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      if (editingDocumentId === doc.id) return;
+                      handleSelectDocument(doc);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
                   data-tooltip={doc.title}
                 >
                   {editingDocumentId === doc.id ? (
@@ -3328,7 +3732,7 @@ export default function Home() {
                       ) : null}
                     </>
                   )}
-                </button>
+                </div>
               ))
             )
           ) : (
@@ -3365,36 +3769,271 @@ export default function Home() {
               </svg>
               <span className="label">{t("auth.signOut")}</span>
             </button>
-          ) : null}
-        </div>
-      </section>
-
-      <div className="right-col">
-      <header className="topbar" style={topbarStyle}>
-        <div className="topbar__left">
-          <div className="topbar__doc">
-            {selectedDocumentTitle ? (
-              <span className="label">{selectedDocumentTitle}</span>
-            ) : (
-              <span className="label">{t("viewer.noDocument")}</span>
-            )}
-          </div>
-        </div>
-        <div className="viewer__actions">
-          {isAuthed ? null : (
-            <div className="auth-links">
-              <Link className="ghost" href="/login">
-                {t("auth.signIn")}
+          ) : (
+            <div className="sidebar__footer-actions">
+              <button
+                type="button"
+                className="history-item sidebar-auth sidebar-auth--accent"
+                onClick={() => {
+                  setSelectedPlan("plus");
+                  openLimitModal();
+                }}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="btn-icon"
+                  aria-hidden="true"
+                >
+                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                  <path d="M8 7a4 4 0 1 0 8 0a4 4 0 0 0 -8 0" />
+                  <path d="M6 21v-2a4 4 0 0 1 4 -4h4" />
+                  <path d="M19 22v-6" />
+                  <path d="M22 19l-3 -3l-3 3" />
+                </svg>
+                <span className="label">{t("planUpgrade")}</span>
+              </button>
+              <Link className="history-item sidebar-auth sidebar-auth--primary" href="/login">
+                <svg
+                  className="btn-icon"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+                  <polyline points="10 17 15 12 10 7" />
+                  <line x1="15" y1="12" x2="3" y2="12" />
+                </svg>
+                <span className="label">{t("auth.signIn")}</span>
               </Link>
-              <Link className="primary" href="/signup">
-                {t("auth.signUp")}
+              <Link className="history-item sidebar-auth sidebar-auth--ghost" href="/signup">
+                <svg
+                  className="btn-icon"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 5v14" />
+                  <path d="M5 12h14" />
+                </svg>
+                <span className="label">{t("auth.signUp")}</span>
               </Link>
             </div>
           )}
         </div>
-      </header>
+      </section>
 
+      {limitModalOpen
+        ? createPortal(
+            <div
+              className="limit-modal__overlay"
+              role="dialog"
+              aria-modal="true"
+              onClick={() => setLimitModalOpen(false)}
+            >
+              <div
+                className="limit-modal limit-modal--split"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="limit-modal__art">
+                  <div className="limit-modal__art-badge">{t("common.limitTitle")}</div>
+                  <div className="limit-modal__art-figure" />
+                  <div className="limit-modal__art-cloud limit-modal__art-cloud--one" />
+                  <div className="limit-modal__art-cloud limit-modal__art-cloud--two" />
+                </div>
+                <div className="limit-modal__content">
+                  <div className="limit-modal__header">
+                    <div className="limit-modal__title">{t("planUpgradeTitle")}</div>
+                    <button
+                      type="button"
+                      className="limit-modal__close"
+                      onClick={() => setLimitModalOpen(false)}
+                      aria-label={t("aria.close")}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <div className="limit-modal__body">
+                    <p className="limit-modal__desc">{t("common.limitDesc")}</p>
+                    {limitModalMessage ? (
+                      <div className="limit-modal__note">{limitModalMessage}</div>
+                    ) : null}
+                    <ul className="limit-modal__bullets">
+                      <li>{t("planBenefitPdf")}</li>
+                      <li>{t("planBenefitChat")}</li>
+                    </ul>
+                    <div className="limit-modal__plans">
+                      {(["free", "plus", "pro"] as const).map((planName) => (
+                        <label
+                          key={planName}
+                          className={`limit-plan ${
+                            selectedPlan === planName ? "is-selected" : ""
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="plan"
+                            value={planName}
+                            checked={selectedPlan === planName}
+                            onChange={() => setSelectedPlan(planName)}
+                          />
+                          <div className="limit-plan__meta">
+                            <div className="limit-plan__name">
+                              {planName === "free"
+                                ? t("planFree")
+                                : planName === "plus"
+                                  ? t("planPlus")
+                                  : t("planPro")}
+                            </div>
+                            <div className="limit-plan__price">
+                              {PLAN_PRICES[planName]}
+                              <span>{t("planPerMonth")}</span>
+                            </div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="limit-modal__actions">
+                    {isAuthed ? (
+                      <button
+                        type="button"
+                        className="limit-modal__btn limit-modal__btn--primary"
+                        disabled={planUpdating || plan === selectedPlan}
+                        onClick={() => void updatePlan(selectedPlan, { closeModal: true })}
+                      >
+                        {planUpdating
+                          ? t("planUpdating")
+                          : plan === selectedPlan
+                            ? t("planCurrent")
+                            : t("planUpgrade")}
+                      </button>
+                    ) : (
+                      <>
+                        <Link
+                          className="limit-modal__btn limit-modal__btn--primary"
+                          href="/login"
+                          onClick={() => setLimitModalOpen(false)}
+                        >
+                          {t("auth.signIn")}
+                        </Link>
+                        <Link
+                          className="limit-modal__btn limit-modal__btn--ghost"
+                          href="/signup"
+                          onClick={() => setLimitModalOpen(false)}
+                        >
+                          {t("auth.signUp")}
+                        </Link>
+                      </>
+                    )}
+                    <div className="limit-modal__hint">{t("planHint")}</div>
+                  </div>
+                  <div className="limit-modal__table">
+                    <div className="plan-table plan-table--compact">
+                      <div className="plan-table__header">
+                        <div className="plan-table__cell plan-table__cell--feature" />
+                        <div
+                          className={`plan-table__cell ${
+                            selectedPlan === "guest" ? "is-selected" : ""
+                          }`}
+                        >
+                          {t("planGuest")}
+                        </div>
+                        <div
+                          className={`plan-table__cell ${
+                            selectedPlan === "free" ? "is-selected" : ""
+                          }`}
+                        >
+                          {t("planFree")}
+                        </div>
+                        <div
+                          className={`plan-table__cell ${
+                            selectedPlan === "plus" ? "is-selected" : ""
+                          }`}
+                        >
+                          {t("planPlus")}
+                        </div>
+                        <div
+                          className={`plan-table__cell ${
+                            selectedPlan === "pro" ? "is-selected" : ""
+                          }`}
+                        >
+                          {t("planPro")}
+                        </div>
+                      </div>
+                      {planRows.map((row) => (
+                        <div key={`modal-${row.key}`} className="plan-table__row">
+                          <div className="plan-table__cell plan-table__cell--feature">
+                            {row.label}
+                          </div>
+                          <div
+                            className={`plan-table__cell ${
+                              selectedPlan === "guest" ? "is-selected" : ""
+                            }`}
+                          >
+                            {row.values.guest}
+                          </div>
+                          <div
+                            className={`plan-table__cell ${
+                              selectedPlan === "free" ? "is-selected" : ""
+                            }`}
+                          >
+                            {row.values.free}
+                          </div>
+                          <div
+                            className={`plan-table__cell ${
+                              selectedPlan === "plus" ? "is-selected" : ""
+                            }`}
+                          >
+                            {row.values.plus}
+                          </div>
+                          <div
+                            className={`plan-table__cell ${
+                              selectedPlan === "pro" ? "is-selected" : ""
+                            }`}
+                          >
+                            {row.values.pro}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+
+      <div className="right-col">
       <section className="main" style={mainStyle} ref={containerRef}>
+        <div className="main-toolbar">
+          <div className="main-toolbar__left">
+            <span className="main-toolbar__title">
+              {selectedDocumentTitle ? selectedDocumentTitle : t("viewer.noDocument")}
+            </span>
+          </div>
+          <div className="main-toolbar__right" />
+        </div>
         <section className="viewer">
           <div
             className={`viewer__tabs-wrap ${tabsOverflow ? "is-overflow" : ""} ${
@@ -3406,9 +4045,25 @@ export default function Home() {
               type="button"
               className={`viewer__tabs-nav ${tabsOverflow ? "" : "is-hidden"}`}
               onClick={() => scrollTabs("left")}
-              aria-label={t("aria.scrollLeft")}
+              aria-label="scroll left"
             >
-              ≪
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="icon icon-tabler icons-tabler-outline icon-tabler-chevrons-left"
+                aria-hidden="true"
+              >
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path d="M11 7l-5 5l5 5" />
+                <path d="M17 7l-5 5l5 5" />
+              </svg>
             </button>
             <div className="viewer__tabs" ref={tabsRef}>
               {openDocuments.map((doc) => (
@@ -3443,9 +4098,25 @@ export default function Home() {
               type="button"
               className={`viewer__tabs-nav ${tabsOverflow ? "" : "is-hidden"}`}
               onClick={() => scrollTabs("right")}
-              aria-label={t("aria.scrollRight")}
+              aria-label="scroll right"
             >
-              ≫
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="icon icon-tabler icons-tabler-outline icon-tabler-chevrons-right"
+                aria-hidden="true"
+              >
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path d="M7 7l5 5l-5 5" />
+                <path d="M13 7l5 5l-5 5" />
+              </svg>
             </button>
           </div>
           <div className="viewer__canvas">
@@ -3468,7 +4139,6 @@ export default function Home() {
                   <div className="settings__nav-group">
                     {[
                       { id: "general", label: t("general") },
-                      { id: "ai", label: t("ai") },
                       { id: "account", label: t("account") },
                       { id: "usage", label: t("usageTab") },
                       { id: "messages", label: t("messages.title") },
@@ -3484,7 +4154,7 @@ export default function Home() {
                         }`}
                         onClick={() =>
                           setSettingsSection(
-                            item.id as "general" | "ai" | "account" | "messages" | "manual"
+                            item.id as "general" | "account" | "messages" | "manual" | "usage" | "service" | "faq"
                           )
                         }
                       >
@@ -3502,6 +4172,8 @@ export default function Home() {
                 url={selectedDocumentUrl}
                 documentId={selectedDocumentId}
                 accessToken={selectedDocumentToken}
+                initialResult={selectedDocumentResult}
+                initialAnnotations={selectedDocumentAnnotations}
                 referenceRequest={referenceRequest}
                 onClearReferenceRequest={() => {
                   setReferenceRequest(null);
@@ -3515,7 +4187,38 @@ export default function Home() {
                 }}
               />
             ) : (
-              <div className="empty-state">{t("viewer.empty")}</div>
+              <div className="empty-state">
+                <div className="empty-state__icon" aria-hidden="true">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="icon icon-tabler icons-tabler-outline icon-tabler-file"
+                  >
+                    <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                    <path d="M14 3v4a1 1 0 0 0 1 1h4" />
+                    <path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2" />
+                  </svg>
+                </div>
+                <div className="empty-state__title">{t("viewer.noDocument")}</div>
+                <div className="empty-state__subtitle">
+                  <button
+                    type="button"
+                    className="empty-state__link"
+                    onClick={handleUploadClick}
+                    disabled={!canUseApi || uploading}
+                  >
+                    {t("viewer.uploadAction")}
+                  </button>
+                  <span>{t("viewer.emptySuffix")}</span>
+                </div>
+              </div>
             )}
             {tooltipContainer
               ? createPortal(
@@ -3630,10 +4333,8 @@ export default function Home() {
                     aria-label={t("aria.back")}
                     onClick={async () => {
                       setShowThreadList(true);
-                      const session = await supabase.auth.getSession();
-                      const accessToken = session.data.session?.access_token;
-                      if (accessToken && selectedDocumentId) {
-                        await loadChats(selectedDocumentId, accessToken, { autoOpen: false });
+                      if (selectedDocumentId) {
+                        await loadChats(selectedDocumentId, { autoOpen: false });
                       }
                     }}
                     data-tooltip={t("tooltip.chatHistory")}
@@ -3641,6 +4342,28 @@ export default function Home() {
                     ←
                   </button>
                 )}
+                <span className="chat__header-icon" aria-hidden="true">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#536DFE"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="icon icon-tabler icons-tabler-outline icon-tabler-robot-face"
+                  >
+                    <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                    <path d="M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2" />
+                    <path d="M9 16c1 .667 2 1 3 1s2 -.333 3 -1" />
+                    <path d="M9 7l-1 -4" />
+                    <path d="M15 7l1 -4" />
+                    <path d="M9 12v-1" />
+                    <path d="M15 12v-1" />
+                  </svg>
+                </span>
                 {editingChatTitle && activeChatId && !showThreadList ? (
                   <input
                     className="chat__header-input"
@@ -3679,6 +4402,28 @@ export default function Home() {
               </div>
             ) : (
               <div className="chat__header-left">
+                <span className="chat__header-icon" aria-hidden="true">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#536DFE"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="icon icon-tabler icons-tabler-outline icon-tabler-robot-face"
+                  >
+                    <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                    <path d="M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2" />
+                    <path d="M9 16c1 .667 2 1 3 1s2 -.333 3 -1" />
+                    <path d="M9 7l-1 -4" />
+                    <path d="M15 7l1 -4" />
+                    <path d="M9 12v-1" />
+                    <path d="M15 12v-1" />
+                  </svg>
+                </span>
                 <span className="chat__header-title">{activeChatTitle}</span>
               </div>
             )}
@@ -3758,9 +4503,8 @@ export default function Home() {
                 ) : (
                   <div className="chat__thread-list">
                     {allChatThreads.map((thread) => (
-                      <button
+                      <div
                         key={thread.id}
-                        type="button"
                         className="chat__thread-item"
                         onClick={() => {
                           if (editingChatListId === thread.id) return;
@@ -3769,6 +4513,18 @@ export default function Home() {
                             title: thread.documentTitle ?? t("common.untitled"),
                           });
                         }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            if (editingChatListId === thread.id) return;
+                            handleSelectDocument({
+                              id: thread.documentId,
+                              title: thread.documentTitle ?? t("common.untitled"),
+                            });
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
                       >
                         <div className="chat__thread-row">
                           {editingChatListId === thread.id ? (
@@ -3905,7 +4661,7 @@ export default function Home() {
                         <div className="chat__thread-meta">
                           {thread.documentTitle ?? t("common.untitled")}
                         </div>
-                      </button>
+                      </div>
                     ))}
                   </div>
                 )
@@ -3920,21 +4676,32 @@ export default function Home() {
                 ) : (
                   <div className="chat__thread-list">
                     {chatThreads.map((thread) => (
-                      <button
+                      <div
                         key={thread.id}
-                        type="button"
                         className="chat__thread-item"
                         onClick={async () => {
                           if (editingChatListId === thread.id) return;
                           chatsAbortRef.current?.abort();
                           setActiveChatId(thread.id);
                           setShowThreadList(false);
-                          const session = await supabase.auth.getSession();
-                          const accessToken = session.data.session?.access_token;
-                          if (accessToken && selectedDocumentId) {
-                            await loadChatMessages(selectedDocumentId, thread.id, accessToken);
+                          if (selectedDocumentId) {
+                            await loadChatMessages(selectedDocumentId, thread.id);
                           }
                         }}
+                        onKeyDown={async (event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            if (editingChatListId === thread.id) return;
+                            chatsAbortRef.current?.abort();
+                            setActiveChatId(thread.id);
+                            setShowThreadList(false);
+                            if (selectedDocumentId) {
+                              await loadChatMessages(selectedDocumentId, thread.id);
+                            }
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
                       >
                         <div className="chat__thread-row">
                           {editingChatListId === thread.id ? (
@@ -4079,7 +4846,7 @@ export default function Home() {
                         <div className="chat__thread-meta">
                           {thread.lastMessage ?? t("chat.noMessages")}
                         </div>
-                      </button>
+                      </div>
                     ))}
                   </div>
                 )
@@ -4433,9 +5200,79 @@ export default function Home() {
                       {t("model.think")}
                     </button>
                   </div>
-                  <div className="usage-ring" aria-label={t("aria.usageRing", { percent: 40 })}>
-                    <span className="usage-ring__center" />
-                  </div>
+                  {(() => {
+                    const limit = dailyMessageUsage?.limit ?? planLimits.maxMessagesPerThread;
+                    const used = dailyMessageUsage?.used ?? 0;
+                    const percent =
+                      typeof limit === "number" && limit > 0
+                        ? Math.min((used / limit) * 100, 100)
+                        : 0;
+                    const remaining =
+                      typeof limit === "number" && limit > 0 ? Math.max(limit - used, 0) : null;
+                    const now = Date.now();
+                    const periodStart = dailyMessageUsage?.periodStart
+                      ? new Date(dailyMessageUsage.periodStart).getTime()
+                      : null;
+                    const resetAt = periodStart ? periodStart + 24 * 60 * 60 * 1000 : null;
+                    const minutesToReset = resetAt
+                      ? Math.max(Math.ceil((resetAt - now) / 60000), 0)
+                      : null;
+                    const resetLabel =
+                      typeof minutesToReset === "number"
+                        ? `${Math.floor(minutesToReset / 60)}h ${minutesToReset % 60}m`
+                        : t("common.unlimited");
+                    const label =
+                      typeof limit === "number" && limit > 0
+                        ? t("aria.usageRing", { percent: Math.round(percent) })
+                        : t("common.unlimited");
+                    return (
+                      <div className="usage-ring-wrap">
+                        <div
+                          className="usage-ring"
+                          aria-label={label}
+                          style={{
+                            background: `conic-gradient(var(--bubble-user-bg) 0 ${percent}%, #e6e6e0 ${percent}% 100%)`,
+                          }}
+                        >
+                          <span className="usage-ring__center" />
+                        </div>
+                        <div className="usage-ring-tooltip">
+                          <div className="usage-ring-tooltip__title">
+                            {t("usageRing.rate", { value: Math.round(percent) })}
+                          </div>
+                          <div className="usage-ring-tooltip__row">
+                            {t("usageRing.used", {
+                              used,
+                              limit: typeof limit === "number" ? limit : t("common.unlimited"),
+                            })}
+                          </div>
+                          <div className="usage-ring-tooltip__row">
+                            {t("usageRing.remaining", {
+                              value:
+                                typeof remaining === "number"
+                                  ? remaining
+                                  : t("common.unlimited"),
+                            })}
+                          </div>
+                          <div className="usage-ring-tooltip__row">
+                            {t("usageRing.reset", {
+                              value: resetLabel,
+                            })}
+                          </div>
+                          <button
+                            type="button"
+                            className="usage-ring-tooltip__cta"
+                            onClick={() => {
+                              setSelectedPlan("plus");
+                              openLimitModal();
+                            }}
+                          >
+                            {t("planUpgrade")}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
                 <button
                   type="submit"
@@ -4451,7 +5288,26 @@ export default function Home() {
                   }
                   aria-label={chatSending ? t("chat.stop") : t("chat.send")}
                 >
-                  {chatSending ? "■" : "↑"}
+                  {chatSending ? (
+                    "■"
+                  ) : (
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="24"
+                      height="24"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                      <path d="M10 14l11 -11" />
+                      <path d="M21 3l-6.5 18a.55 .55 0 0 1 -1 0l-3.5 -7l-7 -3.5a.55 .55 0 0 1 0 -1l18 -6.5" />
+                    </svg>
+                  )}
                 </button>
               </div>
             </div>

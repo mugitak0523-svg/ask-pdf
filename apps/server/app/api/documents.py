@@ -4,13 +4,15 @@ import json
 import re
 import logging
 import asyncio
+import time
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from app.db import repository
-from app.services.auth import AuthDependency, AuthUser, get_user_from_token_app
+from app.services.auth import AuthDependency, AuthUser, get_user_from_token_or_guest_app
 from app.services.indexer import Indexer
 from app.services.storage import StorageClient
 from app.services.usage import extract_usage
@@ -211,14 +213,20 @@ async def _record_usage_conn(
     except Exception:
         logger.exception("usage_log failed operation=%s", operation)
 
-async def _resolve_limits(pool, user_id: str):
-    plan = await resolve_user_plan(pool, user_id)
+async def _resolve_limits(pool, user: AuthUser):
+    if user.is_guest:
+        plan = "guest"
+    else:
+        plan = await resolve_user_plan(pool, user.user_id)
     limits = get_plan_limits(plan)
     return plan, limits
 
 
-async def _resolve_limits_conn(conn, user_id: str):
-    plan = await repository.get_user_plan_conn(conn, user_id)
+async def _resolve_limits_conn(conn, user: AuthUser):
+    if user.is_guest:
+        plan = "guest"
+    else:
+        plan = await repository.get_user_plan_conn(conn, user.user_id)
     limits = get_plan_limits(plan)
     return plan, limits
 
@@ -234,11 +242,11 @@ def _enforce_file_size_limit(file_size: int, limits) -> None:
         )
 
 
-async def _enforce_thread_limit(pool, user_id: str, document_id: str) -> None:
-    _, limits = await _resolve_limits(pool, user_id)
+async def _enforce_thread_limit(pool, user: AuthUser, document_id: str) -> None:
+    _, limits = await _resolve_limits(pool, user)
     if limits.max_threads_per_document is None:
         return
-    count = await repository.count_document_chat_threads(pool, document_id, user_id)
+    count = await repository.count_document_chat_threads(pool, document_id, user.user_id)
     if count >= limits.max_threads_per_document:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -246,31 +254,29 @@ async def _enforce_thread_limit(pool, user_id: str, document_id: str) -> None:
         )
 
 
-async def _enforce_message_limit(pool, user_id: str, chat_id: str) -> None:
-    _, limits = await _resolve_limits(pool, user_id)
+async def _enforce_message_limit(pool, user: AuthUser, chat_id: str) -> None:
+    _, limits = await _resolve_limits(pool, user)
     if limits.max_messages_per_thread is None:
         return
-    count = await repository.count_document_chat_messages(
-        pool, chat_id, user_id, role="user"
-    )
+    day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    count = await repository.count_user_ok_answers_since(pool, user.user_id, day_start)
     if count >= limits.max_messages_per_thread:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Message limit reached",
+            detail="Daily message limit reached",
         )
 
 
-async def _enforce_message_limit_conn(conn, user_id: str, chat_id: str) -> None:
-    _, limits = await _resolve_limits_conn(conn, user_id)
+async def _enforce_message_limit_conn(conn, user: AuthUser, chat_id: str) -> None:
+    _, limits = await _resolve_limits_conn(conn, user)
     if limits.max_messages_per_thread is None:
         return
-    count = await repository.count_document_chat_messages_conn(
-        conn, chat_id, user_id, role="user"
-    )
+    day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    count = await repository.count_user_ok_answers_since_conn(conn, user.user_id, day_start)
     if count >= limits.max_messages_per_thread:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Message limit reached",
+            detail="Daily message limit reached",
         )
 
 
@@ -282,7 +288,7 @@ async def index_document(
 ) -> dict[str, Any]:
     content = await file.read()
     pool = request.app.state.db_pool
-    _, limits = await _resolve_limits(pool, user.user_id)
+    _, limits = await _resolve_limits(pool, user)
     _enforce_file_size_limit(len(content), limits)
     if limits.max_files is not None:
         count = await repository.count_documents(pool, user.user_id)
@@ -300,8 +306,15 @@ async def list_documents(
     request: Request,
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
+    start = time.perf_counter()
     pool = request.app.state.db_pool
     rows = await repository.list_documents(pool, user.user_id)
+    logger.info(
+        "list_documents user=%s count=%d ms=%.1f",
+        user.user_id,
+        len(rows),
+        (time.perf_counter() - start) * 1000,
+    )
     return {"documents": rows}
 
 
@@ -357,18 +370,82 @@ async def get_document_signed_url(
     document_id: str,
     user: AuthUser = AuthDependency,
 ) -> dict[str, str]:
+    start = time.perf_counter()
     pool = request.app.state.db_pool
-    row = await repository.get_document(pool, document_id, user.user_id)
-    if not row:
+    storage_path = await repository.get_document_storage_path(pool, document_id, user.user_id)
+    if not storage_path:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     storage_client: StorageClient = request.app.state.storage_client
-    signed_url = storage_client.create_signed_url(str(row["storage_path"]))
+    db_ms = (time.perf_counter() - start) * 1000
+    sign_start = time.perf_counter()
+    signed_url, expires_at = storage_client.create_signed_url(storage_path)
     if not signed_url:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create signed URL",
         )
-    return {"signed_url": signed_url}
+    logger.info(
+        "signed_url user=%s doc=%s db_ms=%.1f sign_ms=%.1f total_ms=%.1f",
+        user.user_id,
+        document_id,
+        db_ms,
+        (time.perf_counter() - sign_start) * 1000,
+        (time.perf_counter() - start) * 1000,
+    )
+    return {"signed_url": signed_url, "expires_at": expires_at}
+
+
+@router.get("/documents/{document_id}/bundle")
+async def get_document_bundle(
+    request: Request,
+    document_id: str,
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    start = time.perf_counter()
+    pool = request.app.state.db_pool
+    bundle = await repository.get_document_bundle(pool, document_id, user.user_id)
+    if not bundle:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    storage_path = bundle.get("storage_path")
+    if not storage_path:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Missing storage path")
+    storage_client: StorageClient = request.app.state.storage_client
+    db_ms = (time.perf_counter() - start) * 1000
+    sign_start = time.perf_counter()
+    signed_url, expires_at = storage_client.create_signed_url(str(storage_path))
+    if not signed_url:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create signed URL",
+        )
+    result = bundle.get("result")
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except json.JSONDecodeError:
+            result = None
+    annotations = bundle.get("annotations") if bundle else None
+    if isinstance(annotations, str):
+        try:
+            annotations = json.loads(annotations)
+        except json.JSONDecodeError:
+            annotations = {}
+    if not isinstance(annotations, dict):
+        annotations = {}
+    logger.info(
+        "bundle user=%s doc=%s db_ms=%.1f sign_ms=%.1f total_ms=%.1f",
+        user.user_id,
+        document_id,
+        db_ms,
+        (time.perf_counter() - sign_start) * 1000,
+        (time.perf_counter() - start) * 1000,
+    )
+    return {
+        "signed_url": signed_url,
+        "expires_at": expires_at,
+        "result": result,
+        "annotations": annotations,
+    }
 
 
 @router.get("/documents/{document_id}/text-positions")
@@ -568,8 +645,8 @@ async def get_document_annotations(
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
     pool = request.app.state.db_pool
-    row = await repository.get_document(pool, document_id, user.user_id)
-    if not row:
+    exists = await repository.document_exists(pool, document_id, user.user_id)
+    if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     data_row = await repository.get_document_annotations(pool, document_id, user.user_id)
     data = data_row.get("data") if data_row else {}
@@ -591,8 +668,8 @@ async def upsert_document_annotations(
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
     pool = request.app.state.db_pool
-    row = await repository.get_document(pool, document_id, user.user_id)
-    if not row:
+    exists = await repository.document_exists(pool, document_id, user.user_id)
+    if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     annotations = payload.get("annotations")
     if not isinstance(annotations, dict):
@@ -616,8 +693,8 @@ async def get_document_chat(
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
     pool = request.app.state.db_pool
-    row = await repository.get_document(pool, document_id, user.user_id)
-    if not row:
+    exists = await repository.document_exists(pool, document_id, user.user_id)
+    if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     data_row = await repository.get_document_chat(pool, document_id, user.user_id)
     data = data_row.get("data") if data_row else {}
@@ -639,8 +716,8 @@ async def upsert_document_chat(
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
     pool = request.app.state.db_pool
-    row = await repository.get_document(pool, document_id, user.user_id)
-    if not row:
+    exists = await repository.document_exists(pool, document_id, user.user_id)
+    if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     chat = payload.get("chat")
     if not isinstance(chat, dict):
@@ -663,12 +740,44 @@ async def list_document_chats(
     document_id: str,
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
+    start = time.perf_counter()
     pool = request.app.state.db_pool
-    row = await repository.get_document(pool, document_id, user.user_id)
-    if not row:
+    exists = await repository.document_exists(pool, document_id, user.user_id)
+    if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     threads = await repository.list_document_chat_threads(pool, document_id, user.user_id)
+    logger.info(
+        "list_document_chats user=%s doc=%s count=%d ms=%.1f",
+        user.user_id,
+        document_id,
+        len(threads),
+        (time.perf_counter() - start) * 1000,
+    )
     return {"chats": threads}
+
+
+@router.get("/documents/{document_id}/chats/latest")
+async def get_latest_document_chat(
+    request: Request,
+    document_id: str,
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    start = time.perf_counter()
+    pool = request.app.state.db_pool
+    exists = await repository.document_exists(pool, document_id, user.user_id)
+    if not exists:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    thread = await repository.get_latest_document_chat_thread(
+        pool, document_id, user.user_id
+    )
+    logger.info(
+        "latest_document_chat user=%s doc=%s hit=%s ms=%.1f",
+        user.user_id,
+        document_id,
+        "yes" if thread else "no",
+        (time.perf_counter() - start) * 1000,
+    )
+    return {"chat": thread}
 
 
 @router.post("/documents/{document_id}/chats")
@@ -679,10 +788,10 @@ async def create_document_chat(
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
     pool = request.app.state.db_pool
-    row = await repository.get_document(pool, document_id, user.user_id)
-    if not row:
+    exists = await repository.document_exists(pool, document_id, user.user_id)
+    if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-    await _enforce_thread_limit(pool, user.user_id, document_id)
+    await _enforce_thread_limit(pool, user, document_id)
     title = payload.get("title") if isinstance(payload, dict) else None
     chat_id = await repository.insert_document_chat_thread(
         pool,
@@ -749,12 +858,32 @@ async def list_document_chat_messages(
     document_id: str,
     chat_id: str,
     user: AuthUser = AuthDependency,
+    limit: int = 6,
+    before: str | None = None,
 ) -> dict[str, Any]:
+    start = time.perf_counter()
     pool = request.app.state.db_pool
-    row = await repository.get_document(pool, document_id, user.user_id)
-    if not row:
+    exists = await repository.document_exists(pool, document_id, user.user_id)
+    if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-    rows = await repository.list_document_chat_messages(pool, chat_id, user.user_id)
+    safe_limit = max(1, min(int(limit), 200))
+    before_dt: datetime | None = None
+    if before:
+        try:
+            if before.endswith("Z"):
+                before = before.replace("Z", "+00:00")
+            before_dt = datetime.fromisoformat(before)
+            if before_dt.tzinfo is None:
+                before_dt = before_dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            before_dt = None
+    rows = await repository.list_document_chat_messages(
+        pool, chat_id, user.user_id, safe_limit + 1, before_dt
+    )
+    has_more = len(rows) > safe_limit
+    if has_more:
+        rows = rows[:safe_limit]
+    rows = list(reversed(rows))
     messages = []
     for item in rows:
         messages.append(
@@ -769,7 +898,15 @@ async def list_document_chat_messages(
                 else None,
             }
         )
-    return {"messages": messages}
+    logger.info(
+        "list_document_chat_messages user=%s doc=%s chat=%s count=%d ms=%.1f",
+        user.user_id,
+        document_id,
+        chat_id,
+        len(messages),
+        (time.perf_counter() - start) * 1000,
+    )
+    return {"messages": messages, "has_more": has_more}
 
 
 @router.post("/documents/{document_id}/chats/{chat_id}/messages")
@@ -795,29 +932,25 @@ async def create_document_chat_message(
         )
     pool = request.app.state.db_pool
     async with pool.acquire() as conn:
-        _, limits = await _resolve_limits_conn(conn, user.user_id)
-        row = await repository.insert_document_chat_message_checked_conn(
+        if role == "user":
+            await _enforce_message_limit_conn(conn, user, chat_id)
+        exists = await repository.document_thread_exists_conn(
             conn,
             document_id,
+            chat_id,
+            user.user_id,
+        )
+        if not exists:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+        row = await repository.insert_document_chat_message_conn(
+            conn,
             chat_id,
             user.user_id,
             role,
             text,
             "ok",
             refs if isinstance(refs, list) else None,
-            limits.max_messages_per_thread,
         )
-        if not row.get("doc_exists") or not row.get("thread_exists"):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-        if (
-            limits.max_messages_per_thread is not None
-            and row.get("msg_count") is not None
-            and int(row["msg_count"]) >= limits.max_messages_per_thread
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Message limit reached",
-            )
         if not row.get("id"):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -853,6 +986,7 @@ async def create_document_chat_assistant_message(
         )
 
     pool = request.app.state.db_pool
+    await _enforce_message_limit(pool, user, chat_id)
     parser = request.app.state.parser_client
     settings = request.app.state.settings
 
@@ -1113,12 +1247,15 @@ async def stream_document_chat_assistant_message(
     chat_id: str,
 ) -> None:
     token = websocket.query_params.get("token")
+    token_type = websocket.query_params.get("token_type")
     if not token:
         await websocket.close(code=1008)
         return
     await websocket.accept()
     try:
-        user = get_user_from_token_app(websocket.scope["app"], token)  # type: ignore[arg-type]
+        user = get_user_from_token_or_guest_app(
+            websocket.scope["app"], token, token_type  # type: ignore[arg-type]
+        )
     except HTTPException:
         await websocket.close(code=1008)
         return
@@ -1152,6 +1289,12 @@ async def stream_document_chat_assistant_message(
 
     parser = websocket.scope["app"].state.parser_client
     settings = websocket.scope["app"].state.settings
+    try:
+        await _enforce_message_limit(pool, user, chat_id)
+    except HTTPException:
+        await websocket.send_text(json.dumps({"type": "error", "message": "Daily message limit reached"}))
+        await websocket.close(code=1008)
+        return
     top_k, min_k, score_threshold = _resolve_rag_params(settings, payload)
     client_matches = _normalize_client_matches(payload.client_matches)
     if client_matches:

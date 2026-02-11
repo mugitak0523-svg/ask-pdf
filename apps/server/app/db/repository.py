@@ -41,7 +41,7 @@ async def list_documents(
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            select id, title, storage_path, metadata, created_at
+            select id, title
             from documents
             where user_id = $1
             order by created_at desc
@@ -78,6 +78,51 @@ async def get_document(
             select id, title, storage_path, metadata, result, created_at
             from documents
             where id = $1 and user_id = $2
+            """,
+            document_id,
+            user_id,
+        )
+    return dict(row) if row else None
+
+
+async def get_document_storage_path(
+    pool: asyncpg.Pool,
+    document_id: str,
+    user_id: str,
+) -> str | None:
+    """Fast path used by signed-url; avoids fetching large jsonb columns like result."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select storage_path
+            from documents
+            where id = $1 and user_id = $2
+            """,
+            document_id,
+            user_id,
+        )
+    if not row:
+        return None
+    value = row.get("storage_path")
+    return str(value) if value is not None else None
+
+
+async def get_document_bundle(
+    pool: asyncpg.Pool,
+    document_id: str,
+    user_id: str,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select
+                d.storage_path,
+                d.result,
+                a.data as annotations
+            from documents as d
+            left join document_annotations as a
+              on a.document_id = d.id and a.user_id = d.user_id
+            where d.id = $1 and d.user_id = $2
             """,
             document_id,
             user_id,
@@ -384,19 +429,20 @@ async def list_document_chat_threads(
         rows = await conn.fetch(
             """
             select
-                id,
-                title,
-                created_at,
-                updated_at,
-                (
-                    select content
-                    from document_chat_messages
-                    where chat_id = document_chat_threads.id
-                      and user_id = $2
-                    order by created_at desc
-                    limit 1
-                ) as last_message
-            from document_chat_threads
+                threads.id,
+                threads.title,
+                threads.created_at,
+                threads.updated_at,
+                last_message.content as last_message
+            from document_chat_threads as threads
+            left join lateral (
+                select content
+                from document_chat_messages
+                where chat_id = threads.id
+                  and user_id = $2
+                order by created_at desc
+                limit 1
+            ) as last_message on true
             where document_id = $1 and user_id = $2
             order by updated_at desc, created_at desc
             """,
@@ -404,6 +450,39 @@ async def list_document_chat_threads(
             user_id,
         )
     return [dict(row) for row in rows]
+
+
+async def get_latest_document_chat_thread(
+    pool: asyncpg.Pool,
+    document_id: str,
+    user_id: str,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select
+                threads.id,
+                threads.title,
+                threads.created_at,
+                threads.updated_at,
+                last_message.content as last_message
+            from document_chat_threads as threads
+            left join lateral (
+                select content
+                from document_chat_messages
+                where chat_id = threads.id
+                  and user_id = $2
+                order by created_at desc
+                limit 1
+            ) as last_message on true
+            where document_id = $1 and user_id = $2
+            order by updated_at desc, created_at desc
+            limit 1
+            """,
+            document_id,
+            user_id,
+        )
+    return dict(row) if row else None
 
 
 async def count_document_chat_threads(
@@ -448,6 +527,8 @@ async def list_document_chat_messages(
     pool: asyncpg.Pool,
     chat_id: str,
     user_id: str,
+    limit: int | None = None,
+    before: datetime | None = None,
 ) -> list[dict[str, Any]]:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -455,10 +536,14 @@ async def list_document_chat_messages(
             select id, role, content, refs, status, created_at
             from document_chat_messages
             where chat_id = $1 and user_id = $2
-            order by created_at asc
+              and ($3::timestamptz is null or created_at < $3::timestamptz)
+            order by created_at desc
+            limit $4
             """,
             chat_id,
             user_id,
+            before,
+            limit or 100,
         )
     return [dict(row) for row in rows]
 
@@ -521,6 +606,86 @@ async def count_document_chat_messages_conn(
             chat_id,
             user_id,
         )
+    return int(row["total"] or 0)
+
+
+async def count_user_messages_since(
+    pool: asyncpg.Pool,
+    user_id: str,
+    start_at: datetime,
+) -> int:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select count(*) as total
+            from document_chat_messages
+            where user_id = $1
+              and role = 'user'
+              and created_at >= $2::timestamptz
+            """,
+            user_id,
+            start_at,
+        )
+    return int(row["total"] or 0)
+
+
+async def count_user_messages_since_conn(
+    conn: asyncpg.Connection,
+    user_id: str,
+    start_at: datetime,
+) -> int:
+    row = await conn.fetchrow(
+        """
+        select count(*) as total
+        from document_chat_messages
+        where user_id = $1
+          and role = 'user'
+          and created_at >= $2::timestamptz
+        """,
+        user_id,
+        start_at,
+    )
+    return int(row["total"] or 0)
+
+
+async def count_user_ok_answers_since(
+    pool: asyncpg.Pool,
+    user_id: str,
+    start_at: datetime,
+) -> int:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select count(*) as total
+            from document_chat_messages
+            where user_id = $1
+              and role = 'assistant'
+              and status = 'ok'
+              and created_at >= $2::timestamptz
+            """,
+            user_id,
+            start_at,
+        )
+    return int(row["total"] or 0)
+
+
+async def count_user_ok_answers_since_conn(
+    conn: asyncpg.Connection,
+    user_id: str,
+    start_at: datetime,
+) -> int:
+    row = await conn.fetchrow(
+        """
+        select count(*) as total
+        from document_chat_messages
+        where user_id = $1
+          and role = 'assistant'
+          and status = 'ok'
+          and created_at >= $2::timestamptz
+        """,
+        user_id,
+        start_at,
+    )
     return int(row["total"] or 0)
 
 
@@ -886,6 +1051,24 @@ async def get_user_plan_conn(
     except asyncpg.UndefinedTableError:
         return None
     return str(row["plan"]) if row and row.get("plan") else None
+
+
+async def set_user_plan(
+    pool: asyncpg.Pool,
+    user_id: str,
+    plan: str,
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            insert into user_plans (user_id, plan)
+            values ($1, $2)
+            on conflict (user_id)
+            do update set plan = excluded.plan
+            """,
+            user_id,
+            plan,
+        )
 
 
 async def insert_usage_log(
