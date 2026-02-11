@@ -911,6 +911,14 @@ export default function Home() {
     return date.toLocaleString(locale);
   };
 
+  const formatDate = (value: number | string | null) => {
+    if (!value) return "-";
+    const date =
+      typeof value === "string" ? new Date(value) : new Date(value * 1000);
+    if (Number.isNaN(date.getTime())) return "-";
+    return date.toLocaleDateString(locale);
+  };
+
   const SETTINGS_TAB_ID = "__settings__";
   const canUseApi = isAuthed || Boolean(guestToken);
   const openLimitModal = (message?: string | null) => {
@@ -1076,6 +1084,7 @@ export default function Home() {
           plan: payload?.plan ?? null,
           status: payload?.status ?? null,
           currentPeriodEnd: payload?.currentPeriodEnd ?? null,
+          cancelAtPeriodEnd: payload?.cancelAtPeriodEnd ?? null,
           nextPlan: payload?.nextPlan ?? null,
           nextPlanAt: payload?.nextPlanAt ?? null,
           upcomingInvoice: payload?.upcomingInvoice ?? null,
@@ -3083,19 +3092,17 @@ export default function Home() {
                         billingSummary.nextPlan === "plus"
                           ? t("planPlus")
                           : t("planFree"),
-                      date: formatDateTime(billingSummary.nextPlanAt),
+                      date: formatDate(billingSummary.nextPlanAt),
                     })}
                   </div>
                 ) : null}
-                {!billingSummary?.nextPlan && billingSummary?.currentPeriodEnd ? (
+                {!billingSummary?.nextPlan &&
+                billingSummary?.cancelAtPeriodEnd &&
+                billingSummary?.currentPeriodEnd ? (
                   <div className="settings__subvalue">
-                    {billingSummary.cancelAtPeriodEnd
-                      ? t("planUntilCanceled", {
-                          date: formatDateTime(billingSummary.currentPeriodEnd),
-                        })
-                      : t("planUntil", {
-                          date: formatDateTime(billingSummary.currentPeriodEnd),
-                        })}
+                    {t("planUntilCanceled", {
+                      date: formatDate(billingSummary.currentPeriodEnd),
+                    })}
                   </div>
                 ) : null}
               </div>
@@ -3203,14 +3210,29 @@ export default function Home() {
                       )}
                     </div>
                     <div className="billing-summary__date">
-                      {formatDateTime(billingSummary.upcomingInvoice.nextPaymentAt)}
+                      {formatDate(billingSummary.upcomingInvoice.nextPaymentAt)}
+                    </div>
+                  </div>
+                ) : billingSummary?.plan === "free" ||
+                  billingSummary?.cancelAtPeriodEnd ? (
+                  <div className="billing-summary__row">
+                    <div className="billing-summary__amount">
+                      {formatCurrency(
+                        0,
+                        billingSummary?.upcomingInvoice?.currency ??
+                          billingSummary?.invoices?.[0]?.currency ??
+                          "jpy"
+                      )}
+                    </div>
+                    <div className="billing-summary__date">
+                      {formatDate(billingSummary.currentPeriodEnd)}
                     </div>
                   </div>
                 ) : billingSummary?.currentPeriodEnd ? (
                   <div className="billing-summary__row">
                     <div className="billing-summary__amount">{t("common.unset")}</div>
                     <div className="billing-summary__date">
-                      {formatDateTime(billingSummary.currentPeriodEnd)}
+                      {formatDate(billingSummary.currentPeriodEnd)}
                     </div>
                   </div>
                 ) : (

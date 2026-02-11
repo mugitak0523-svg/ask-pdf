@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
+import logging
 
 import anyio
 import stripe
@@ -11,6 +12,7 @@ from app.db import repository
 from app.services.auth import AuthDependency, AuthUser
 
 router = APIRouter()
+logger = logging.getLogger("uvicorn.error")
 
 
 def _get_stripe_config(request: Request) -> dict[str, str]:
@@ -186,10 +188,14 @@ async def _get_upcoming_invoice(
 ) -> dict[str, Any] | None:
     _init_stripe(secret_key)
 
+    if not subscription_id:
+        return None
+
     def _run() -> stripe.Invoice:
-        return stripe.Invoice.upcoming(
+        return stripe.Invoice.create_preview(
             customer=customer_id,
             subscription=subscription_id,
+            preview_mode="recurring",
         )
 
     try:
@@ -199,7 +205,11 @@ async def _get_upcoming_invoice(
     return {
         "amountDue": invoice.get("amount_due"),
         "currency": invoice.get("currency"),
-        "nextPaymentAt": invoice.get("next_payment_attempt") or invoice.get("due_date"),
+        "nextPaymentAt": (
+            invoice.get("next_payment_attempt")
+            or invoice.get("due_date")
+            or invoice.get("period_end")
+        ),
     }
 
 @router.post("/billing/checkout")
@@ -246,14 +256,39 @@ async def create_checkout(
             stripe_customer_id=customer_id,
         )
 
-    session = await _create_checkout_session(
-        secret_key=config["secret_key"],
-        app_base_url=config["app_base_url"],
-        price_id=price_id,
-        customer_id=customer_id,
-        user_id=user.user_id,
-        plan=plan,
-    )
+    try:
+        session = await _create_checkout_session(
+            secret_key=config["secret_key"],
+            app_base_url=config["app_base_url"],
+            price_id=price_id,
+            customer_id=customer_id,
+            user_id=user.user_id,
+            plan=plan,
+        )
+    except stripe.error.InvalidRequestError as exc:
+        message = str(exc)
+        if customer_id and "No such customer" in message:
+            customer = await _create_customer(
+                secret_key=config["secret_key"],
+                user_id=user.user_id,
+                email=user.email,
+            )
+            customer_id = customer.id
+            await repository.upsert_user_billing(
+                pool,
+                user.user_id,
+                stripe_customer_id=customer_id,
+            )
+            session = await _create_checkout_session(
+                secret_key=config["secret_key"],
+                app_base_url=config["app_base_url"],
+                price_id=price_id,
+                customer_id=customer_id,
+                user_id=user.user_id,
+                plan=plan,
+            )
+        else:
+            raise
     return {"url": session.url}
 
 
@@ -309,6 +344,10 @@ async def get_billing_summary(
                 else await _retrieve_subscription(config["secret_key"], subscription_id)
             )
             period_end = subscription.get("current_period_end")
+            if not period_end:
+                items = subscription.get("items", {}).get("data", [])
+                if items:
+                    period_end = items[0].get("current_period_end")
             if not current_period_end and isinstance(period_end, (int, float)):
                 current_period_end = datetime.fromtimestamp(period_end, tz=timezone.utc)
                 await repository.upsert_user_billing(
@@ -476,12 +515,24 @@ async def stripe_webhook(request: Request) -> dict[str, str]:
 
     event_type = event.get("type")
     data_object = event.get("data", {}).get("object", {})
+    logger.info(
+        "stripe_webhook event=%s object=%s",
+        event_type,
+        data_object.get("object"),
+    )
 
     if event_type == "checkout.session.completed":
         customer_id = data_object.get("customer")
         subscription_id = data_object.get("subscription")
         user_id = data_object.get("client_reference_id") or data_object.get("metadata", {}).get("user_id")
         plan = _plan_from_metadata(data_object.get("metadata"))
+        logger.info(
+            "checkout.session.completed customer=%s subscription=%s user=%s plan=%s",
+            customer_id,
+            subscription_id,
+            user_id,
+            plan,
+        )
         if customer_id and user_id:
             await repository.upsert_user_billing(
                 request.app.state.db_pool,
@@ -505,7 +556,9 @@ async def stripe_webhook(request: Request) -> dict[str, str]:
         plan = _plan_from_price(price_id, config["price_plus"])
         if not plan:
             plan = _plan_from_metadata(subscription.get("metadata"))
-        if status_value not in {"active", "trialing"}:
+        # Only downgrade to free when the subscription is definitively ended or void.
+        # Do not flip to free for transient states like incomplete/past_due.
+        if status_value in {"canceled", "incomplete_expired", "unpaid"}:
             plan = "free"
 
         user_id = None
@@ -518,6 +571,29 @@ async def stripe_webhook(request: Request) -> dict[str, str]:
             user_id = subscription.get("metadata", {}).get("user_id")
 
         if user_id:
+            logger.info(
+                "subscription event=%s sub=%s user=%s customer=%s status=%s price=%s plan=%s",
+                event_type,
+                subscription.get("id"),
+                user_id,
+                customer_id,
+                status_value,
+                price_id,
+                plan,
+            )
+            current_billing = await repository.get_user_billing(
+                request.app.state.db_pool,
+                user_id,
+            )
+            current_sub_id = (
+                current_billing.get("stripe_subscription_id") if current_billing else None
+            )
+            incoming_sub_id = subscription.get("id")
+            if current_sub_id and incoming_sub_id and current_sub_id != incoming_sub_id:
+                # Ignore updates for non-current subscriptions to avoid clobbering plan.
+                return {"status": "ignored"}
+            if event_type == "customer.subscription.deleted" and current_sub_id and incoming_sub_id != current_sub_id:
+                return {"status": "ignored"}
             period_end = subscription.get("current_period_end")
             period_end_dt = (
                 datetime.fromtimestamp(period_end, tz=timezone.utc)

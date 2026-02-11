@@ -8,4 +8,4 @@ supabase
 anyio
 python-jose
 websockets
-stripe
+stripe==12.0.0
