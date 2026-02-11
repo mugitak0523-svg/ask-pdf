@@ -3435,7 +3435,10 @@ export default function Home() {
                 <circle cx="12" cy="8" r="4" />
                 <path d="M4 20a8 8 0 0 1 16 0" />
               </svg>
-              <span className="label">{t("tooltip.account")}</span>
+              <span className="history-item__label-row">
+                <span className="label history-item__label">{t("tooltip.account")}</span>
+                <span className="history-item__badge plan-badge">{planLabel}</span>
+              </span>
             </button>
           </div>
         </div>
@@ -3776,6 +3779,25 @@ export default function Home() {
                   openLimitModal();
                 }}
               >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="btn-icon"
+                  aria-hidden="true"
+                >
+                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                  <path d="M8 7a4 4 0 1 0 8 0a4 4 0 0 0 -8 0" />
+                  <path d="M6 21v-2a4 4 0 0 1 4 -4h4" />
+                  <path d="M19 22v-6" />
+                  <path d="M22 19l-3 -3l-3 3" />
+                </svg>
                 <span className="label">{t("planUpgrade")}</span>
               </button>
               <Link className="history-item sidebar-auth sidebar-auth--primary" href="/login">
@@ -3858,7 +3880,6 @@ export default function Home() {
                     <ul className="limit-modal__bullets">
                       <li>{t("planBenefitPdf")}</li>
                       <li>{t("planBenefitChat")}</li>
-                      <li>{t("planBenefitSpeed")}</li>
                     </ul>
                     <div className="limit-modal__plans">
                       {(["free", "plus", "pro"] as const).map((planName) => (
@@ -3930,20 +3951,68 @@ export default function Home() {
                     <div className="plan-table plan-table--compact">
                       <div className="plan-table__header">
                         <div className="plan-table__cell plan-table__cell--feature" />
-                        <div className="plan-table__cell">{t("planGuest")}</div>
-                        <div className="plan-table__cell">{t("planFree")}</div>
-                        <div className="plan-table__cell">{t("planPlus")}</div>
-                        <div className="plan-table__cell">{t("planPro")}</div>
+                        <div
+                          className={`plan-table__cell ${
+                            selectedPlan === "guest" ? "is-selected" : ""
+                          }`}
+                        >
+                          {t("planGuest")}
+                        </div>
+                        <div
+                          className={`plan-table__cell ${
+                            selectedPlan === "free" ? "is-selected" : ""
+                          }`}
+                        >
+                          {t("planFree")}
+                        </div>
+                        <div
+                          className={`plan-table__cell ${
+                            selectedPlan === "plus" ? "is-selected" : ""
+                          }`}
+                        >
+                          {t("planPlus")}
+                        </div>
+                        <div
+                          className={`plan-table__cell ${
+                            selectedPlan === "pro" ? "is-selected" : ""
+                          }`}
+                        >
+                          {t("planPro")}
+                        </div>
                       </div>
                       {planRows.map((row) => (
                         <div key={`modal-${row.key}`} className="plan-table__row">
                           <div className="plan-table__cell plan-table__cell--feature">
                             {row.label}
                           </div>
-                          <div className="plan-table__cell">{row.values.guest}</div>
-                          <div className="plan-table__cell">{row.values.free}</div>
-                          <div className="plan-table__cell">{row.values.plus}</div>
-                          <div className="plan-table__cell">{row.values.pro}</div>
+                          <div
+                            className={`plan-table__cell ${
+                              selectedPlan === "guest" ? "is-selected" : ""
+                            }`}
+                          >
+                            {row.values.guest}
+                          </div>
+                          <div
+                            className={`plan-table__cell ${
+                              selectedPlan === "free" ? "is-selected" : ""
+                            }`}
+                          >
+                            {row.values.free}
+                          </div>
+                          <div
+                            className={`plan-table__cell ${
+                              selectedPlan === "plus" ? "is-selected" : ""
+                            }`}
+                          >
+                            {row.values.plus}
+                          </div>
+                          <div
+                            className={`plan-table__cell ${
+                              selectedPlan === "pro" ? "is-selected" : ""
+                            }`}
+                          >
+                            {row.values.pro}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -5138,19 +5207,69 @@ export default function Home() {
                       typeof limit === "number" && limit > 0
                         ? Math.min((used / limit) * 100, 100)
                         : 0;
+                    const remaining =
+                      typeof limit === "number" && limit > 0 ? Math.max(limit - used, 0) : null;
+                    const now = Date.now();
+                    const periodStart = dailyMessageUsage?.periodStart
+                      ? new Date(dailyMessageUsage.periodStart).getTime()
+                      : null;
+                    const resetAt = periodStart ? periodStart + 24 * 60 * 60 * 1000 : null;
+                    const minutesToReset = resetAt
+                      ? Math.max(Math.ceil((resetAt - now) / 60000), 0)
+                      : null;
+                    const resetLabel =
+                      typeof minutesToReset === "number"
+                        ? `${Math.floor(minutesToReset / 60)}h ${minutesToReset % 60}m`
+                        : t("common.unlimited");
                     const label =
                       typeof limit === "number" && limit > 0
                         ? t("aria.usageRing", { percent: Math.round(percent) })
                         : t("common.unlimited");
                     return (
-                      <div
-                        className="usage-ring"
-                        aria-label={label}
-                        style={{
-                          background: `conic-gradient(var(--bubble-user-bg) 0 ${percent}%, #e6e6e0 ${percent}% 100%)`,
-                        }}
-                      >
-                        <span className="usage-ring__center" />
+                      <div className="usage-ring-wrap">
+                        <div
+                          className="usage-ring"
+                          aria-label={label}
+                          style={{
+                            background: `conic-gradient(var(--bubble-user-bg) 0 ${percent}%, #e6e6e0 ${percent}% 100%)`,
+                          }}
+                        >
+                          <span className="usage-ring__center" />
+                        </div>
+                        <div className="usage-ring-tooltip">
+                          <div className="usage-ring-tooltip__title">
+                            {t("usageRing.rate", { value: Math.round(percent) })}
+                          </div>
+                          <div className="usage-ring-tooltip__row">
+                            {t("usageRing.used", {
+                              used,
+                              limit: typeof limit === "number" ? limit : t("common.unlimited"),
+                            })}
+                          </div>
+                          <div className="usage-ring-tooltip__row">
+                            {t("usageRing.remaining", {
+                              value:
+                                typeof remaining === "number"
+                                  ? remaining
+                                  : t("common.unlimited"),
+                            })}
+                          </div>
+                          <div className="usage-ring-tooltip__row">
+                            {t("usageRing.reset", {
+                              value: resetLabel,
+                            })}
+                          </div>
+                          <button
+                            type="button"
+                            className="usage-ring-tooltip__cta"
+                            onClick={() => {
+                              setSelectedPlan("plus");
+                              openLimitModal();
+                            }}
+                          >
+                            {t("planUpgrade")}
+                          </button>
+                        </div>
                       </div>
                     );
                   })()}

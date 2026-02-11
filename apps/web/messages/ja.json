@@ -104,8 +104,7 @@
     "planPro": "Pro",
     "planUpgradeTitle": "プランをアップグレード",
     "planBenefitPdf": "より多くのPDFと大きなファイル",
-    "planBenefitChat": "質問は無制限",
-    "planBenefitSpeed": "処理スピード向上",
+    "planBenefitChat": "質問をもっと",
     "planPerMonth": "/ 月",
     "planCurrent": "現在のプラン",
     "planUpgrade": "プランを変更",
@@ -150,6 +149,18 @@
     },
     "usage": {
       "summary": "トークン {tokens} / {pages} ページ"
+    },
+    "usageRing": {
+      "rate": "使用率{value}％",
+      "used": "使用ずみ {used}/{limit}",
+      "remaining": "今日の残り {value}",
+      "reset": "リセットまで {value}"
+    },
+    "usageRing": {
+      "rate": "使用率{value}％",
+      "used": "使用ずみ {used}/{limit}",
+      "remaining": "今日の残り {value}",
+      "reset": "リセットまで {minutes} 分"
     },
     "common": {
       "loading": "読み込み中…",

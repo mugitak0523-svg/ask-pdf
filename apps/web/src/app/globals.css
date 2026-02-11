@@ -780,6 +780,14 @@ button {
   flex-shrink: 0;
 }
 
+.plan-badge {
+  text-transform: none;
+  letter-spacing: 0.02em;
+  background: #eaffd5;
+  color: #2f5d1c;
+  border: 1px solid #c9f2a8;
+}
+
 .history-item:not(:hover) .history-item__label-row {
   padding-right: 0;
 }
@@ -948,13 +956,34 @@ button {
 }
 
 .sidebar-auth--accent {
-  background: var(--accent);
+  background: linear-gradient(135deg, #2563eb 0%, #3b82f6 45%, #60a5fa 100%);
   color: #fff;
   border-color: transparent;
+  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.25);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.sidebar-auth--accent .label {
+  color: #fff;
 }
 
 .sidebar-auth--accent:hover {
-  background: var(--accent-2);
+  background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 45%, #3b82f6 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 16px 28px rgba(37, 99, 235, 0.3);
+}
+
+.sidebar-auth--accent:hover .label,
+.sidebar-auth--accent:hover .btn-icon {
+  color: #1d4ed8;
+}
+
+.sidebar-auth--accent .btn-icon {
+  margin-right: 8px;
+  width: 18px;
+  height: 18px;
+  color: #fff;
 }
 
 .sidebar-auth:hover {
@@ -1001,8 +1030,8 @@ button {
   position: absolute;
   top: 18px;
   left: 18px;
-  background: rgba(93, 33, 210, 0.12);
-  color: #5d21d2;
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
   padding: 6px 10px;
   border-radius: 999px;
   font-size: 12px;
@@ -1013,8 +1042,8 @@ button {
   width: 200px;
   height: 200px;
   border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #7c3aed 0%, #a855f7 40%, #f0abfc 100%);
-  box-shadow: 0 24px 50px rgba(124, 58, 237, 0.35);
+  background: radial-gradient(circle at 35% 35%, #2563eb 0%, #3b82f6 40%, #93c5fd 100%);
+  box-shadow: 0 24px 50px rgba(37, 99, 235, 0.35);
   position: relative;
 }
 
@@ -1169,8 +1198,8 @@ button {
 }
 
 .limit-plan.is-selected {
-  border-color: #a855f7;
-  box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.2);
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
   transform: translateY(-1px);
 }
 
@@ -1237,6 +1266,12 @@ button {
   border-bottom: 1px solid var(--line);
   border-right: 1px solid var(--line);
   text-align: center;
+}
+
+.plan-table__cell.is-selected {
+  background: var(--accent-soft-bg);
+  color: var(--accent-soft-text);
+  font-weight: 700;
 }
 
 .plan-table__cell--feature {
@@ -3400,6 +3435,73 @@ button {
   border-radius: 999px;
   background: var(--panel-soft);
   border: 1px solid #e0dfd7;
+}
+
+.usage-ring-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.usage-ring-tooltip {
+  position: absolute;
+  bottom: calc(100% + 2px);
+  right: -6px;
+  min-width: 180px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: 0 16px 30px rgba(15, 23, 42, 0.18);
+  opacity: 0;
+  transform: translateY(6px);
+  visibility: hidden;
+  pointer-events: auto;
+  transition: opacity 140ms ease, transform 140ms ease, visibility 0s linear 140ms;
+  z-index: 5;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.usage-ring-wrap:hover .usage-ring-tooltip,
+.usage-ring-wrap:focus-within .usage-ring-tooltip,
+.usage-ring-tooltip:hover {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+.usage-ring-wrap::after {
+  content: "";
+  position: absolute;
+  left: -8px;
+  right: -8px;
+  bottom: 100%;
+  height: 12px;
+}
+
+.usage-ring-tooltip__title {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.usage-ring-tooltip__row {
+  color: #6b7280;
+  margin-bottom: 4px;
+}
+
+.usage-ring-tooltip__cta {
+  margin-top: 8px;
+  width: 100%;
+  border: none;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .model-option {

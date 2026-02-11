@@ -104,8 +104,7 @@
     "planPro": "Pro",
     "planUpgradeTitle": "Upgrade your plan",
     "planBenefitPdf": "More PDFs and larger files",
-    "planBenefitChat": "Unlimited questions",
-    "planBenefitSpeed": "Faster processing",
+    "planBenefitChat": "More questions",
     "planPerMonth": "/ month",
     "planCurrent": "Current plan",
     "planUpgrade": "Upgrade plan",
@@ -150,6 +149,12 @@
     },
     "usage": {
       "summary": "{tokens} tokens / {pages} pages"
+    },
+    "usageRing": {
+      "rate": "Usage {value}%",
+      "used": "Used {used}/{limit}",
+      "remaining": "Remaining today {value}",
+      "reset": "Reset in {value}"
     },
     "common": {
       "loading": "Loading…",
