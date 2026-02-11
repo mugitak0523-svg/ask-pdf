@@ -715,6 +715,15 @@ const renderLoadingText = (text: string) => (
   useEffect(() => {
     let cancelled = false;
     const render = async () => {
+      if (documentId && hasRestoredRef.current) {
+        deferredRestoreRef.current = {
+          scrollTop: scrollTopRef.current,
+          page: currentPageRef.current,
+          zoom,
+        };
+        hasRestoredRef.current = false;
+        canPersistRef.current = false;
+      }
       setState("loading");
       setErrorMessage(null);
       const container = containerRef.current;

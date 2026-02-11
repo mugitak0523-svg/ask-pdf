@@ -609,6 +609,86 @@ async def count_document_chat_messages_conn(
     return int(row["total"] or 0)
 
 
+async def count_user_messages_since(
+    pool: asyncpg.Pool,
+    user_id: str,
+    start_at: datetime,
+) -> int:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select count(*) as total
+            from document_chat_messages
+            where user_id = $1
+              and role = 'user'
+              and created_at >= $2::timestamptz
+            """,
+            user_id,
+            start_at,
+        )
+    return int(row["total"] or 0)
+
+
+async def count_user_messages_since_conn(
+    conn: asyncpg.Connection,
+    user_id: str,
+    start_at: datetime,
+) -> int:
+    row = await conn.fetchrow(
+        """
+        select count(*) as total
+        from document_chat_messages
+        where user_id = $1
+          and role = 'user'
+          and created_at >= $2::timestamptz
+        """,
+        user_id,
+        start_at,
+    )
+    return int(row["total"] or 0)
+
+
+async def count_user_ok_answers_since(
+    pool: asyncpg.Pool,
+    user_id: str,
+    start_at: datetime,
+) -> int:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select count(*) as total
+            from document_chat_messages
+            where user_id = $1
+              and role = 'assistant'
+              and status = 'ok'
+              and created_at >= $2::timestamptz
+            """,
+            user_id,
+            start_at,
+        )
+    return int(row["total"] or 0)
+
+
+async def count_user_ok_answers_since_conn(
+    conn: asyncpg.Connection,
+    user_id: str,
+    start_at: datetime,
+) -> int:
+    row = await conn.fetchrow(
+        """
+        select count(*) as total
+        from document_chat_messages
+        where user_id = $1
+          and role = 'assistant'
+          and status = 'ok'
+          and created_at >= $2::timestamptz
+        """,
+        user_id,
+        start_at,
+    )
+    return int(row["total"] or 0)
+
+
 async def list_recent_document_chat_messages(
     pool: asyncpg.Pool,
     chat_id: str,
@@ -971,6 +1051,24 @@ async def get_user_plan_conn(
     except asyncpg.UndefinedTableError:
         return None
     return str(row["plan"]) if row and row.get("plan") else None
+
+
+async def set_user_plan(
+    pool: asyncpg.Pool,
+    user_id: str,
+    plan: str,
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            insert into user_plans (user_id, plan)
+            values ($1, $2)
+            on conflict (user_id)
+            do update set plan = excluded.plan
+            """,
+            user_id,
+            plan,
+        )
 
 
 async def insert_usage_log(
