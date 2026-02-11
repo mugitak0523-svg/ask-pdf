@@ -103,6 +103,7 @@
     "planPlus": "Plus",
     "planPro": "Pro",
     "planDowngrade": "Change to Free",
+    "planCancelScheduled": "Cancellation scheduled",
     "planChangeToPlus": "Change to Plus",
   "planNext": "Next plan: {plan} ({date})",
   "planUntil": "Current plan valid until {date}",

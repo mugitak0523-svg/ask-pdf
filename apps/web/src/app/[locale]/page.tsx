@@ -997,6 +997,27 @@ export default function Home() {
     el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
   };
 
+  const resetSignedOutState = () => {
+    setUserEmail(null);
+    setUserId(null);
+    setPlan("guest");
+    setPlanLimits(DEFAULT_PLAN_LIMITS.guest);
+    setDocuments([]);
+    setOpenDocuments([]);
+    setSelectedDocumentId(null);
+    setSelectedTabId(null);
+    setSelectedDocumentTitle(null);
+    setChatMessages([]);
+    setChatError(null);
+    setChatThreads([]);
+    setActiveChatId(null);
+    setAllChatThreads([]);
+    setShowThreadList(true);
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(STORAGE_KEY);
+    }
+  };
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setIsAuthed(Boolean(data.session));
@@ -1006,10 +1027,7 @@ export default function Home() {
         void loadDocuments();
         void loadPlan();
       } else {
-        setUserEmail(null);
-        setUserId(null);
-        setPlan("guest");
-        setPlanLimits(DEFAULT_PLAN_LIMITS.guest);
+        resetSignedOutState();
         void loadDocuments();
         void loadAllChats();
       }
@@ -1018,9 +1036,6 @@ export default function Home() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       setIsAuthed(Boolean(session));
-      if (event !== "SIGNED_IN" && event !== "TOKEN_REFRESHED") {
-        return;
-      }
       if (session) {
         setUserEmail(session.user?.email ?? null);
         setUserId(session.user?.id ?? null);
@@ -1032,18 +1047,7 @@ export default function Home() {
           void loadAllChats();
         }
       } else {
-        setUserEmail(null);
-        setUserId(null);
-        setPlan("guest");
-        setPlanLimits(DEFAULT_PLAN_LIMITS.guest);
-        setDocuments([]);
-        setChatMessages([]);
-        setChatError(null);
-        setChatThreads([]);
-        setActiveChatId(null);
-        setAllChatThreads([]);
-        void loadDocuments();
-        void loadAllChats();
+        resetSignedOutState();
       }
     });
     return () => {
@@ -2111,12 +2115,16 @@ export default function Home() {
     }
   };
 
+  const isCancelScheduled =
+    plan === "plus" && Boolean(billingSummary?.cancelAtPeriodEnd);
   const planCtaLabel =
     plan === selectedPlan
       ? t("planCurrent")
-      : selectedPlan === "free"
-        ? t("planDowngrade")
-        : t("planUpgrade");
+      : selectedPlan === "free" && isCancelScheduled
+        ? t("planCancelScheduled")
+        : selectedPlan === "free"
+          ? t("planDowngrade")
+          : t("planUpgrade");
 
   const handlePlanCta = () => {
     if (selectedPlan === "free") {
@@ -3169,7 +3177,8 @@ export default function Home() {
                   className="plan-cta"
                   disabled={
                     billingBusy ||
-                    plan === selectedPlan
+                    plan === selectedPlan ||
+                    (selectedPlan === "free" && isCancelScheduled)
                   }
                   onClick={handlePlanCta}
                 >
@@ -4326,7 +4335,8 @@ export default function Home() {
                         className="limit-modal__btn limit-modal__btn--primary"
                         disabled={
                           billingBusy ||
-                          plan === selectedPlan
+                          plan === selectedPlan ||
+                          (selectedPlan === "free" && isCancelScheduled)
                         }
                         onClick={handlePlanCta}
                       >
