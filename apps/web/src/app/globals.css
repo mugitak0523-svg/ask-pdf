@@ -732,6 +732,7 @@ button {
   align-items: center;
   min-width: 0;
   position: relative;
+  cursor: pointer;
 }
 
 .history-item.is-active {
@@ -1223,6 +1224,17 @@ button {
   cursor: pointer;
 }
 
+.limit-modal__btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.limit-modal__btn--primary:disabled {
+  background: #d9e3fb;
+  border-color: #cbd6f6;
+  color: #7a88a8;
+}
+
 .limit-modal__btn--primary {
   background: var(--accent);
   color: #fff;
@@ -1378,6 +1390,7 @@ button {
 .plan-cta:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+  background: #aabff5;
 }
 
 .settings__item--stack {
@@ -2017,6 +2030,51 @@ button {
   margin-top: 4px;
   font-size: 12px;
   color: var(--muted);
+}
+
+.settings__stack {
+  display: grid;
+  gap: 12px;
+}
+
+.settings__stack-item {
+  display: grid;
+  gap: 4px;
+}
+
+.settings__stack-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.settings__stack-desc {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.faq-list {
+  display: grid;
+  gap: 10px;
+}
+
+.faq-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--panel);
+}
+
+.faq-item__q {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.faq-item__a {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
 }
 
 .viewer__tabs-wrap {

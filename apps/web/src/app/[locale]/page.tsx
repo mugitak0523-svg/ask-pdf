@@ -8,6 +8,9 @@ import remarkGfm from "remark-gfm";
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { PdfViewer } from "@/components/pdf-viewer/pdf-viewer";
 import { supabase } from "@/lib/supabase";
+import termsMd from "../../../../../docs/legal/terms.md";
+import privacyMd from "../../../../../docs/legal/privacy.md";
+import tokushoMd from "../../../../../docs/legal/tokusho.md";
 
 type ChatRef = {
   label: string;
@@ -924,6 +927,18 @@ export default function Home() {
   const openLimitModal = (message?: string | null) => {
     setLimitModalMessage(message ?? null);
     setLimitModalOpen(true);
+    if (isAuthed) {
+      setBillingLoading(true);
+      setBillingFetchError(null);
+      loadBillingSummary()
+        .catch((error) => {
+          const msg = error instanceof Error ? error.message : "Failed to load billing";
+          setBillingFetchError(msg);
+        })
+        .finally(() => {
+          setBillingLoading(false);
+        });
+    }
   };
 
   useEffect(() => {
@@ -1071,29 +1086,7 @@ export default function Home() {
       setBillingLoading(true);
       setBillingFetchError(null);
       try {
-        const auth = await getAuthParams();
-        if (!auth || auth.tokenType !== "supabase") {
-          return;
-        }
-        const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
-        const response = await fetch(`${baseUrl}/billing/me`, {
-          headers: auth.headers,
-        });
-        if (!response.ok) {
-          throw new Error(`Failed to load billing (${response.status})`);
-        }
-        const payload = await response.json();
-        if (!active) return;
-        setBillingSummary({
-          plan: payload?.plan ?? null,
-          status: payload?.status ?? null,
-          currentPeriodEnd: payload?.currentPeriodEnd ?? null,
-          cancelAtPeriodEnd: payload?.cancelAtPeriodEnd ?? null,
-          nextPlan: payload?.nextPlan ?? null,
-          nextPlanAt: payload?.nextPlanAt ?? null,
-          upcomingInvoice: payload?.upcomingInvoice ?? null,
-          invoices: Array.isArray(payload?.invoices) ? payload.invoices : [],
-        });
+        await loadBillingSummary();
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to load billing";
         if (active) setBillingFetchError(message);
@@ -1960,11 +1953,37 @@ export default function Home() {
             ? limits.maxThreadsPerDocument
             : DEFAULT_PLAN_LIMITS[nextPlan].maxThreadsPerDocument,
       });
+      return nextPlan as PlanName;
     } catch {
       const fallback = isAuthed ? "free" : "guest";
       setPlan(fallback);
       setPlanLimits(DEFAULT_PLAN_LIMITS[fallback]);
+      return fallback as PlanName;
     }
+  };
+
+  const loadBillingSummary = async () => {
+    const auth = await getAuthParams();
+    if (!auth || auth.tokenType !== "supabase") return null;
+    const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+    const response = await fetch(`${baseUrl}/billing/me`, {
+      headers: auth.headers,
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to load billing (${response.status})`);
+    }
+    const payload = await response.json();
+    setBillingSummary({
+      plan: payload?.plan ?? null,
+      status: payload?.status ?? null,
+      currentPeriodEnd: payload?.currentPeriodEnd ?? null,
+      cancelAtPeriodEnd: payload?.cancelAtPeriodEnd ?? null,
+      nextPlan: payload?.nextPlan ?? null,
+      nextPlanAt: payload?.nextPlanAt ?? null,
+      upcomingInvoice: payload?.upcomingInvoice ?? null,
+      invoices: Array.isArray(payload?.invoices) ? payload.invoices : [],
+    });
+    return payload as BillingSummary | null;
   };
 
   const loadDailyMessageUsage = async () => {
@@ -2126,13 +2145,30 @@ export default function Home() {
           ? t("planDowngrade")
           : t("planUpgrade");
 
-  const handlePlanCta = () => {
-    if (selectedPlan === "free") {
+  const handlePlanCta = async () => {
+    if (billingBusy) return;
+    const targetPlan = selectedPlan;
+    try {
+      setBillingBusy(true);
+      const latestPlan = await loadPlan();
+      const latestBilling = await loadBillingSummary();
+      if (targetPlan === latestPlan) {
+        return;
+      }
+      if (targetPlan === "free" && latestBilling?.cancelAtPeriodEnd) {
+        return;
+      }
+    } catch {
+      // ignore and fall through
+    } finally {
+      setBillingBusy(false);
+    }
+    if (targetPlan === "free") {
       void scheduleDowngrade("free");
       return;
     }
-    if (selectedPlan === "plus") {
-      void startCheckout(selectedPlan);
+    if (targetPlan === "plus") {
+      void startCheckout(targetPlan);
     }
   };
 
@@ -3417,23 +3453,46 @@ export default function Home() {
         <>
           <h2 className="settings__title">{t("serviceTitle")}</h2>
           <div className="settings__group">
-            <div className="settings__item">
-              <div>
-                <div className="settings__item-title">{t("servicePlanTitle")}</div>
-                <div className="settings__item-desc">{t("servicePlanDesc")}</div>
-              </div>
-              <button type="button" className="settings__btn">
-                {t("open")}
-              </button>
-            </div>
-            <div className="settings__item">
+                  <div className="settings__item">
+                    <div>
+                      <div className="settings__item-title">{t("servicePlanTitle")}</div>
+                      <div className="settings__item-desc">{t("servicePlanDesc")}</div>
+                    </div>
+                    <button type="button" className="settings__btn" onClick={() => openLimitModal()}>
+                      {t("open")}
+                    </button>
+                  </div>
+            <div className="settings__item settings__item--stack">
               <div>
                 <div className="settings__item-title">{t("servicePolicyTitle")}</div>
                 <div className="settings__item-desc">{t("servicePolicyDesc")}</div>
               </div>
-              <button type="button" className="settings__btn">
-                {t("open")}
-              </button>
+              <div className="settings__value settings__stack">
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("servicePolicyTermsTitle")}</div>
+                  <div className="settings__stack-desc">
+                    <ReactMarkdown className="markdown" remarkPlugins={[remarkGfm]}>
+                      {termsMd}
+                    </ReactMarkdown>
+                  </div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("servicePolicyPrivacyTitle")}</div>
+                  <div className="settings__stack-desc">
+                    <ReactMarkdown className="markdown" remarkPlugins={[remarkGfm]}>
+                      {privacyMd}
+                    </ReactMarkdown>
+                  </div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("servicePolicyTokushoTitle")}</div>
+                  <div className="settings__stack-desc">
+                    <ReactMarkdown className="markdown" remarkPlugins={[remarkGfm]}>
+                      {tokushoMd}
+                    </ReactMarkdown>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </>
@@ -3444,14 +3503,29 @@ export default function Home() {
         <>
           <h2 className="settings__title">{t("faqTitle")}</h2>
           <div className="settings__group">
-            <div className="settings__item">
+            <div className="settings__item settings__item--stack">
               <div>
                 <div className="settings__item-title">{t("faqGeneralTitle")}</div>
                 <div className="settings__item-desc">{t("faqGeneralDesc")}</div>
               </div>
-              <button type="button" className="settings__btn">
-                {t("open")}
-              </button>
+              <div className="settings__value faq-list">
+                <div className="faq-item">
+                  <div className="faq-item__q">{t("faqQ1")}</div>
+                  <div className="faq-item__a">{t("faqA1")}</div>
+                </div>
+                <div className="faq-item">
+                  <div className="faq-item__q">{t("faqQ2")}</div>
+                  <div className="faq-item__a">{t("faqA2")}</div>
+                </div>
+                <div className="faq-item">
+                  <div className="faq-item__q">{t("faqQ3")}</div>
+                  <div className="faq-item__a">{t("faqA3")}</div>
+                </div>
+                <div className="faq-item">
+                  <div className="faq-item__q">{t("faqQ4")}</div>
+                  <div className="faq-item__a">{t("faqA4")}</div>
+                </div>
+              </div>
             </div>
           </div>
         </>
@@ -3461,14 +3535,35 @@ export default function Home() {
       <>
         <h2 className="settings__title">{t("manual.title")}</h2>
         <div className="settings__group">
-          <div className="settings__item">
+          <div className="settings__item settings__item--stack">
             <div>
-              <div className="settings__item-title">{t("manual.basicsTitle")}</div>
-              <div className="settings__item-desc">
-                {t("manual.basicsDesc")}
+                <div className="settings__item-title">{t("manual.basicsTitle")}</div>
+                <div className="settings__item-desc">{t("manual.basicsDesc")}</div>
+              </div>
+            <div className="settings__value">
+              <div className="settings__stack">
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.manualStepUploadTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.manualStepUploadDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.manualStepAskTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.manualStepAskDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.manualStepRefsTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.manualStepRefsDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.manualStepThreadsTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.manualStepThreadsDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.manualStepLimitsTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.manualStepLimitsDesc")}</div>
+                </div>
               </div>
             </div>
-            <button type="button" className="settings__btn">{t("open")}</button>
           </div>
         </div>
       </>
