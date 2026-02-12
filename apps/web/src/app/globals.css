@@ -92,6 +92,13 @@
   --input-bg: #1a1d1d;
   --input-border: #2b2f2f;
   --toolbar-bg: rgba(24, 26, 26, 0.92);
+  --header-sidebar-bg: #111313;
+  --bubble-assistant-bg: #171a1a;
+  --bubble-assistant-border: #2b2f2f;
+  --ref-pill-bg: #141717;
+  --ref-pill-border: #2b2f2f;
+  --ref-pill-text: #8ab4ff;
+  --brand-color: #8ab4ff;
   --terminal-bg: #0f1116;
   --terminal-border: #1f2430;
   --terminal-text: #d6dde6;
@@ -132,10 +139,17 @@
     --tooltip-text: #f1f1ef;
     --logo-bg: #f1f1ef;
     --logo-text: #111111;
-    --primary-hover: #ffffff;
-    --input-bg: #1a1d1d;
-    --input-border: #2b2f2f;
-    --toolbar-bg: rgba(24, 26, 26, 0.92);
+  --primary-hover: #ffffff;
+  --input-bg: #1a1d1d;
+  --input-border: #2b2f2f;
+  --toolbar-bg: rgba(24, 26, 26, 0.92);
+  --header-sidebar-bg: #111313;
+  --bubble-assistant-bg: #171a1a;
+  --bubble-assistant-border: #2b2f2f;
+  --ref-pill-bg: #141717;
+  --ref-pill-border: #2b2f2f;
+  --ref-pill-text: #8ab4ff;
+  --brand-color: #8ab4ff;
     --terminal-bg: #0f1116;
     --terminal-border: #1f2430;
     --terminal-text: #d6dde6;
@@ -143,6 +157,18 @@
     --terminal-input-bg: #11151c;
     --terminal-accent: #4fc3f7;
     color-scheme: dark;
+  }
+
+  :root:not([data-theme]) .support-thread__item--user .support-thread__bubble {
+    background: #2a64c5;
+    border-color: #2a64c5;
+    color: #ffffff;
+  }
+
+  :root:not([data-theme]) .support-thread__item--admin .support-thread__bubble {
+    background: #1c1f1f;
+    border-color: #2b2f2f;
+    color: #e5e7eb;
   }
 }
 
@@ -307,7 +333,7 @@ button {
   justify-content: space-between;
   align-items: center;
   border-bottom: 1px solid var(--line);
-  background: #ffffff;
+  background: var(--panel);
 }
 
 .chat__header-input {
@@ -1449,7 +1475,7 @@ button {
   border-bottom: 1px solid var(--line);
   border-right: 1px solid var(--line);
   text-align: center;
-  background: #fbfcfe;
+  background: var(--panel);
 }
 
 .plan-table__cell.is-selected {
@@ -1461,12 +1487,12 @@ button {
 .plan-table__cell--feature {
   text-align: left;
   font-weight: 600;
-  background: #f3f6fb;
+  background: var(--panel-strong);
 }
 
 .plan-table__header .plan-table__cell {
   font-weight: 700;
-  background: #eef2f7;
+  background: var(--panel-soft);
 }
 
 .plan-table__row:last-child .plan-table__cell {
@@ -1478,7 +1504,7 @@ button {
 }
 
 .plan-table__row:nth-child(even) .plan-table__cell:not(.plan-table__cell--feature) {
-  background: #f6f9fd;
+  background: var(--panel-soft);
 }
 
 .plan-table--compact .plan-table__cell {
@@ -1592,9 +1618,9 @@ button {
 }
 
 .settings__subsection--split {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
   width: 100%;
 }
@@ -1614,12 +1640,21 @@ button {
 }
 
 .settings__subsection--split .settings__subsection-content {
-  margin-left: auto;
   text-align: right;
   min-width: 240px;
+  justify-self: end;
   display: flex;
   align-items: center;
   justify-content: flex-end;
+}
+
+.settings__subsection-content--right {
+  flex: 1;
+}
+
+.settings__subsection-content--right .settings__value {
+  width: 100%;
+  text-align: right;
 }
 
 .settings__subsection--split .settings__subsection-content .billing-history,
@@ -1753,7 +1788,7 @@ button {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: white;
+  background: var(--panel);
   padding: 0px 16px 0;
   margin-top: 12px;
   border-left: 1px solid var(--line);
@@ -2498,6 +2533,11 @@ body.tooltip-portal-enabled [data-tooltip]::after {
   color: var(--text);
 }
 
+.settings__value--right {
+  text-align: right;
+  width: 100%;
+}
+
 .settings__subvalue {
   margin-top: 4px;
   font-size: 12px;
@@ -2605,8 +2645,8 @@ body.tooltip-portal-enabled [data-tooltip]::after {
 
 .admin-thread--compact {
   max-height: 200px;
-  background: #f8f9fd;
-  border-color: #e4e7ec;
+  background: var(--panel-soft);
+  border-color: var(--line);
 }
 
 .support-thread__item {
@@ -2626,6 +2666,18 @@ body.tooltip-portal-enabled [data-tooltip]::after {
   background: var(--panel-soft);
   color: var(--text);
   border: 1px solid var(--line);
+}
+
+:root[data-theme="dark"] .support-thread__item--user .support-thread__bubble {
+  background: #2a64c5;
+  border-color: #2a64c5;
+  color: #ffffff;
+}
+
+:root[data-theme="dark"] .support-thread__item--admin .support-thread__bubble {
+  background: #1c1f1f;
+  border-color: #2b2f2f;
+  color: #e5e7eb;
 }
 
 .support-thread__item--user {
@@ -2829,7 +2881,7 @@ body.tooltip-portal-enabled [data-tooltip]::after {
 .admin-detail__messages-title {
   font-size: 12px;
   font-weight: 600;
-  color: #1d2939;
+  color: var(--text);
 }
 
 .admin-usage-chart {
@@ -2861,10 +2913,10 @@ body.tooltip-portal-enabled [data-tooltip]::after {
 }
 
 .admin-feedback-card {
-  border: 1px solid #e4e7ec;
+  border: 1px solid var(--line);
   border-radius: 10px;
   padding: 12px 14px;
-  background: #ffffff;
+  background: var(--panel);
   display: grid;
   gap: 6px;
 }
@@ -2874,7 +2926,7 @@ body.tooltip-portal-enabled [data-tooltip]::after {
   justify-content: space-between;
   gap: 8px;
   font-size: 11px;
-  color: #667085;
+  color: var(--muted);
 }
 
 .admin-feedback-card__user {
@@ -4094,7 +4146,7 @@ body.tooltip-portal-enabled [data-tooltip]::after {
 
 .chat__thread-item {
   border-bottom: 1px solid var(--line);
-  background: #fff;
+  background: var(--panel);
   border-radius: 0px;
   padding: 10px 12px;
   text-align: left;
@@ -4104,8 +4156,8 @@ body.tooltip-portal-enabled [data-tooltip]::after {
 }
 
 .chat__thread-item:hover {
-  border-color: #d9d8cf;
-  background: #f7f7f4;
+  border-color: var(--line);
+  background: var(--panel-soft);
 }
 
 .chat__thread-title {
@@ -4249,7 +4301,7 @@ body.tooltip-portal-enabled [data-tooltip]::after {
   font-size: 10px;
   color: var(--muted);
   border: 1px solid var(--line);
-  background: #f6f6f2;
+  background: var(--panel-strong);
   border-radius: 6px;
   padding: 2px 6px;
 }
@@ -4296,7 +4348,7 @@ body.tooltip-portal-enabled [data-tooltip]::after {
   justify-content: space-between;
   padding: 0 8px;
   border-bottom: 1px solid var(--line);
-  background: #ffffff;
+  background: var(--panel);
   font-size: 12px;
   position: relative;
   overflow: visible;
@@ -4366,7 +4418,7 @@ body.tooltip-portal-enabled [data-tooltip]::after {
 
 .chat__header-action:hover {
   color: var(--text);
-  background: #f4f4f0;
+  background: var(--panel-soft);
   border-color: var(--line);
 }
 

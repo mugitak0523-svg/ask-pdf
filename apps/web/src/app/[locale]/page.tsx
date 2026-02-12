@@ -3503,8 +3503,8 @@ export default function Home() {
                   <div className="settings__subsection-title">{t("email")}</div>
                   <div className="settings__subsection-desc">{t("emailDesc")}</div>
                 </div>
-                <div className="settings__subsection-content">
-                  <div className="settings__value">
+                <div className="settings__subsection-content settings__subsection-content--right">
+                  <div className="settings__value settings__value--right">
                     {userEmail ?? t("auth.notSignedIn")}
                   </div>
                 </div>
@@ -3526,28 +3526,30 @@ export default function Home() {
                   <div className="settings__subsection-title">{t("plan")}</div>
                   <div className="settings__subsection-desc">{t("planDesc")}</div>
                 </div>
-                <div className="settings__value">
-                  <div>{planLabel}</div>
-                  {billingSummary?.nextPlan ? (
-                    <div className="settings__subvalue">
-                      {t("planNext", {
-                        plan:
-                          billingSummary.nextPlan === "plus"
-                            ? t("planPlus")
-                            : t("planFree"),
-                        date: formatDate(billingSummary.nextPlanAt),
-                      })}
-                    </div>
-                  ) : null}
-                  {!billingSummary?.nextPlan &&
-                  billingSummary?.cancelAtPeriodEnd &&
-                  billingSummary?.currentPeriodEnd ? (
-                    <div className="settings__subvalue">
-                      {t("planUntilCanceled", {
-                        date: formatDate(billingSummary.currentPeriodEnd),
-                      })}
-                    </div>
-                  ) : null}
+                <div className="settings__subsection-content">
+                  <div className="settings__value">
+                    <div>{planLabel}</div>
+                    {billingSummary?.nextPlan ? (
+                      <div className="settings__subvalue">
+                        {t("planNext", {
+                          plan:
+                            billingSummary.nextPlan === "plus"
+                              ? t("planPlus")
+                              : t("planFree"),
+                          date: formatDate(billingSummary.nextPlanAt),
+                        })}
+                      </div>
+                    ) : null}
+                    {!billingSummary?.nextPlan &&
+                    billingSummary?.cancelAtPeriodEnd &&
+                    billingSummary?.currentPeriodEnd ? (
+                      <div className="settings__subvalue">
+                        {t("planUntilCanceled", {
+                          date: formatDate(billingSummary.currentPeriodEnd),
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               </div>
               <div className="settings__subsection-divider" />
