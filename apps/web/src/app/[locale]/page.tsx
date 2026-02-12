@@ -700,6 +700,7 @@ export default function Home() {
       setIsHydrated(true);
     }
   }, []);
+
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [chatSending, setChatSending] = useState(false);
@@ -856,9 +857,74 @@ export default function Home() {
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
   const [shareNotice, setShareNotice] = useState<string | null>(null);
   const shareMenuRef = useRef<HTMLDivElement | null>(null);
+  const sidebarShareMenuRef = useRef<HTMLDivElement | null>(null);
+  const [isMobileLayout, setIsMobileLayout] = useState(false);
+  const [chatDrawerHeight, setChatDrawerHeight] = useState<number | null>(null);
+  const [chatInputVisible, setChatInputVisible] = useState(true);
+  const chatHeaderRef = useRef<HTMLDivElement | null>(null);
+  const chatInputFormRef = useRef<HTMLFormElement | null>(null);
+  const chatDragRef = useRef<{ startY: number; startHeight: number; dragging: boolean }>({
+    startY: 0,
+    startHeight: 0,
+    dragging: false,
+  });
+  const chatDragMovedRef = useRef(false);
   const restoreRef = useRef<any | null>(null);
   const restoreDoneRef = useRef(false);
   const [isHydrated, setIsHydrated] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!isHydrated) return;
+    const restored = restoreRef.current;
+    const hasStoredSidebar = typeof restored?.sidebarOpen === "boolean";
+    if (hasStoredSidebar) return;
+    if (window.innerWidth <= 820) {
+      setSidebarOpen(false);
+      setSidebarSearchOpen(false);
+    }
+  }, [isHydrated]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const media = window.matchMedia("(max-width: 820px)");
+    const apply = () => setIsMobileLayout(media.matches);
+    apply();
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", apply);
+      return () => media.removeEventListener("change", apply);
+    }
+    media.addListener(apply);
+    return () => media.removeListener(apply);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileLayout) {
+      setChatDrawerHeight(null);
+      setChatInputVisible(true);
+      return;
+    }
+    const headerHeight = chatHeaderRef.current?.offsetHeight ?? 56;
+    setChatDrawerHeight(headerHeight);
+  }, [isMobileLayout]);
+
+  useEffect(() => {
+    if (!isMobileLayout) {
+      setChatInputVisible(true);
+      return;
+    }
+    if (!chatDrawerHeight) {
+      setChatInputVisible(false);
+      return;
+    }
+    const raf = window.requestAnimationFrame(() => {
+      const headerHeight = chatHeaderRef.current?.offsetHeight ?? 56;
+      const inputHeight = chatInputFormRef.current?.offsetHeight ?? 0;
+      const needed = headerHeight + inputHeight + 8;
+      setChatInputVisible(chatDrawerHeight >= needed);
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [isMobileLayout, chatDrawerHeight]);
   useEffect(() => {
     if (!isHydrated) return;
     if (typeof window === "undefined") return;
@@ -1062,7 +1128,10 @@ export default function Home() {
     if (!shareMenuOpen) return;
     const onClick = (event: MouseEvent) => {
       const target = event.target as Node | null;
-      if (shareMenuRef.current && target && shareMenuRef.current.contains(target)) {
+      const shareMenuNodes = [shareMenuRef.current, sidebarShareMenuRef.current].filter(
+        Boolean
+      );
+      if (target && shareMenuNodes.some((node) => node?.contains(target))) {
         return;
       }
       setShareMenuOpen(false);
@@ -1070,6 +1139,15 @@ export default function Home() {
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
   }, [shareMenuOpen]);
+
+  const getChatDrawerMin = () => chatHeaderRef.current?.offsetHeight ?? 56;
+  const getChatDrawerMax = () =>
+    typeof window !== "undefined" ? Math.round(window.innerHeight * 0.8) : 0;
+  const clampChatHeight = (value: number) => {
+    const min = getChatDrawerMin();
+    const max = Math.max(min, getChatDrawerMax());
+    return Math.min(max, Math.max(min, value));
+  };
 
   const formatDateTime = (value: number | string | null) => {
     if (!value) return "-";
@@ -4567,6 +4645,196 @@ export default function Home() {
                 <span className="history-item__badge plan-badge">{planLabel}</span>
               </span>
             </button>
+            <div className="sidebar__mobile-actions">
+              <div className="sidebar__share-wrap" ref={sidebarShareMenuRef}>
+                <button
+                  type="button"
+                  className="history-item"
+                  data-tooltip={t("tooltip.share")}
+                  aria-label={t("tooltip.share")}
+                  onClick={() => setShareMenuOpen((prev) => !prev)}
+                >
+                  <svg
+                    className="btn-icon"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                    <path d="M3 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                    <path d="M15 6a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                    <path d="M15 18a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                    <path d="M8.7 10.7l6.6 -3.4" />
+                    <path d="M8.7 13.3l6.6 3.4" />
+                  </svg>
+                  <span className="label">{t("tooltip.share")}</span>
+                </button>
+                {shareMenuOpen ? (
+                  <div className="main-toolbar__menu-popover">
+                    <button
+                      type="button"
+                      className="main-toolbar__menu-item"
+                      onClick={() => void handleShareNative()}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                        <path d="M3 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                        <path d="M15 6a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                        <path d="M15 18a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                        <path d="M8.7 10.7l6.6 -3.4" />
+                        <path d="M8.7 13.3l6.6 3.4" />
+                      </svg>
+                      <span>{t("share.native")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="main-toolbar__menu-item"
+                      onClick={() => void handleCopyShare()}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="icon icon-tabler icons-tabler-outline icon-tabler-copy"
+                        aria-hidden="true"
+                      >
+                        <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                        <path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666" />
+                        <path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" />
+                      </svg>
+                      <span>{t("share.copy")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="main-toolbar__menu-item"
+                      onClick={() => void handleShareX()}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="icon icon-tabler icons-tabler-outline icon-tabler-brand-x"
+                        aria-hidden="true"
+                      >
+                        <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                        <path d="M4 4l11.733 16h4.267l-11.733 -16l-4.267 0" />
+                        <path d="M4 20l6.768 -6.768m2.46 -2.46l6.772 -6.772" />
+                      </svg>
+                      <span>{t("share.x")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="main-toolbar__menu-item"
+                      onClick={() => void handleShareLine()}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="icon icon-tabler icons-tabler-outline icon-tabler-message-circle"
+                        aria-hidden="true"
+                      >
+                        <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                        <path d="M3 20l1.3 -3.9c-2.324 -3.437 -1.426 -7.872 2.1 -10.374c3.526 -2.501 8.59 -2.296 11.845 .48c3.255 2.777 3.695 7.266 1.029 10.501c-2.666 3.235 -7.615 4.215 -11.574 2.293l-4.7 1" />
+                      </svg>
+                      <span>{t("share.line")}</span>
+                    </button>
+                    {shareNotice ? (
+                      <div className="main-toolbar__menu-hint">{shareNotice}</div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                className="history-item"
+                data-tooltip={t("tooltip.feedback")}
+                aria-label={t("tooltip.feedback")}
+                onClick={() => openSettingsSection("messages")}
+              >
+                <svg
+                  className="btn-icon"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                  <path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3h12" />
+                  <path d="M9.5 9h.01" />
+                  <path d="M14.5 9h.01" />
+                  <path d="M9.5 13a3.5 3.5 0 0 0 5 0" />
+                </svg>
+                <span className="label">{t("tooltip.feedback")}</span>
+              </button>
+              <button
+                type="button"
+                className="history-item"
+                data-tooltip={t("tooltip.plan")}
+                aria-label={t("tooltip.plan")}
+                onClick={() => {
+                  setSelectedPlan("plus");
+                  openLimitModal();
+                }}
+              >
+                <svg
+                  className="btn-icon"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                  <path d="M16 18a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2m0 -12a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2m-7 12a6 6 0 0 1 6 -6a6 6 0 0 1 -6 -6a6 6 0 0 1 -6 6a6 6 0 0 1 6 6" />
+                </svg>
+                <span className="label">{t("tooltip.plan")}</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -5685,8 +5953,87 @@ export default function Home() {
           />
         ) : null}
 
-        <section className={`chat ${chatOpen ? "" : "chat--collapsed"}`}>
-          <div className="chat__header">
+        <section
+          className={`chat ${chatOpen ? "" : "chat--collapsed"} ${
+            chatInputVisible ? "" : "chat--input-hidden"
+          }`}
+          style={
+            isMobileLayout && chatDrawerHeight
+              ? ({
+                  ["--chat-drawer-height" as React.CSSProperties["--chat-drawer-height"]]:
+                    `${chatDrawerHeight}px`,
+                } as React.CSSProperties)
+              : undefined
+          }
+        >
+          <div
+            className="chat__header"
+            ref={chatHeaderRef}
+            onPointerDown={(event) => {
+              if (!isMobileLayout) return;
+              if (
+                event.target instanceof Element &&
+                event.target.closest(
+                  "button, input, textarea, [contenteditable='true'], a, .chat__header-input, .chat__header-title, [role='button']"
+                )
+              ) {
+                return;
+              }
+              chatDragRef.current.dragging = true;
+              chatDragMovedRef.current = false;
+              chatDragRef.current.startY = event.clientY;
+              chatDragRef.current.startHeight =
+                chatDrawerHeight ?? chatHeaderRef.current?.offsetHeight ?? 56;
+              event.currentTarget.setPointerCapture?.(event.pointerId);
+            }}
+            onPointerMove={(event) => {
+              if (!isMobileLayout) return;
+              if (!chatDragRef.current.dragging) return;
+              const delta = chatDragRef.current.startY - event.clientY;
+              if (Math.abs(delta) > 4) {
+                chatDragMovedRef.current = true;
+              }
+              const nextHeight = clampChatHeight(chatDragRef.current.startHeight + delta);
+              setChatDrawerHeight(nextHeight);
+            }}
+            onPointerUp={(event) => {
+              if (!isMobileLayout) return;
+              if (!chatDragRef.current.dragging) return;
+              chatDragRef.current.dragging = false;
+              event.currentTarget.releasePointerCapture?.(event.pointerId);
+              const min = getChatDrawerMin();
+              const max = Math.max(min, getChatDrawerMax());
+              const mid = (min + max) / 2;
+              const current = chatDrawerHeight ?? min;
+              setChatDrawerHeight(current >= mid ? max : min);
+            }}
+            onPointerCancel={(event) => {
+              if (!isMobileLayout) return;
+              if (!chatDragRef.current.dragging) return;
+              chatDragRef.current.dragging = false;
+              event.currentTarget.releasePointerCapture?.(event.pointerId);
+              setChatDrawerHeight(getChatDrawerMin());
+            }}
+            onClick={(event) => {
+              if (!isMobileLayout) return;
+              if (
+                event.target instanceof Element &&
+                event.target.closest(
+                  "button, input, textarea, [contenteditable='true'], a, .chat__header-input, .chat__header-title, [role='button']"
+                )
+              ) {
+                return;
+              }
+              if (chatDragMovedRef.current) {
+                chatDragMovedRef.current = false;
+                return;
+              }
+              const min = getChatDrawerMin();
+              const max = Math.max(min, getChatDrawerMax());
+              const current = chatDrawerHeight ?? min;
+              setChatDrawerHeight(current <= min + 4 ? max : min);
+            }}
+          >
             {selectedDocumentId ? (
               <div className="chat__header-left">
                 {showThreadList ? null : (
@@ -6515,7 +6862,11 @@ export default function Home() {
               ↓
             </button>
           </div>
-          <form className="chat__input" onSubmit={handleSendMessage}>
+          <form
+            className="chat__input"
+            onSubmit={handleSendMessage}
+            ref={chatInputFormRef}
+          >
             <div className="input-panel">
               <div className="input-panel__top">
                 <textarea
