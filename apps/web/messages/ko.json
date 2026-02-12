@@ -273,7 +273,8 @@
       "limitTitle": "Limit reached",
       "limitDesc": "This action exceeds your current plan. Upgrade or sign in to continue.",
       "upgradePlan": "Change plan",
-      "sending": "Sending..."
+      "sending": "Sending...",
+      "count": "{value}"
     },
     "errors": {
       "documentLimit": "Document limit reached ({limit})",
@@ -313,7 +314,9 @@
       "chatExpand": "Expand chat ⌘⇧B",
       "rename": "Rename",
       "delete": "Delete",
-      "menu": "More"
+      "menu": "More",
+      "share": "공유",
+      "plan": "플랜"
     },
     "viewer": {
       "noDocument": "No PDF selected",
@@ -388,6 +391,18 @@
     "adminFeedbackDesc": "사용자 피드백을 확인합니다.",
     "adminFeedbackEmpty": "아직 피드백이 없습니다.",
     "adminReadLabel": "Read",
-    "adminUnread": "Unread"
+    "adminUnread": "Unread",
+    "usagePdfCount": "PDF 수",
+    "usagePdfCountDesc": "저장된 PDF 수",
+    "usageTodayChats": "오늘 채팅 수",
+    "usageTodayChatsDesc": "오늘 이용량",
+    "usageTodayChatsValue": "{used} / {limit}",
+    "share": {
+      "native": "공유하기…",
+      "copy": "링크 복사",
+      "x": "X에 공유",
+      "line": "LINE에 공유",
+      "copied": "링크가 복사되었습니다"
+    }
   }
 }

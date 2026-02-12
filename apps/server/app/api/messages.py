@@ -14,7 +14,7 @@ router = APIRouter()
 @router.get("/messages/announcements")
 async def list_announcements(
     request: Request,
-    limit: int = 20,
+    limit: int = 30,
     offset: int = 0,
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:

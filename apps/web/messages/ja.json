@@ -228,7 +228,7 @@
     "billingHistoryDesc": "直近の請求",
     "billingNone": "請求情報がありません",
     "billingNoneCanceling": "解約予定のため次回の請求はありません",
-    "signOut": "サインアウト",
+    "signOut": "ログアウト",
     "signOutDesc": "この端末からログアウト",
     "manage": "管理",
     "change": "変更",
@@ -264,6 +264,7 @@
       "unset": "未設定",
       "unlimited": "無制限",
       "reload": "再読み込み",
+      "clear": "クリア",
       "yen": "{value} 円",
       "errorOccurred": "エラーが発生しました",
       "on": "オン",
@@ -273,7 +274,8 @@
       "limitTitle": "制限に達しました",
       "limitDesc": "現在のプランではこの操作はできません。プラン変更やサインインで続行してください。",
       "upgradePlan": "プランを変更",
-      "sending": "送信中..."
+      "sending": "送信中...",
+      "count": "{value} 件"
     },
     "errors": {
       "documentLimit": "ドキュメント上限に達しました（{limit}）",
@@ -298,8 +300,15 @@
       "upload": "アップロード",
       "uploading": "アップロード中...",
       "search": "検索",
+      "searchWithShortcut": "検索 /",
+      "searchPlaceholder": "PDFを検索",
+      "searchMode": "検索対象",
+      "searchModeTitle": "ファイル名",
+      "searchModeContent": "本文",
       "switch": "切り替え",
       "noDocuments": "ドキュメントはまだありません",
+      "noSearchResults": "検索結果がありません",
+      "moreHits": "他{count}件",
       "signInHint": "ログインするとPDF一覧が表示されます。"
     },
     "tooltip": {
@@ -313,7 +322,10 @@
       "chatExpand": "チャットを開く ⌘⇧B",
       "rename": "名前を変更",
       "delete": "削除",
-      "menu": "その他"
+      "menu": "その他",
+      "share": "共有",
+      "feedback": "フィードバック",
+      "plan": "プラン"
     },
     "viewer": {
       "noDocument": "PDF未選択",
@@ -388,6 +400,18 @@
     "adminFeedbackDesc": "ユーザーからのフィードバックを確認します。",
     "adminFeedbackEmpty": "フィードバックはまだありません。",
     "adminReadLabel": "既読",
-    "adminUnread": "未読"
+    "adminUnread": "未読",
+    "usagePdfCount": "PDF数",
+    "usagePdfCountDesc": "保存中のPDF数",
+    "usageTodayChats": "今日のチャット数",
+    "usageTodayChatsDesc": "今日の利用量",
+    "usageTodayChatsValue": "{used} / {limit}",
+    "share": {
+      "native": "共有する…",
+      "copy": "リンクをコピー",
+      "x": "Xで共有",
+      "line": "LINEで共有",
+      "copied": "リンクをコピーしました"
+    }
   }
 }

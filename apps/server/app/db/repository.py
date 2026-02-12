@@ -362,6 +362,43 @@ async def match_user_documents(
     return [dict(row) for row in rows]
 
 
+async def search_document_chunks(
+    pool: asyncpg.Pool,
+    user_id: str,
+    query: str,
+    limit: int = 30,
+) -> list[dict[str, Any]]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            with hits as (
+                select
+                    dc.document_id,
+                    d.title,
+                    dc.content,
+                    dc.created_at,
+                    count(*) over (partition by dc.document_id) as hit_count
+                from document_chunks dc
+                join documents d on d.id = dc.document_id
+                where dc.user_id = $1
+                  and dc.content ilike $2
+            )
+            select distinct on (document_id)
+                document_id,
+                title,
+                content,
+                hit_count
+            from hits
+            order by document_id, created_at asc
+            limit $3
+            """,
+            user_id,
+            f"%{query}%",
+            limit,
+        )
+    return [dict(row) for row in rows]
+
+
 async def get_document_annotations(
     pool: asyncpg.Pool,
     document_id: str,

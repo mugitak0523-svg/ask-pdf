@@ -107,7 +107,7 @@ type ChunkCache = {
 const DEFAULT_PLAN_LIMITS: Record<PlanName, PlanLimits> = {
   guest: { maxFiles: 1, maxFileMb: 10, maxMessagesPerThread: 5, maxThreadsPerDocument: null },
   free: { maxFiles: 5, maxFileMb: 20, maxMessagesPerThread: 20, maxThreadsPerDocument: null },
-  plus: { maxFiles: null, maxFileMb: 50, maxMessagesPerThread: null, maxThreadsPerDocument: null },
+  plus: { maxFiles: 50, maxFileMb: 50, maxMessagesPerThread: 100, maxThreadsPerDocument: null },
 };
 
 const PLAN_PRICES: Record<Exclude<PlanName, "guest">, string> = {
@@ -499,6 +499,7 @@ export default function Home() {
     measure.style.fontFamily = "inherit";
     document.body.appendChild(measure);
     let portal: HTMLDivElement | null = null;
+    document.body.classList.add("tooltip-portal-enabled");
     const ensurePortal = () => {
       if (portal) return portal;
       const node = document.createElement("div");
@@ -520,105 +521,130 @@ export default function Home() {
       portal.style.transform = "translate(-9999px, -9999px)";
     };
 
-    const handleOver = (event: MouseEvent) => {
+    const positionTooltip = (target: HTMLElement, text: string) => {
+      const node = ensurePortal();
+      node.textContent = text;
+      node.style.opacity = "1";
+      node.style.transform = "none";
+
+      const rect = target.getBoundingClientRect();
+      const tooltipRect = node.getBoundingClientRect();
+      const padding = 8;
+      const offset = 8;
+      const topSpace = rect.top - padding;
+      const bottomSpace = window.innerHeight - rect.bottom - padding;
+      const leftSpace = rect.left - padding;
+      const rightSpace = window.innerWidth - rect.right - padding;
+
+      let placement: "top" | "bottom" | "right" | "left" = "top";
+      if (topSpace >= tooltipRect.height + offset) {
+        placement = "top";
+      } else if (bottomSpace >= tooltipRect.height + offset) {
+        placement = "bottom";
+      } else if (rightSpace >= tooltipRect.width + offset) {
+        placement = "right";
+      } else if (leftSpace >= tooltipRect.width + offset) {
+        placement = "left";
+      } else {
+        placement = bottomSpace >= topSpace ? "bottom" : "top";
+      }
+
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      let left = centerX - tooltipRect.width / 2;
+      let top = rect.top - tooltipRect.height - offset;
+
+      if (placement === "bottom") {
+        top = rect.bottom + offset;
+      } else if (placement === "right") {
+        left = rect.right + offset;
+        top = centerY - tooltipRect.height / 2;
+      } else if (placement === "left") {
+        left = rect.left - tooltipRect.width - offset;
+        top = centerY - tooltipRect.height / 2;
+      }
+
+      const maxLeft = window.innerWidth - padding - tooltipRect.width;
+      const maxTop = window.innerHeight - padding - tooltipRect.height;
+      left = Math.min(Math.max(left, padding), Math.max(padding, maxLeft));
+      top = Math.min(Math.max(top, padding), Math.max(padding, maxTop));
+
+      node.style.left = `${left}px`;
+      node.style.top = `${top}px`;
+      node.setAttribute("data-placement", placement);
+    };
+
+    let lastX = 0;
+    let lastY = 0;
+    let hideTimer: number | null = null;
+
+    const clearHideTimer = () => {
+      if (hideTimer !== null) {
+        window.clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+    };
+
+    const getTooltipTargetFromPoint = () => {
+      const el = document.elementFromPoint(lastX, lastY) as HTMLElement | null;
+      return (el?.closest?.("[data-tooltip]") as HTMLElement | null) ?? null;
+    };
+
+    const handleOver = (event: PointerEvent) => {
       const target = (event.target as HTMLElement | null)?.closest?.(
         "[data-tooltip]"
       ) as HTMLElement | null;
       if (!target) return;
       const text = target.getAttribute("data-tooltip") ?? "";
       if (!text) return;
-      measure.textContent = text;
-      const measuredWidth = measure.getBoundingClientRect().width;
-      const approxWidth = Math.min(320, Math.max(80, measuredWidth));
-      const rect = target.getBoundingClientRect();
-      const center = rect.left + rect.width / 2;
-      const left = center - approxWidth / 2;
-      const right = center + approxWidth / 2;
-      const padding = 8;
-      let shift = 0;
-      if (left < padding) {
-        shift = padding - left;
-      } else if (right > window.innerWidth - padding) {
-        shift = window.innerWidth - padding - right;
-      }
-      const clampedLeft = Math.max(padding, Math.min(window.innerWidth - padding, center + shift));
-      const usePortal = target.getAttribute("data-tooltip-portal") === "true";
-      const position = target.getAttribute("data-tooltip-position") ?? "bottom";
-      if (usePortal) {
-        const node = ensurePortal();
-        node.textContent = text;
-        node.style.opacity = "1";
-        node.style.transform = "translate(-9999px, -9999px)";
-        const width = node.getBoundingClientRect().width;
-        const height = node.getBoundingClientRect().height;
-        const leftPos = Math.max(padding, Math.min(window.innerWidth - padding, clampedLeft));
-        const topPos = position === "top" ? rect.top - height - 8 : rect.bottom + 8;
-        node.style.transform = `translate(${leftPos - width / 2}px, ${topPos}px)`;
-      } else {
-        target.style.setProperty("--tooltip-shift", `${shift}px`);
-        target.style.setProperty("--tooltip-left", `${clampedLeft}px`);
-        target.style.setProperty("--tooltip-top", `${rect.bottom + 8}px`);
-      }
+      lastX = event.clientX;
+      lastY = event.clientY;
+      clearHideTimer();
+      positionTooltip(target, text);
     };
-    const handleMove = (event: MouseEvent) => {
+    const handleMove = (event: PointerEvent) => {
       const target = (event.target as HTMLElement | null)?.closest?.(
         "[data-tooltip]"
       ) as HTMLElement | null;
       if (!target) return;
-      if (!target.getAttribute("data-tooltip")) return;
-      const rect = target.getBoundingClientRect();
-      const center = rect.left + rect.width / 2;
-      const measuredWidth = measure.getBoundingClientRect().width;
-      const approxWidth = Math.min(320, Math.max(80, measuredWidth));
-      const left = center - approxWidth / 2;
-      const right = center + approxWidth / 2;
-      const padding = 8;
-      let shift = 0;
-      if (left < padding) {
-        shift = padding - left;
-      } else if (right > window.innerWidth - padding) {
-        shift = window.innerWidth - padding - right;
-      }
-      const clampedLeft = Math.max(padding, Math.min(window.innerWidth - padding, center + shift));
-      const usePortal = target.getAttribute("data-tooltip-portal") === "true";
-      const position = target.getAttribute("data-tooltip-position") ?? "bottom";
-      if (usePortal) {
-        const node = ensurePortal();
-        node.textContent = target.getAttribute("data-tooltip") ?? "";
-        node.style.opacity = "1";
-        const width = node.getBoundingClientRect().width;
-        const height = node.getBoundingClientRect().height;
-        const leftPos = Math.max(padding, Math.min(window.innerWidth - padding, clampedLeft));
-        const topPos = position === "top" ? rect.top - height - 8 : rect.bottom + 8;
-        node.style.transform = `translate(${leftPos - width / 2}px, ${topPos}px)`;
-      } else {
-        target.style.setProperty("--tooltip-shift", `${shift}px`);
-        target.style.setProperty("--tooltip-left", `${clampedLeft}px`);
-        target.style.setProperty("--tooltip-top", `${rect.bottom + 8}px`);
-      }
+      const text = target.getAttribute("data-tooltip") ?? "";
+      if (!text) return;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      clearHideTimer();
+      positionTooltip(target, text);
     };
-    const handleOut = (event: MouseEvent) => {
+    const handleOut = (event: PointerEvent) => {
       const target = (event.target as HTMLElement | null)?.closest?.(
         "[data-tooltip]"
       ) as HTMLElement | null;
       if (!target) return;
-      const usePortal = target.getAttribute("data-tooltip-portal") === "true";
-      if (usePortal) {
+      const related = event.relatedTarget as Node | null;
+      if (related && target.contains(related)) return;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      clearHideTimer();
+      hideTimer = window.setTimeout(() => {
+        const nextTarget = getTooltipTargetFromPoint();
+        if (nextTarget) {
+          const text = nextTarget.getAttribute("data-tooltip") ?? "";
+          if (text) {
+            positionTooltip(nextTarget, text);
+            return;
+          }
+        }
         hidePortal();
-      } else {
-        target.style.removeProperty("--tooltip-shift");
-        target.style.removeProperty("--tooltip-left");
-        target.style.removeProperty("--tooltip-top");
-      }
+      }, 16);
     };
-    document.addEventListener("mouseover", handleOver, true);
-    document.addEventListener("mousemove", handleMove, true);
-    document.addEventListener("mouseout", handleOut, true);
+    document.addEventListener("pointerover", handleOver, true);
+    document.addEventListener("pointermove", handleMove, true);
+    document.addEventListener("pointerout", handleOut, true);
     return () => {
-      document.removeEventListener("mouseover", handleOver, true);
-      document.removeEventListener("mousemove", handleMove, true);
-      document.removeEventListener("mouseout", handleOut, true);
+      document.removeEventListener("pointerover", handleOver, true);
+      document.removeEventListener("pointermove", handleMove, true);
+      document.removeEventListener("pointerout", handleOut, true);
       measure.remove();
+      document.body.classList.remove("tooltip-portal-enabled");
       if (portal) {
         portal.remove();
         portal = null;
@@ -728,6 +754,12 @@ export default function Home() {
   const [uploading, setUploading] = useState(false);
   const [seenDocumentIds, setSeenDocumentIds] = useState<Set<string>>(new Set());
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarSearch, setSidebarSearch] = useState("");
+  const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false);
+  const [sidebarSearchMode, setSidebarSearchMode] = useState<"title" | "content">(
+    "title"
+  );
+  const sidebarSearchRef = useRef<HTMLInputElement | null>(null);
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
   const [selectedDocumentUrl, setSelectedDocumentUrl] = useState<string | null>(null);
   const [selectedDocumentTitle, setSelectedDocumentTitle] = useState<string | null>(null);
@@ -821,6 +853,9 @@ export default function Home() {
     limit: number | null;
     periodStart: string | null;
   } | null>(null);
+  const [shareMenuOpen, setShareMenuOpen] = useState(false);
+  const [shareNotice, setShareNotice] = useState<string | null>(null);
+  const shareMenuRef = useRef<HTMLDivElement | null>(null);
   const restoreRef = useRef<any | null>(null);
   const restoreDoneRef = useRef(false);
   const [isHydrated, setIsHydrated] = useState(false);
@@ -887,6 +922,14 @@ export default function Home() {
   const formatNumber = (value: number) =>
     Number.isFinite(value) ? value.toLocaleString(locale) : "0";
 
+  const formatMiddleEllipsis = (value: string, maxLength = 24) => {
+    if (value.length <= maxLength) return value;
+    const keep = Math.max(4, Math.floor((maxLength - 3) / 2));
+    const head = value.slice(0, keep);
+    const tail = value.slice(-keep);
+    return `${head}...${tail}`;
+  };
+
   const ZERO_DECIMAL_CURRENCIES = new Set([
     "BIF",
     "CLP",
@@ -929,6 +972,105 @@ export default function Home() {
     return `+${formatted}`;
   };
 
+  const handleShare = async () => {
+    if (typeof window === "undefined") return;
+    const url = window.location.href;
+    const title = selectedDocumentTitle ?? t("viewer.noDocument");
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, url });
+        return;
+      }
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      }
+    } catch {
+      // Ignore share failures
+    }
+  };
+
+  const getShareContext = () => {
+    if (typeof window === "undefined") {
+      return { url: "", title: "" };
+    }
+    const url = window.location.href;
+    const title = selectedDocumentTitle ?? t("viewer.noDocument");
+    return { url, title };
+  };
+
+  const openShareUrl = (url: string) => {
+    if (typeof window === "undefined") return;
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const handleCopyShare = async () => {
+    const { url } = getShareContext();
+    if (!url) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = url;
+        textarea.style.position = "fixed";
+        textarea.style.top = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        textarea.remove();
+      }
+      setShareNotice(t("share.copied"));
+      setTimeout(() => setShareNotice(null), 2000);
+    } catch {
+      // Ignore copy failures
+    }
+  };
+
+  const handleShareNative = async () => {
+    const { url, title } = getShareContext();
+    if (!url) return;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, url });
+      } else {
+        await handleCopyShare();
+      }
+    } catch {
+      // Ignore share failures
+    }
+  };
+
+  const handleShareX = () => {
+    const { url, title } = getShareContext();
+    if (!url) return;
+    const shareUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(
+      title
+    )}&url=${encodeURIComponent(url)}`;
+    openShareUrl(shareUrl);
+  };
+
+  const handleShareLine = () => {
+    const { url } = getShareContext();
+    if (!url) return;
+    const shareUrl = `https://social-plugins.line.me/lineit/share?url=${encodeURIComponent(
+      url
+    )}`;
+    openShareUrl(shareUrl);
+  };
+
+  useEffect(() => {
+    if (!shareMenuOpen) return;
+    const onClick = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (shareMenuRef.current && target && shareMenuRef.current.contains(target)) {
+        return;
+      }
+      setShareMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [shareMenuOpen]);
+
   const formatDateTime = (value: number | string | null) => {
     if (!value) return "-";
     const date =
@@ -947,6 +1089,40 @@ export default function Home() {
 
   const SETTINGS_TAB_ID = "__settings__";
   const canUseApi = isAuthed || Boolean(guestToken);
+  const filteredDocuments = useMemo(() => {
+    const query = sidebarSearch.trim().toLowerCase();
+    if (!query) return documents;
+    return documents.filter((doc) => (doc.title || "").toLowerCase().includes(query));
+  }, [documents, sidebarSearch]);
+  const [contentSearchHits, setContentSearchHits] = useState<
+    {
+      documentId: string;
+      title: string | null;
+      snippet: string;
+      hitCount: number;
+    }[]
+  >([]);
+  const [contentSearchLoading, setContentSearchLoading] = useState(false);
+  const [contentSearchError, setContentSearchError] = useState<string | null>(null);
+  const contentSearchAbortRef = useRef<AbortController | null>(null);
+
+  const searchResults = useMemo(() => {
+    if (!sidebarSearch.trim()) {
+      return documents.map((doc) => ({ doc, snippet: null, extraHits: 0 }));
+    }
+    if (sidebarSearchMode === "title") {
+      return filteredDocuments.map((doc) => ({ doc, snippet: null, extraHits: 0 }));
+    }
+    return contentSearchHits.map((hit) => ({
+      doc: { id: hit.documentId, title: hit.title || t("common.untitled") },
+      snippet: hit.snippet,
+      extraHits: Math.max(0, hit.hitCount - 1),
+    }));
+  }, [sidebarSearch, sidebarSearchMode, documents, filteredDocuments, contentSearchHits, t]);
+
+  const sidebarDocumentCount = sidebarSearch.trim()
+    ? searchResults.length
+    : documents.length;
   const openLimitModal = (message?: string | null) => {
     setLimitModalMessage(message ?? null);
     setLimitModalOpen(true);
@@ -969,6 +1145,59 @@ export default function Home() {
     void loadDailyMessageUsage();
   }, [canUseApi, planLimits.maxMessagesPerThread]);
 
+  useEffect(() => {
+    const query = sidebarSearch.trim();
+    if (!canUseApi || !query || sidebarSearchMode !== "content") {
+      setContentSearchHits([]);
+      setContentSearchError(null);
+      setContentSearchLoading(false);
+      if (contentSearchAbortRef.current) {
+        contentSearchAbortRef.current.abort();
+        contentSearchAbortRef.current = null;
+      }
+      return;
+    }
+    const controller = new AbortController();
+    if (contentSearchAbortRef.current) {
+      contentSearchAbortRef.current.abort();
+    }
+    contentSearchAbortRef.current = controller;
+    setContentSearchLoading(true);
+    setContentSearchError(null);
+    const timer = window.setTimeout(() => {
+      (async () => {
+        try {
+          const auth = await getAuthParams();
+          if (!auth) return;
+          const baseUrl =
+            process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+          const url = new URL(`${baseUrl}/documents/search`);
+          url.searchParams.set("query", query);
+          url.searchParams.set("limit", "30");
+          const response = await fetch(url.toString(), {
+            headers: auth.headers,
+            signal: controller.signal,
+          });
+          if (!response.ok) {
+            throw new Error("Search failed");
+          }
+          const data = await response.json();
+          const items = Array.isArray(data?.items) ? data.items : [];
+          setContentSearchHits(items);
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") return;
+          setContentSearchError("Search failed");
+        } finally {
+          setContentSearchLoading(false);
+        }
+      })();
+    }, 500);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [canUseApi, sidebarSearch, sidebarSearchMode]);
+
   const mainStyle = useMemo(
     () => ({
       gridTemplateColumns: chatOpen
@@ -980,6 +1209,24 @@ export default function Home() {
     }),
     [chatOpen, chatWidth]
   );
+
+  const renderSearchSnippet = (snippet: string, query: string) => {
+    if (!query) return <span>{snippet}</span>;
+    const lowerSnippet = snippet.toLowerCase();
+    const lowerQuery = query.toLowerCase();
+    const idx = lowerSnippet.indexOf(lowerQuery);
+    if (idx < 0) return <span>{snippet}</span>;
+    const before = snippet.slice(0, idx);
+    const match = snippet.slice(idx, idx + query.length);
+    const after = snippet.slice(idx + query.length);
+    return (
+      <>
+        <span>{before}</span>
+        <span className="history-item__snippet-hit">{match}</span>
+        <span>{after}</span>
+      </>
+    );
+  };
 
   const handleResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {
     const target = event.currentTarget;
@@ -1171,6 +1418,23 @@ export default function Home() {
       setChatOpen(true);
       requestAnimationFrame(() => {
         chatInputRef.current?.focus();
+      });
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
+
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, [contenteditable='true']")) return;
+      event.preventDefault();
+      setSidebarOpen(true);
+      setSidebarSearchOpen(true);
+      requestAnimationFrame(() => {
+        sidebarSearchRef.current?.focus();
+        sidebarSearchRef.current?.select();
       });
     };
     window.addEventListener("keydown", handleKey);
@@ -1400,13 +1664,15 @@ export default function Home() {
 
   useEffect(() => {
     if (showThreadList || chatMessages.length === 0) return;
+    if (loadingMoreMessages) return;
+    if (!isNearBottomRef.current) return;
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         scrollChatToBottom("auto");
         isNearBottomRef.current = true;
       });
     });
-  }, [showThreadList, chatMessages.length]);
+  }, [showThreadList, chatMessages.length, loadingMoreMessages]);
 
   const loadChatMessages = async (
     documentId: string,
@@ -2021,7 +2287,7 @@ export default function Home() {
     const auth = await getAuthParams();
     if (!auth) return;
     const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
-    const response = await fetch(`${baseUrl}/messages/announcements`, {
+    const response = await fetch(`${baseUrl}/messages/announcements?limit=30`, {
       headers: auth.headers,
     });
     if (!response.ok) return;
@@ -2103,6 +2369,9 @@ export default function Home() {
       if (!response.ok) throw new Error("Failed to send feedback");
       setFeedbackMessage("");
       setFeedbackNotice(t("messagesFeedbackSent"));
+      setTimeout(() => {
+        setFeedbackNotice(null);
+      }, 3000);
     } finally {
       setFeedbackBusy(false);
     }
@@ -3473,36 +3742,20 @@ export default function Home() {
       );
     }
     if (settingsSection === "usage") {
-      const currentUsage = usageSummary?.current;
-      const allTimeUsage = usageSummary?.allTime;
-      const usageValue = usageLoading
+      const pdfCountValue = docsLoading
+        ? t("common.loading")
+        : t("common.count", { value: formatNumber(documents.length) });
+      const todayChatValue = usageLoading
         ? t("common.loading")
         : usageError
           ? t("common.fetchFailed")
-          : currentUsage
-            ? t("usage.summary", {
-                tokens: formatNumber(currentUsage.totalTokens),
-                pages: formatNumber(currentUsage.pages),
-              })
-            : t("common.noData");
-      const allTimeValue = usageLoading
-        ? t("common.loading")
-        : usageError
-          ? t("common.fetchFailed")
-          : allTimeUsage
-            ? t("usage.summary", {
-                tokens: formatNumber(allTimeUsage.totalTokens),
-                pages: formatNumber(allTimeUsage.pages),
-              })
-            : t("common.noData");
-      const usageCost = usageLoading
-        ? t("common.loading")
-        : usageError
-          ? t("common.fetchFailed")
-          : currentUsage
-            ? currentUsage.costYen === null
-              ? currentUsage.costNote ?? t("common.unset")
-              : t("common.yen", { value: formatNumber(currentUsage.costYen) })
+          : dailyMessageUsage
+            ? dailyMessageUsage.limit === null
+              ? t("common.count", { value: formatNumber(dailyMessageUsage.used) })
+              : t("usageTodayChatsValue", {
+                  used: formatNumber(dailyMessageUsage.used),
+                  limit: formatNumber(dailyMessageUsage.limit),
+                })
             : t("common.noData");
       return (
         <>
@@ -3510,24 +3763,17 @@ export default function Home() {
           <div className="settings__group">
             <div className="settings__item">
               <div>
-                <div className="settings__item-title">{t("usageThisMonth")}</div>
-                <div className="settings__item-desc">{t("usageThisMonthDesc")}</div>
+                <div className="settings__item-title">{t("usagePdfCount")}</div>
+                <div className="settings__item-desc">{t("usagePdfCountDesc")}</div>
               </div>
-              <div className="settings__value">{usageValue}</div>
+              <div className="settings__value">{pdfCountValue}</div>
             </div>
             <div className="settings__item">
               <div>
-                <div className="settings__item-title">{t("usageAllTime")}</div>
-                <div className="settings__item-desc">{t("usageAllTimeDesc")}</div>
+                <div className="settings__item-title">{t("usageTodayChats")}</div>
+                <div className="settings__item-desc">{t("usageTodayChatsDesc")}</div>
               </div>
-              <div className="settings__value">{allTimeValue}</div>
-            </div>
-            <div className="settings__item">
-              <div>
-                <div className="settings__item-title">{t("usageCost")}</div>
-                <div className="settings__item-desc">{t("usageCostDesc")}</div>
-              </div>
-              <div className="settings__value">{usageCost}</div>
+              <div className="settings__value">{todayChatValue}</div>
             </div>
           </div>
         </>
@@ -3557,6 +3803,44 @@ export default function Home() {
                     </div>
                   ))
                 )}
+              </div>
+            </div>
+            <div className="settings__item settings__item--stack">
+              <div>
+                <div className="settings__item-title">{t("messagesFeedbackTitle")}</div>
+                <div className="settings__item-desc">{t("messagesFeedbackDesc")}</div>
+              </div>
+              <div className="settings__value support">
+                <div className="support-form">
+                  <label className="settings__label">{t("messagesFeedbackCategory")}</label>
+                  <select
+                    className="settings__select"
+                    value={feedbackCategory}
+                    onChange={(event) => setFeedbackCategory(event.target.value)}
+                  >
+                    <option value="bug">{t("messagesFeedbackCategoryBug")}</option>
+                    <option value="feature">{t("messagesFeedbackCategoryFeature")}</option>
+                    <option value="ui">{t("messagesFeedbackCategoryUi")}</option>
+                    <option value="billing">{t("messagesFeedbackCategoryBilling")}</option>
+                    <option value="other">{t("messagesFeedbackCategoryOther")}</option>
+                  </select>
+                  <textarea
+                    className="support-form__input"
+                    rows={4}
+                    value={feedbackMessage}
+                    onChange={(event) => setFeedbackMessage(event.target.value)}
+                    placeholder={t("messagesFeedbackPlaceholder")}
+                  />
+                  {feedbackNotice ? <div className="settings__hint">{feedbackNotice}</div> : null}
+                  <button
+                    type="button"
+                    className="settings__btn"
+                    onClick={() => void sendFeedback()}
+                    disabled={feedbackBusy || feedbackMessage.trim().length === 0}
+                  >
+                    {feedbackBusy ? t("common.sending") : t("messagesFeedbackSend")}
+                  </button>
+                </div>
               </div>
             </div>
             <div className="settings__item settings__item--stack">
@@ -3598,48 +3882,6 @@ export default function Home() {
                     disabled={supportBusy || supportDraft.trim().length === 0}
                   >
                     {supportBusy ? t("common.sending") : t("messagesSupportSend")}
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div className="settings__item settings__item--stack">
-              <div>
-                <div className="settings__item-title">{t("messagesFeedbackTitle")}</div>
-                <div className="settings__item-desc">{t("messagesFeedbackDesc")}</div>
-              </div>
-              <div className="settings__value support">
-                <div className="support-form">
-                  <label className="settings__label">
-                    {t("messagesFeedbackCategory")}
-                  </label>
-                  <select
-                    className="settings__select"
-                    value={feedbackCategory}
-                    onChange={(event) => setFeedbackCategory(event.target.value)}
-                  >
-                    <option value="bug">{t("messagesFeedbackCategoryBug")}</option>
-                    <option value="feature">{t("messagesFeedbackCategoryFeature")}</option>
-                    <option value="ui">{t("messagesFeedbackCategoryUi")}</option>
-                    <option value="billing">{t("messagesFeedbackCategoryBilling")}</option>
-                    <option value="other">{t("messagesFeedbackCategoryOther")}</option>
-                  </select>
-                  <textarea
-                    className="support-form__input"
-                    rows={4}
-                    value={feedbackMessage}
-                    onChange={(event) => setFeedbackMessage(event.target.value)}
-                    placeholder={t("messagesFeedbackPlaceholder")}
-                  />
-                  {feedbackNotice ? (
-                    <div className="settings__hint">{feedbackNotice}</div>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="settings__btn"
-                    onClick={() => void sendFeedback()}
-                    disabled={feedbackBusy || feedbackMessage.trim().length === 0}
-                  >
-                    {feedbackBusy ? t("common.sending") : t("messagesFeedbackSend")}
                   </button>
                 </div>
               </div>
@@ -3919,6 +4161,8 @@ export default function Home() {
             type="button"
             className="history-item header-btn"
             onClick={() => setSidebarOpen((prev) => !prev)}
+            data-tooltip={sidebarOpen ? t("sidebar.collapse") : t("sidebar.expand")}
+            aria-label={sidebarOpen ? t("sidebar.collapse") : t("sidebar.expand")}
           >
             <svg
               className="btn-icon"
@@ -3945,6 +4189,8 @@ export default function Home() {
             className={`history-item sidebar-upload ${uploading ? "is-uploading" : ""}`}
             onClick={handleUploadClick}
             disabled={!canUseApi || uploading}
+            data-tooltip={t("sidebar.upload")}
+            aria-label={t("sidebar.upload")}
           >
             {uploading ? (
               <>
@@ -3972,7 +4218,26 @@ export default function Home() {
               </>
             )}
           </button>
-          <button type="button" className="history-item header-btn">
+          <button
+            type="button"
+            className="history-item header-btn"
+            onClick={() => {
+              if (!sidebarOpen) {
+                setSidebarOpen(true);
+              }
+              setSidebarSearchOpen((prev) => {
+                const next = !prev;
+                if (next) {
+                  window.setTimeout(() => {
+                    sidebarSearchRef.current?.focus();
+                  }, 0);
+                }
+                return next;
+              });
+            }}
+            data-tooltip={t("sidebar.search")}
+            aria-label={t("sidebar.search")}
+          >
             <svg
               className="btn-icon"
               width="18"
@@ -3990,6 +4255,64 @@ export default function Home() {
             </svg>
             <span className="label">{t("sidebar.search")}</span>
           </button>
+          {sidebarOpen && sidebarSearchOpen ? (
+            <div className="sidebar__search">
+              <div className="sidebar__search-input-wrap">
+                <input
+                  ref={sidebarSearchRef}
+                  type="text"
+                  className="sidebar__search-input"
+                  value={sidebarSearch}
+                  onChange={(event) => setSidebarSearch(event.target.value)}
+                  placeholder={t("sidebar.searchPlaceholder")}
+                  aria-label={t("sidebar.search")}
+                />
+                {sidebarSearch ? (
+                  <button
+                    type="button"
+                    className="sidebar__search-clear"
+                    onClick={() => {
+                      setSidebarSearch("");
+                      sidebarSearchRef.current?.focus();
+                    }}
+                    aria-label={t("common.clear")}
+                  >
+                    ×
+                  </button>
+                ) : null}
+              </div>
+              <div
+                className="sidebar__search-modes"
+                role="group"
+                aria-label={t("sidebar.searchMode")}
+              >
+                <button
+                  type="button"
+                  className={`sidebar__search-mode ${
+                    sidebarSearchMode === "title" ? "is-active" : ""
+                  }`}
+                  onClick={() => {
+                    setSidebarSearchMode("title");
+                    window.setTimeout(() => sidebarSearchRef.current?.focus(), 0);
+                  }}
+                >
+                  {t("sidebar.searchModeTitle")}
+                </button>
+                <button
+                  type="button"
+                  className={`sidebar__search-mode ${
+                    sidebarSearchMode === "content" ? "is-active" : ""
+                  }`}
+                  onClick={() => {
+                    setSidebarSearchMode("content");
+                    window.setTimeout(() => sidebarSearchRef.current?.focus(), 0);
+                  }}
+                >
+                  {t("sidebar.searchModeContent")}
+                </button>
+              </div>
+            </div>
+          ) : null}
           <input
             ref={fileInputRef}
             type="file"
@@ -4193,6 +4516,9 @@ export default function Home() {
                 </svg>
               </span>
               {t("sidebar.documents")}
+              {sidebarDocumentCount > 0 ? (
+                <span className="sidebar__list-count">({sidebarDocumentCount})</span>
+              ) : null}
             </span>
             <span className="sidebar__list-indicator" aria-hidden="true">
               {sidebarListCollapsed ? (
@@ -4265,29 +4591,39 @@ export default function Home() {
               <div className="auth-hint">
                 <p>{t("sidebar.noDocuments")}</p>
               </div>
+            ) : searchResults.length === 0 ? (
+              <div className="auth-hint">
+                <p>{t("sidebar.noSearchResults")}</p>
+                {contentSearchLoading ? (
+                  <span className="auth-hint__sub">{t("common.loading")}</span>
+                ) : null}
+                {contentSearchError ? (
+                  <span className="auth-hint__sub">{t("common.fetchFailed")}</span>
+                ) : null}
+              </div>
             ) : (
-              documents.map((doc) => (
+              searchResults.map((item) => (
                 <div
-                  key={doc.id}
+                  key={item.doc.id}
                   className={`history-item ${
-                    selectedDocumentId === doc.id ? "is-active" : ""
-                  }`}
+                    selectedDocumentId === item.doc.id ? "is-active" : ""
+                  } ${item.snippet ? "history-item--multi" : ""}`}
                   onClick={() => {
-                    if (editingDocumentId === doc.id) return;
-                    handleSelectDocument(doc);
+                    if (editingDocumentId === item.doc.id) return;
+                    handleSelectDocument(item.doc);
                   }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
-                      if (editingDocumentId === doc.id) return;
-                      handleSelectDocument(doc);
+                      if (editingDocumentId === item.doc.id) return;
+                      handleSelectDocument(item.doc);
                     }
                   }}
                   role="button"
                   tabIndex={0}
-                  data-tooltip={doc.title}
+                  data-tooltip={item.doc.title}
                 >
-                  {editingDocumentId === doc.id ? (
+                  {editingDocumentId === item.doc.id ? (
                     <input
                       className="history-item__input"
                       value={documentTitleDraft}
@@ -4296,25 +4632,45 @@ export default function Home() {
                       onKeyDown={(event) => {
                         if (event.key === "Enter") {
                           event.preventDefault();
-                          void saveRenameDocument(doc.id);
+                          void saveRenameDocument(item.doc.id);
                         }
                         if (event.key === "Escape") {
                           event.preventDefault();
                           cancelRenameDocument();
                         }
                       }}
-                      onBlur={() => void saveRenameDocument(doc.id)}
+                      onBlur={() => void saveRenameDocument(item.doc.id)}
                       aria-label={t("aria.renameDocument")}
                       autoFocus
                     />
                   ) : (
                     <>
                       <span className="history-item__label-row">
-                        <span className="label history-item__label">{doc.title}</span>
-                        {!seenDocumentIds.has(doc.id) ? (
+                        <span className="label history-item__label">
+                          {renderSearchSnippet(
+                            item.doc.title || t("common.untitled"),
+                            sidebarSearch
+                          )}
+                        </span>
+                        {!seenDocumentIds.has(item.doc.id) ? (
                           <span className="history-item__badge">NEW</span>
                         ) : null}
                       </span>
+                      {item.snippet ? (
+                        <span className="history-item__snippet">
+                          <span className="history-item__snippet-line">
+                            <span className="history-item__snippet-text">
+                              {renderSearchSnippet(item.snippet, sidebarSearch)}
+                            </span>
+                            {item.extraHits ? (
+                              <span className="history-item__snippet-count">
+                                {" "}
+                                {t("sidebar.moreHits", { count: item.extraHits })}
+                              </span>
+                            ) : null}
+                          </span>
+                        </span>
+                      ) : null}
                       {sidebarOpen ? (
                         <span
                           role="button"
@@ -4322,13 +4678,17 @@ export default function Home() {
                           className="history-item__menu-trigger"
                           onClick={(event) => {
                             event.stopPropagation();
-                            setOpenDocMenuId((prev) => (prev === doc.id ? null : doc.id));
+                            setOpenDocMenuId((prev) =>
+                              prev === item.doc.id ? null : item.doc.id
+                            );
                           }}
                           onKeyDown={(event) => {
                             if (event.key === "Enter" || event.key === " ") {
                               event.preventDefault();
                               event.stopPropagation();
-                              setOpenDocMenuId((prev) => (prev === doc.id ? null : doc.id));
+                              setOpenDocMenuId((prev) =>
+                                prev === item.doc.id ? null : item.doc.id
+                              );
                             }
                           }}
                           aria-label={t("tooltip.menu")}
@@ -4353,14 +4713,14 @@ export default function Home() {
                           </svg>
                         </span>
                       ) : null}
-                      {sidebarOpen && openDocMenuId === doc.id ? (
+                      {sidebarOpen && openDocMenuId === item.doc.id ? (
                         <div className="history-item__menu" onClick={(event) => event.stopPropagation()}>
                           <button
                             type="button"
                             className="history-item__menu-item"
                             onClick={() => {
                               setOpenDocMenuId(null);
-                              startRenameDocument(doc);
+                              startRenameDocument(item.doc);
                             }}
                           >
                             <span className="menu-item__icon" aria-hidden="true">
@@ -4387,7 +4747,7 @@ export default function Home() {
                             className="history-item__menu-item"
                             onClick={() => {
                               setOpenDocMenuId(null);
-                              void handleDownloadDocument(doc.id);
+                              void handleDownloadDocument(item.doc.id);
                             }}
                           >
                             <span className="menu-item__icon" aria-hidden="true">
@@ -4462,7 +4822,11 @@ export default function Home() {
 
         <div className="sidebar__footer">
           {isAuthed ? (
-            <button type="button" className="history-item" onClick={handleSignOut}>
+            <button
+              type="button"
+              className="history-item history-item--danger"
+              onClick={handleSignOut}
+            >
               <svg
                 className="btn-icon"
                 width="18"
@@ -4741,7 +5105,196 @@ export default function Home() {
               {selectedDocumentTitle ? selectedDocumentTitle : t("viewer.noDocument")}
             </span>
           </div>
-          <div className="main-toolbar__right" />
+          <div className="main-toolbar__right" ref={shareMenuRef}>
+            <div className="main-toolbar__menu">
+              <button
+                type="button"
+                className="icon-btn main-toolbar__action"
+                data-tooltip={t("tooltip.share")}
+                aria-label={t("tooltip.share")}
+                onClick={() => setShareMenuOpen((prev) => !prev)}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="icon icon-tabler icons-tabler-outline icon-tabler-share"
+                  aria-hidden="true"
+                >
+                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                  <path d="M3 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                  <path d="M15 6a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                  <path d="M15 18a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                  <path d="M8.7 10.7l6.6 -3.4" />
+                  <path d="M8.7 13.3l6.6 3.4" />
+                </svg>
+              </button>
+              {shareMenuOpen ? (
+                <div className="main-toolbar__menu-popover">
+                  <button
+                    type="button"
+                    className="main-toolbar__menu-item"
+                    onClick={() => void handleShareNative()}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                      <path d="M3 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                      <path d="M15 6a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                      <path d="M15 18a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                      <path d="M8.7 10.7l6.6 -3.4" />
+                      <path d="M8.7 13.3l6.6 3.4" />
+                    </svg>
+                    <span>{t("share.native")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="main-toolbar__menu-item"
+                    onClick={() => void handleCopyShare()}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="icon icon-tabler icons-tabler-outline icon-tabler-copy"
+                      aria-hidden="true"
+                    >
+                      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                      <path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666" />
+                      <path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" />
+                    </svg>
+                    <span>{t("share.copy")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="main-toolbar__menu-item"
+                    onClick={() => void handleShareX()}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="icon icon-tabler icons-tabler-outline icon-tabler-brand-x"
+                      aria-hidden="true"
+                    >
+                      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                      <path d="M4 4l11.733 16h4.267l-11.733 -16l-4.267 0" />
+                      <path d="M4 20l6.768 -6.768m2.46 -2.46l6.772 -6.772" />
+                    </svg>
+                    <span>{t("share.x")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="main-toolbar__menu-item"
+                    onClick={() => void handleShareLine()}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="icon icon-tabler icons-tabler-outline icon-tabler-message-circle"
+                      aria-hidden="true"
+                    >
+                      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                      <path d="M3 20l1.3 -3.9c-2.324 -3.437 -1.426 -7.872 2.1 -10.374c3.526 -2.501 8.59 -2.296 11.845 .48c3.255 2.777 3.695 7.266 1.029 10.501c-2.666 3.235 -7.615 4.215 -11.574 2.293l-4.7 1" />
+                    </svg>
+                    <span>{t("share.line")}</span>
+                  </button>
+                  {shareNotice ? (
+                    <div className="main-toolbar__menu-hint">{shareNotice}</div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              className="icon-btn main-toolbar__action"
+              data-tooltip={t("tooltip.feedback")}
+              aria-label={t("tooltip.feedback")}
+              onClick={() => openSettingsSection("messages")}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="icon icon-tabler icons-tabler-outline icon-tabler-message-chatbot"
+                aria-hidden="true"
+              >
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3h12" />
+                <path d="M9.5 9h.01" />
+                <path d="M14.5 9h.01" />
+                <path d="M9.5 13a3.5 3.5 0 0 0 5 0" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className="icon-btn main-toolbar__action"
+              data-tooltip={t("tooltip.plan")}
+              aria-label={t("tooltip.plan")}
+              onClick={() => {
+                setSelectedPlan("plus");
+                openLimitModal();
+              }}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="icon icon-tabler icons-tabler-outline icon-tabler-sparkles"
+                aria-hidden="true"
+              >
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path d="M16 18a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2m0 -12a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2m-7 12a6 6 0 0 1 6 -6a6 6 0 0 1 -6 -6a6 6 0 0 1 -6 6a6 6 0 0 1 6 6" />
+              </svg>
+            </button>
+          </div>
         </div>
         <section className="viewer">
           <div
@@ -4839,8 +5392,8 @@ export default function Home() {
                       {(userEmail?.[0] ?? "U").toUpperCase()}
                     </div>
                     <div>
-                      <div className="settings__email">
-                        {userEmail ?? t("auth.notSignedIn")}
+                      <div className="settings__email" title={userEmail ?? undefined}>
+                        {userEmail ? formatMiddleEllipsis(userEmail, 18) : t("auth.notSignedIn")}
                       </div>
                       <div className="settings__plan">{planLabel}</div>
                     </div>

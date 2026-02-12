@@ -273,7 +273,8 @@
       "limitTitle": "Limit reached",
       "limitDesc": "This action exceeds your current plan. Upgrade or sign in to continue.",
       "upgradePlan": "Change plan",
-      "sending": "Sending..."
+      "sending": "Sending...",
+      "count": "{value}"
     },
     "errors": {
       "documentLimit": "Document limit reached ({limit})",
@@ -313,7 +314,9 @@
       "chatExpand": "Expand chat ⌘⇧B",
       "rename": "Rename",
       "delete": "Delete",
-      "menu": "More"
+      "menu": "More",
+      "share": "分享",
+      "plan": "方案"
     },
     "viewer": {
       "noDocument": "No PDF selected",
@@ -388,6 +391,18 @@
     "adminFeedbackDesc": "查看用户反馈。",
     "adminFeedbackEmpty": "暂无反馈。",
     "adminReadLabel": "已读",
-    "adminUnread": "未读"
+    "adminUnread": "未读",
+    "usagePdfCount": "PDF 数量",
+    "usagePdfCountDesc": "已保存的 PDF 数",
+    "usageTodayChats": "今日聊天数",
+    "usageTodayChatsDesc": "今日使用量",
+    "usageTodayChatsValue": "{used} / {limit}",
+    "share": {
+      "native": "分享…",
+      "copy": "复制链接",
+      "x": "分享到 X",
+      "line": "分享到 LINE",
+      "copied": "链接已复制"
+    }
   }
 }

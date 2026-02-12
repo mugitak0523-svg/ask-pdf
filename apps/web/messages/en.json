@@ -264,6 +264,7 @@
       "unset": "Not set",
       "unlimited": "Unlimited",
       "reload": "Reload",
+      "clear": "Clear",
       "yen": "{value} JPY",
       "errorOccurred": "Something went wrong",
       "on": "On",
@@ -273,7 +274,8 @@
       "limitTitle": "Limit reached",
       "limitDesc": "This action exceeds your current plan. Upgrade or sign in to continue.",
       "upgradePlan": "Change plan",
-      "sending": "Sending..."
+      "sending": "Sending...",
+      "count": "{value}"
     },
     "errors": {
       "documentLimit": "Document limit reached ({limit})",
@@ -298,8 +300,15 @@
       "upload": "Upload",
       "uploading": "Uploading...",
       "search": "Search",
+      "searchWithShortcut": "Search /",
+      "searchPlaceholder": "Search PDFs",
+      "searchMode": "Search target",
+      "searchModeTitle": "File name",
+      "searchModeContent": "Content",
       "switch": "Switch",
       "noDocuments": "No documents yet",
+      "noSearchResults": "No matching PDFs",
+      "moreHits": "+{count} more",
       "signInHint": "Sign in to see your PDFs."
     },
     "tooltip": {
@@ -313,7 +322,10 @@
       "chatExpand": "Expand chat ⌘⇧B",
       "rename": "Rename",
       "delete": "Delete",
-      "menu": "More"
+      "menu": "More",
+      "share": "Share",
+      "feedback": "Feedback",
+      "plan": "Plan"
     },
     "viewer": {
       "noDocument": "No PDF selected",
@@ -388,6 +400,18 @@
     "adminFeedbackDesc": "Review feedback submitted by users.",
     "adminFeedbackEmpty": "No feedback yet.",
     "adminReadLabel": "Read",
-    "adminUnread": "Unread"
+    "adminUnread": "Unread",
+    "usagePdfCount": "PDF count",
+    "usagePdfCountDesc": "Saved PDFs",
+    "usageTodayChats": "Today's chats",
+    "usageTodayChatsDesc": "Messages sent today",
+    "usageTodayChatsValue": "{used} / {limit}",
+    "share": {
+      "native": "Share…",
+      "copy": "Copy link",
+      "x": "Share on X",
+      "line": "Share on LINE",
+      "copied": "Link copied"
+    }
   }
 }

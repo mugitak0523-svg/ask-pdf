@@ -273,7 +273,8 @@
       "limitTitle": "Limit reached",
       "limitDesc": "This action exceeds your current plan. Upgrade or sign in to continue.",
       "upgradePlan": "Change plan",
-      "sending": "Sending..."
+      "sending": "Sending...",
+      "count": "{value}"
     },
     "errors": {
       "documentLimit": "Document limit reached ({limit})",
@@ -313,7 +314,9 @@
       "chatExpand": "Expand chat ⌘⇧B",
       "rename": "Rename",
       "delete": "Delete",
-      "menu": "More"
+      "menu": "More",
+      "share": "Compartir",
+      "plan": "Plan"
     },
     "viewer": {
       "noDocument": "No PDF selected",
@@ -388,6 +391,18 @@
     "adminFeedbackDesc": "Review feedback submitted by users.",
     "adminFeedbackEmpty": "No feedback yet.",
     "adminReadLabel": "Read",
-    "adminUnread": "Unread"
+    "adminUnread": "Unread",
+    "usagePdfCount": "Cantidad de PDF",
+    "usagePdfCountDesc": "PDF guardados",
+    "usageTodayChats": "Chats de hoy",
+    "usageTodayChatsDesc": "Mensajes de hoy",
+    "usageTodayChatsValue": "{used} / {limit}",
+    "share": {
+      "native": "Compartir…",
+      "copy": "Copiar enlace",
+      "x": "Compartir en X",
+      "line": "Compartir en LINE",
+      "copied": "Enlace copiado"
+    }
   }
 }

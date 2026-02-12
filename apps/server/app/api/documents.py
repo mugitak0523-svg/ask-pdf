@@ -318,6 +318,46 @@ async def list_documents(
     return {"documents": rows}
 
 
+@router.get("/documents/search")
+async def search_documents_text(
+    request: Request,
+    query: str,
+    limit: int = 30,
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    q = query.strip()
+    if not q:
+        return {"items": []}
+    pool = request.app.state.db_pool
+    rows = await repository.search_document_chunks(pool, user.user_id, q, limit=limit)
+
+    def build_snippet(text: str, needle: str) -> str:
+        lower_text = text.lower()
+        lower_needle = needle.lower()
+        idx = lower_text.find(lower_needle)
+        if idx < 0:
+            return text[:40].strip()
+        start = max(0, idx - 12)
+        end = min(len(text), idx + len(needle) + 12)
+        snippet = text[start:end].strip()
+        prefix = "..." if start > 0 else ""
+        suffix = "..." if end < len(text) else ""
+        return f"{prefix}{snippet}{suffix}"
+
+    items = []
+    for row in rows:
+        content = row.get("content") or ""
+        items.append(
+            {
+                "documentId": row.get("document_id"),
+                "title": row.get("title"),
+                "snippet": build_snippet(content, q),
+                "hitCount": int(row.get("hit_count") or 0),
+            }
+        )
+    return {"items": items}
+
+
 @router.get("/documents/{document_id}")
 async def get_document(
     request: Request,
