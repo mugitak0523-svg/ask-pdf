@@ -993,8 +993,8 @@ export default function Home() {
     if (typeof window === "undefined") {
       return { url: "", title: "" };
     }
-    const url = window.location.href;
-    const title = selectedDocumentTitle ?? t("viewer.noDocument");
+    const url = `${window.location.origin}${window.location.pathname}`;
+    const title = t("appTitle") || "AskPDF";
     return { url, title };
   };
 
@@ -3497,243 +3497,267 @@ export default function Home() {
         <>
           <h2 className="settings__title">{t("account")}</h2>
           <div className="settings__group">
-            <div className="settings__item">
-              <div>
-                <div className="settings__item-title">{t("email")}</div>
-                <div className="settings__item-desc">{t("emailDesc")}</div>
-              </div>
-              <div className="settings__value">
-                {userEmail ?? t("auth.notSignedIn")}
-              </div>
-            </div>
-            <div className="settings__item">
-              <div>
-                <div className="settings__item-title">{t("username")}</div>
-                <div className="settings__item-desc">{t("usernameDesc")}</div>
-              </div>
-              <div className="settings__value">{userId ?? "-"}</div>
-            </div>
-            <div className="settings__item">
-              <div>
-                <div className="settings__item-title">{t("plan")}</div>
-                <div className="settings__item-desc">{t("planDesc")}</div>
-              </div>
-              <div className="settings__value">
-                <div>{planLabel}</div>
-                {billingSummary?.nextPlan ? (
-                  <div className="settings__subvalue">
-                    {t("planNext", {
-                      plan:
-                        billingSummary.nextPlan === "plus"
-                          ? t("planPlus")
-                          : t("planFree"),
-                      date: formatDate(billingSummary.nextPlanAt),
-                    })}
+            <div className="settings__item settings__item--stack">
+              <div className="settings__subsection settings__subsection--split">
+                <div>
+                  <div className="settings__subsection-title">{t("email")}</div>
+                  <div className="settings__subsection-desc">{t("emailDesc")}</div>
+                </div>
+                <div className="settings__subsection-content">
+                  <div className="settings__value">
+                    {userEmail ?? t("auth.notSignedIn")}
                   </div>
-                ) : null}
-                {!billingSummary?.nextPlan &&
-                billingSummary?.cancelAtPeriodEnd &&
-                billingSummary?.currentPeriodEnd ? (
-                  <div className="settings__subvalue">
-                    {t("planUntilCanceled", {
-                      date: formatDate(billingSummary.currentPeriodEnd),
-                    })}
-                  </div>
-                ) : null}
+                </div>
+              </div>
+              <div className="settings__subsection-divider" />
+              <div className="settings__subsection settings__subsection--split">
+                <div>
+                  <div className="settings__subsection-title">{t("username")}</div>
+                  <div className="settings__subsection-desc">{t("usernameDesc")}</div>
+                </div>
+                <div className="settings__subsection-content">
+                  <div className="settings__value">{userId ?? "-"}</div>
+                </div>
               </div>
             </div>
             <div className="settings__item settings__item--stack">
-              <div>
-                <div className="settings__item-title">{t("planTableTitle")}</div>
-                <div className="settings__item-desc">{t("planTableDesc")}</div>
-              </div>
-              <div className="plan-table">
-                <div className="plan-table__header">
-                  <div className="plan-table__cell plan-table__cell--feature" />
-                  <div className="plan-table__cell">{t("planGuest")}</div>
-                  <div className="plan-table__cell">{t("planFree")}</div>
-                  <div className="plan-table__cell">{t("planPlus")}</div>
+              <div className="settings__subsection settings__subsection--split">
+                <div>
+                  <div className="settings__subsection-title">{t("plan")}</div>
+                  <div className="settings__subsection-desc">{t("planDesc")}</div>
                 </div>
-                {planRows.map((row) => (
-                  <div key={row.key} className="plan-table__row">
-                    <div className="plan-table__cell plan-table__cell--feature">
-                      {row.label}
+                <div className="settings__value">
+                  <div>{planLabel}</div>
+                  {billingSummary?.nextPlan ? (
+                    <div className="settings__subvalue">
+                      {t("planNext", {
+                        plan:
+                          billingSummary.nextPlan === "plus"
+                            ? t("planPlus")
+                            : t("planFree"),
+                        date: formatDate(billingSummary.nextPlanAt),
+                      })}
                     </div>
-                    <div className="plan-table__cell">{row.values.guest}</div>
-                    <div className="plan-table__cell">{row.values.free}</div>
-                    <div className="plan-table__cell">{row.values.plus}</div>
-                  </div>
-                ))}
+                  ) : null}
+                  {!billingSummary?.nextPlan &&
+                  billingSummary?.cancelAtPeriodEnd &&
+                  billingSummary?.currentPeriodEnd ? (
+                    <div className="settings__subvalue">
+                      {t("planUntilCanceled", {
+                        date: formatDate(billingSummary.currentPeriodEnd),
+                      })}
+                    </div>
+                  ) : null}
+                </div>
               </div>
-              <div className="plan-cards">
-                {(["free", "plus"] as const).map((planName) => (
-                  <button
-                    key={planName}
-                    type="button"
-                    className={`plan-card ${
-                      selectedPlan === planName ? "is-selected" : ""
-                    } ${plan === planName ? "is-current" : ""}`}
-                    onClick={() => setSelectedPlan(planName)}
-                  >
-                    <div className="plan-card__title">
-                      {planName === "free"
-                        ? t("planFree")
-                        : t("planPlus")}
+              <div className="settings__subsection-divider" />
+              <div className="settings__subsection settings__subsection--center">
+                <div className="settings__subsection-title">{t("planTableTitle")}</div>
+                <div className="settings__subsection-desc">{t("planTableDesc")}</div>
+                <div className="plan-compare">
+                  <div className="plan-table">
+                    <div className="plan-table__header">
+                      <div className="plan-table__cell plan-table__cell--feature" />
+                      <div className="plan-table__cell">{t("planGuest")}</div>
+                      <div className="plan-table__cell">{t("planFree")}</div>
+                      <div className="plan-table__cell">{t("planPlus")}</div>
                     </div>
+                    {planRows.map((row) => (
+                      <div key={row.key} className="plan-table__row">
+                        <div className="plan-table__cell plan-table__cell--feature">
+                          {row.label}
+                        </div>
+                        <div className="plan-table__cell">{row.values.guest}</div>
+                        <div className="plan-table__cell">{row.values.free}</div>
+                        <div className="plan-table__cell">{row.values.plus}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="plan-cards">
+                    {(["free", "plus"] as const).map((planName) => (
+                      <button
+                        key={planName}
+                        type="button"
+                        className={`plan-card ${
+                          selectedPlan === planName ? "is-selected" : ""
+                        } ${plan === planName ? "is-current" : ""}`}
+                        onClick={() => setSelectedPlan(planName)}
+                      >
+                        <div className="plan-card__title">
+                          {planName === "free"
+                            ? t("planFree")
+                            : t("planPlus")}
+                        </div>
                     <div className="plan-card__price">
                       {PLAN_PRICES[planName]}
                       <span className="plan-card__unit">{t("planPerMonth")}</span>
-                    </div>
-                    <div className="plan-card__meta">
-                      {t("planFiles", {
-                        value:
-                          DEFAULT_PLAN_LIMITS[planName].maxFiles ?? t("common.unlimited"),
-                      })}
-                      ·
-                      {t("planFileSize", {
-                        value: DEFAULT_PLAN_LIMITS[planName].maxFileMb ?? "-",
-                      })}
                     </div>
                     {plan === planName ? (
                       <div className="plan-card__badge">{t("planCurrent")}</div>
                     ) : null}
                   </button>
-                ))}
-                <button
-                  type="button"
-                  className="plan-cta"
-                  disabled={
-                    billingBusy ||
-                    plan === selectedPlan ||
-                    (selectedPlan === "free" && isCancelScheduled)
-                  }
-                  onClick={handlePlanCta}
-                >
-                  {billingBusy ? t("planUpdating") : planCtaLabel}
-                </button>
-              </div>
-            </div>
-            <div className="settings__item">
-              <div>
-                <div className="settings__item-title">{t("billing")}</div>
-                <div className="settings__item-desc">{t("billingDesc")}</div>
-              </div>
-              <button
-                type="button"
-                className="settings__btn"
-                onClick={() => void openBillingPortal()}
-                disabled={!isAuthed || billingBusy}
-              >
-                {t("manage")}
-              </button>
-            </div>
-            <div className="settings__item settings__item--stack">
-              <div>
-                <div className="settings__item-title">{t("billingNextPayment")}</div>
-                <div className="settings__item-desc">{t("billingNextPaymentDesc")}</div>
-              </div>
-              <div className="billing-summary">
-                {billingLoading ? (
-                  <div className="settings__value">{t("common.loading")}</div>
-                ) : billingFetchError ? (
-                  <div className="settings__value">{t("common.fetchFailed")}</div>
-                ) : billingSummary?.upcomingInvoice ? (
-                  <div className="billing-summary__row">
-                    <div className="billing-summary__amount">
-                      {formatCurrency(
-                        billingSummary.upcomingInvoice.amountDue,
-                        billingSummary.upcomingInvoice.currency
-                      )}
-                    </div>
-                    <div className="billing-summary__date">
-                      {formatDate(billingSummary.upcomingInvoice.nextPaymentAt)}
-                    </div>
+                    ))}
+                    <button
+                      type="button"
+                      className="plan-cta"
+                      disabled={
+                        billingBusy ||
+                        plan === selectedPlan ||
+                        (selectedPlan === "free" && isCancelScheduled)
+                      }
+                      onClick={handlePlanCta}
+                    >
+                      {billingBusy ? t("planUpdating") : planCtaLabel}
+                    </button>
                   </div>
-                ) : billingSummary?.plan === "free" ||
-                  billingSummary?.cancelAtPeriodEnd ? (
-                  <div className="billing-summary__row">
-                    <div className="billing-summary__amount">
-                      {formatCurrency(
-                        0,
-                        billingSummary?.upcomingInvoice?.currency ??
-                          billingSummary?.invoices?.[0]?.currency ??
-                          "jpy"
-                      )}
-                    </div>
-                    <div className="billing-summary__date">
-                      {formatDate(billingSummary.currentPeriodEnd)}
-                    </div>
-                  </div>
-                ) : billingSummary?.currentPeriodEnd ? (
-                  <div className="billing-summary__row">
-                    <div className="billing-summary__amount">{t("common.unset")}</div>
-                    <div className="billing-summary__date">
-                      {formatDate(billingSummary.currentPeriodEnd)}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="settings__value">{t("billingNone")}</div>
-                )}
+                </div>
               </div>
             </div>
             <div className="settings__item settings__item--stack">
-              <div>
-                <div className="settings__item-title">{t("billingHistory")}</div>
-                <div className="settings__item-desc">{t("billingHistoryDesc")}</div>
+              <div className="settings__subsection settings__subsection--split">
+                <div>
+                  <div className="settings__subsection-title">{t("billing")}</div>
+                  <div className="settings__subsection-desc">{t("billingDesc")}</div>
+                </div>
+                <div className="settings__subsection-content">
+                  <button
+                    type="button"
+                    className="settings__btn"
+                    onClick={() => void openBillingPortal()}
+                    disabled={!isAuthed || billingBusy}
+                  >
+                    {t("manage")}
+                  </button>
+                </div>
               </div>
-              <div className="billing-history">
-                {billingLoading ? (
-                  <div className="settings__value">{t("common.loading")}</div>
-                ) : billingFetchError ? (
-                  <div className="settings__value">{t("common.fetchFailed")}</div>
-                ) : billingSummary?.invoices?.length ? (
-                  billingSummary.invoices.map((invoice) => (
-                    <div key={invoice.id} className="billing-history__item">
-                      <div className="billing-history__meta">
-                        <div className="billing-history__amount">
-                          {formatCurrency(invoice.amountPaid, invoice.currency)}
+              <div className="settings__subsection-divider" />
+              <div className="settings__subsection settings__subsection--split">
+                <div>
+                  <div className="settings__subsection-title">{t("billingNextPayment")}</div>
+                  <div className="settings__subsection-desc">{t("billingNextPaymentDesc")}</div>
+                </div>
+                <div className="settings__subsection-content">
+                  <div className="billing-summary">
+                    {billingLoading ? (
+                      <div className="settings__value">{t("common.loading")}</div>
+                    ) : billingFetchError ? (
+                      <div className="settings__value">{t("common.fetchFailed")}</div>
+                    ) : billingSummary?.upcomingInvoice ? (
+                      <div className="billing-summary__row">
+                        <div className="billing-summary__amount">
+                          {formatCurrency(
+                            billingSummary.upcomingInvoice.amountDue,
+                            billingSummary.upcomingInvoice.currency
+                          )}
                         </div>
-                        <div className="billing-history__date">
-                          {formatDateTime(invoice.created)}
+                        <div className="billing-summary__date">
+                          {formatDate(billingSummary.upcomingInvoice.nextPaymentAt)}
                         </div>
                       </div>
-                      {invoice.lines?.length ? (
-                        <div className="billing-history__lines">
-                          {invoice.lines.map((line, index) => (
-                            <div
-                              key={line.id ?? `${invoice.id}-line-${index}`}
-                              className="billing-history__line"
-                            >
-                              <div className="billing-history__line-desc">
-                                {line.description || "-"}
-                              </div>
-                              <div className="billing-history__line-amount">
-                                {formatSignedCurrency(
-                                  line.amount ?? null,
-                                  line.currency ?? invoice.currency
-                                )}
-                              </div>
-                            </div>
-                          ))}
+                    ) : billingSummary?.plan === "free" ||
+                      billingSummary?.cancelAtPeriodEnd ? (
+                      <div className="billing-summary__row">
+                        <div className="billing-summary__amount">
+                          {formatCurrency(
+                            0,
+                            billingSummary?.upcomingInvoice?.currency ??
+                              billingSummary?.invoices?.[0]?.currency ??
+                              "jpy"
+                          )}
                         </div>
-                      ) : null}
-                      <div className="billing-history__status">{invoice.status ?? "-"}</div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="settings__value">{t("billingNone")}</div>
-                )}
+                        <div className="billing-summary__date">
+                          {formatDate(billingSummary.currentPeriodEnd)}
+                        </div>
+                      </div>
+                    ) : billingSummary?.currentPeriodEnd ? (
+                      <div className="billing-summary__row">
+                        <div className="billing-summary__amount">{t("common.unset")}</div>
+                        <div className="billing-summary__date">
+                          {formatDate(billingSummary.currentPeriodEnd)}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="settings__value">{t("billingNone")}</div>
+                    )}
+                  </div>
+                </div>
               </div>
+              <div className="settings__subsection-divider" />
+              <div className="settings__subsection settings__subsection--split">
+                <div>
+                  <div className="settings__subsection-title">{t("billingHistory")}</div>
+                  <div className="settings__subsection-desc">{t("billingHistoryDesc")}</div>
+                </div>
+                <div className="settings__subsection-content">
+                  <div className="billing-history">
+                    {billingLoading ? (
+                      <div className="settings__value">{t("common.loading")}</div>
+                    ) : billingFetchError ? (
+                      <div className="settings__value">{t("common.fetchFailed")}</div>
+                    ) : billingSummary?.invoices?.length ? (
+                      billingSummary.invoices.map((invoice) => (
+                        <div key={invoice.id} className="billing-history__item">
+                          <div className="billing-history__meta">
+                            <div className="billing-history__amount">
+                              {formatCurrency(invoice.amountPaid, invoice.currency)}
+                            </div>
+                            <div className="billing-history__date">
+                              {formatDateTime(invoice.created)}
+                            </div>
+                          </div>
+                          <div className="billing-history__lines">
+                            {invoice.lines?.length ? (
+                              invoice.lines.map((line, index) => (
+                                <div
+                                  key={line.id ?? `${invoice.id}-line-${index}`}
+                                  className="billing-history__line"
+                                >
+                                  <div className="billing-history__line-desc">
+                                    {line.description || "-"}
+                                  </div>
+                                  <div className="billing-history__line-amount">
+                                    {formatSignedCurrency(
+                                      line.amount ?? null,
+                                      line.currency ?? invoice.currency
+                                    )}
+                                  </div>
+                                  <div className="billing-history__line-status">
+                                    {invoice.status ?? "-"}
+                                  </div>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="billing-history__line">
+                                <div className="billing-history__line-desc">-</div>
+                                <div className="billing-history__line-amount">-</div>
+                                <div className="billing-history__line-status">
+                                  {invoice.status ?? "-"}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="settings__value">{t("billingNone")}</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              {billingError ? (
+                <div className="settings__hint">{billingError}</div>
+              ) : null}
             </div>
-            {billingError ? (
-              <div className="settings__hint">{billingError}</div>
-            ) : null}
             <div className="settings__item">
               <div>
                 <div className="settings__item-title">{t("signOut")}</div>
                 <div className="settings__item-desc">{t("signOutDesc")}</div>
               </div>
-              <button type="button" className="settings__btn" onClick={handleSignOut}>
+              <button
+                type="button"
+                className="settings__btn settings__btn--danger"
+                onClick={handleSignOut}
+              >
                 {t("signOut")}
               </button>
             </div>
@@ -3973,8 +3997,8 @@ export default function Home() {
         </>
       );
     }
-    return (
-      <>
+      return (
+        <>
         <h2 className="settings__title">{t("manual.title")}</h2>
         <div className="settings__group">
           <div className="settings__item settings__item--stack">
@@ -4007,9 +4031,75 @@ export default function Home() {
               </div>
             </div>
           </div>
+          <div className="settings__item settings__item--stack">
+            <div>
+              <div className="settings__item-title">{t("manual.shortcutsTitle")}</div>
+              <div className="settings__item-desc">{t("manual.shortcutsDesc")}</div>
+            </div>
+            <div className="settings__value">
+              <div className="settings__stack">
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutSearchTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutSearchDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutChatFocusTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutChatFocusDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutToggleChatTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutToggleChatDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutSendTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutSendDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutPdfSearchTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutPdfSearchDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutPdfPageTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutPdfPageDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutPdfZoomTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutPdfZoomDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutPdfDownloadTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutPdfDownloadDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutPdfThumbsTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutPdfThumbsDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutAnnotateHighlightTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutAnnotateHighlightDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutAnnotateUnderlineTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutAnnotateUnderlineDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutAnnotateCopyTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutAnnotateCopyDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutAnnotateAddToChatTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutAnnotateAddToChatDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutAnnotateDeleteTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutAnnotateDeleteDesc")}</div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </>
-    );
+      );
   };
 
   const handleSendMessage = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -4826,6 +4916,8 @@ export default function Home() {
               type="button"
               className="history-item history-item--danger"
               onClick={handleSignOut}
+              data-tooltip={t("auth.signOut")}
+              aria-label={t("auth.signOut")}
             >
               <svg
                 className="btn-icon"
