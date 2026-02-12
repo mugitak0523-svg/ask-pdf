@@ -64,6 +64,21 @@ type ReferenceRequest = {
   pages: Record<number, number[]>;
 };
 
+type AdminAnnouncement = {
+  id: string;
+  title: string;
+  body: string;
+  status: string;
+  createdAt: string | null;
+  publishedAt: string | null;
+};
+
+type SupportMessage = {
+  id: string;
+  direction: "user" | "admin";
+  content: string;
+  createdAt: string | null;
+};
 
 type ThemeMode = "system" | "light" | "dark";
 type PlanName = "guest" | "free" | "plus";
@@ -793,6 +808,14 @@ export default function Home() {
   } | null>(null);
   const [billingLoading, setBillingLoading] = useState(false);
   const [billingFetchError, setBillingFetchError] = useState<string | null>(null);
+  const [announcements, setAnnouncements] = useState<AdminAnnouncement[]>([]);
+  const [supportMessages, setSupportMessages] = useState<SupportMessage[]>([]);
+  const [supportDraft, setSupportDraft] = useState("");
+  const [supportBusy, setSupportBusy] = useState(false);
+  const [feedbackCategory, setFeedbackCategory] = useState("bug");
+  const [feedbackMessage, setFeedbackMessage] = useState("");
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
+  const [feedbackNotice, setFeedbackNotice] = useState<string | null>(null);
   const [dailyMessageUsage, setDailyMessageUsage] = useState<{
     used: number;
     limit: number | null;
@@ -1017,6 +1040,8 @@ export default function Home() {
     setUserId(null);
     setPlan("guest");
     setPlanLimits(DEFAULT_PLAN_LIMITS.guest);
+    setAnnouncements([]);
+    setSupportMessages([]);
     setDocuments([]);
     setOpenDocuments([]);
     setSelectedDocumentId(null);
@@ -1098,6 +1123,12 @@ export default function Home() {
     return () => {
       active = false;
     };
+  }, [isAuthed, settingsSection]);
+
+  useEffect(() => {
+    if (!isAuthed || settingsSection !== "messages") return;
+    void loadAnnouncements();
+    void loadSupportMessages();
   }, [isAuthed, settingsSection]);
 
   useEffect(() => {
@@ -1984,6 +2015,97 @@ export default function Home() {
       invoices: Array.isArray(payload?.invoices) ? payload.invoices : [],
     });
     return payload as BillingSummary | null;
+  };
+
+  const loadAnnouncements = async () => {
+    const auth = await getAuthParams();
+    if (!auth) return;
+    const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+    const response = await fetch(`${baseUrl}/messages/announcements`, {
+      headers: auth.headers,
+    });
+    if (!response.ok) return;
+    const payload = await response.json();
+    const items = Array.isArray(payload?.announcements) ? payload.announcements : [];
+    setAnnouncements(
+      items.map((item: any) => ({
+        id: String(item?.id ?? ""),
+        title: String(item?.title ?? ""),
+        body: String(item?.body ?? ""),
+        status: String(item?.status ?? "published"),
+        createdAt: item?.created_at ?? null,
+        publishedAt: item?.published_at ?? null,
+      }))
+    );
+  };
+
+  const loadSupportMessages = async () => {
+    const auth = await getAuthParams();
+    if (!auth) return;
+    const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+    const response = await fetch(`${baseUrl}/messages/support`, {
+      headers: auth.headers,
+    });
+    if (!response.ok) return;
+    const payload = await response.json();
+    const items = Array.isArray(payload?.messages) ? payload.messages : [];
+    setSupportMessages(
+      items.map((item: any) => ({
+        id: String(item?.id ?? ""),
+        direction: item?.direction === "admin" ? "admin" : "user",
+        content: String(item?.content ?? ""),
+        createdAt: item?.created_at ?? null,
+      }))
+    );
+  };
+
+  const sendSupportMessage = async () => {
+    const content = supportDraft.trim();
+    if (!content) return;
+    setSupportBusy(true);
+    try {
+      const auth = await getAuthParams();
+      if (!auth) return;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/messages/support`, {
+        method: "POST",
+        headers: {
+          ...auth.headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ content }),
+      });
+      if (!response.ok) throw new Error("Failed to send message");
+      setSupportDraft("");
+      await loadSupportMessages();
+    } finally {
+      setSupportBusy(false);
+    }
+  };
+
+  const sendFeedback = async () => {
+    const message = feedbackMessage.trim();
+    if (!message) return;
+    setFeedbackBusy(true);
+    setFeedbackNotice(null);
+    try {
+      const auth = await getAuthParams();
+      if (!auth) return;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/messages/feedback`, {
+        method: "POST",
+        headers: {
+          ...auth.headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ category: feedbackCategory, message }),
+      });
+      if (!response.ok) throw new Error("Failed to send feedback");
+      setFeedbackMessage("");
+      setFeedbackNotice(t("messagesFeedbackSent"));
+    } finally {
+      setFeedbackBusy(false);
+    }
   };
 
   const loadDailyMessageUsage = async () => {
@@ -3416,33 +3538,111 @@ export default function Home() {
         <>
           <h2 className="settings__title">{t("messages.title")}</h2>
           <div className="settings__group">
-            <div className="settings__item">
+            <div className="settings__item settings__item--stack">
               <div>
-                <div className="settings__item-title">{t("messages.noticeTitle")}</div>
-                <div className="settings__item-desc">{t("messages.noticeDesc")}</div>
+                <div className="settings__item-title">{t("messagesAnnouncementsTitle")}</div>
+                <div className="settings__item-desc">{t("messagesAnnouncementsDesc")}</div>
               </div>
-              <button type="button" className="settings__btn">
-                {t("open")}
-              </button>
+              <div className="settings__value announcements">
+                {announcements.length === 0 ? (
+                  <div className="settings__empty">{t("messagesEmptyAnnouncements")}</div>
+                ) : (
+                  announcements.map((item) => (
+                    <div key={item.id} className="announcement-card">
+                      <div className="announcement-card__title">{item.title}</div>
+                      <div className="announcement-card__meta">
+                        {formatDate(item.publishedAt || item.createdAt)}
+                      </div>
+                      <div className="announcement-card__body">{item.body}</div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
-            <div className="settings__item">
+            <div className="settings__item settings__item--stack">
               <div>
-                <div className="settings__item-title">{t("messages.feedbackTitle")}</div>
-                <div className="settings__item-desc">{t("messages.feedbackDesc")}</div>
+                <div className="settings__item-title">{t("messagesSupportTitle")}</div>
+                <div className="settings__item-desc">{t("messagesSupportDesc")}</div>
               </div>
-              <select className="settings__select">
-                <option>{t("common.on")}</option>
-                <option>{t("common.off")}</option>
-              </select>
+              <div className="settings__value support">
+                <div className="support-thread">
+                  {supportMessages.length === 0 ? (
+                    <div className="settings__empty">{t("messagesEmptySupport")}</div>
+                  ) : (
+                    supportMessages
+                      .slice()
+                      .reverse()
+                      .map((msg) => (
+                        <div
+                          key={msg.id}
+                          className={`support-thread__item support-thread__item--${msg.direction}`}
+                        >
+                          <div className="support-thread__bubble">{msg.content}</div>
+                          <div className="support-thread__meta">{formatDateTime(msg.createdAt)}</div>
+                        </div>
+                      ))
+                  )}
+                </div>
+                <div className="support-form">
+                  <textarea
+                    className="support-form__input"
+                    rows={3}
+                    value={supportDraft}
+                    onChange={(event) => setSupportDraft(event.target.value)}
+                    placeholder={t("messagesSupportPlaceholder")}
+                  />
+                  <button
+                    type="button"
+                    className="settings__btn"
+                    onClick={() => void sendSupportMessage()}
+                    disabled={supportBusy || supportDraft.trim().length === 0}
+                  >
+                    {supportBusy ? t("common.sending") : t("messagesSupportSend")}
+                  </button>
+                </div>
+              </div>
             </div>
-            <div className="settings__item">
+            <div className="settings__item settings__item--stack">
               <div>
-                <div className="settings__item-title">{t("messages.contactTitle")}</div>
-                <div className="settings__item-desc">{t("messages.contactDesc")}</div>
+                <div className="settings__item-title">{t("messagesFeedbackTitle")}</div>
+                <div className="settings__item-desc">{t("messagesFeedbackDesc")}</div>
               </div>
-              <button type="button" className="settings__btn">
-                {t("open")}
-              </button>
+              <div className="settings__value support">
+                <div className="support-form">
+                  <label className="settings__label">
+                    {t("messagesFeedbackCategory")}
+                  </label>
+                  <select
+                    className="settings__select"
+                    value={feedbackCategory}
+                    onChange={(event) => setFeedbackCategory(event.target.value)}
+                  >
+                    <option value="bug">{t("messagesFeedbackCategoryBug")}</option>
+                    <option value="feature">{t("messagesFeedbackCategoryFeature")}</option>
+                    <option value="ui">{t("messagesFeedbackCategoryUi")}</option>
+                    <option value="billing">{t("messagesFeedbackCategoryBilling")}</option>
+                    <option value="other">{t("messagesFeedbackCategoryOther")}</option>
+                  </select>
+                  <textarea
+                    className="support-form__input"
+                    rows={4}
+                    value={feedbackMessage}
+                    onChange={(event) => setFeedbackMessage(event.target.value)}
+                    placeholder={t("messagesFeedbackPlaceholder")}
+                  />
+                  {feedbackNotice ? (
+                    <div className="settings__hint">{feedbackNotice}</div>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="settings__btn"
+                    onClick={() => void sendFeedback()}
+                    disabled={feedbackBusy || feedbackMessage.trim().length === 0}
+                  >
+                    {feedbackBusy ? t("common.sending") : t("messagesFeedbackSend")}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </>
@@ -4663,7 +4863,14 @@ export default function Home() {
                         }`}
                         onClick={() =>
                           setSettingsSection(
-                            item.id as "general" | "account" | "messages" | "manual" | "usage" | "service" | "faq"
+                            item.id as
+                              | "general"
+                              | "account"
+                              | "messages"
+                              | "manual"
+                              | "usage"
+                              | "service"
+                              | "faq"
                           )
                         }
                       >

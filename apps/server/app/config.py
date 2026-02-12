@@ -29,6 +29,7 @@ class Settings:
     stripe_webhook_secret: str
     stripe_plus_price_id: str
     app_base_url: str
+    admin_user_ids: list[str]
 
 
 def _require_env(name: str) -> str:
@@ -62,6 +63,12 @@ def get_settings() -> Settings:
     stripe_webhook_secret = _require_env("STRIPE_WEBHOOK_SECRET")
     stripe_plus_price_id = _require_env("STRIPE_PLUS_PRICE_ID")
     app_base_url = _require_env("APP_BASE_URL").rstrip("/")
+    admin_user_ids_raw = os.getenv("ADMIN_USER_IDS", "")
+    admin_user_ids = [
+        item.strip()
+        for item in admin_user_ids_raw.split(",")
+        if item.strip()
+    ]
 
     return Settings(
         parser_api_base_url=base_url,
@@ -84,4 +91,5 @@ def get_settings() -> Settings:
         stripe_webhook_secret=stripe_webhook_secret,
         stripe_plus_price_id=stripe_plus_price_id,
         app_base_url=app_base_url,
+        admin_user_ids=admin_user_ids,
     )

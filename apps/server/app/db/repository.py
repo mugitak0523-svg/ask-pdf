@@ -1417,3 +1417,331 @@ async def get_document_chunk_content(
                 user_id,
             )
     return dict(row) if row else None
+
+
+async def list_users_admin(pool, *, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            select
+                u.id,
+                u.email,
+                u.created_at,
+                u.last_sign_in_at,
+                p.plan,
+                p.stripe_status,
+                p.current_period_end,
+                coalesce(unread.unread_count, 0) as unread_message_count
+            from auth.users u
+            left join user_plans p on p.user_id = u.id
+            left join (
+                select user_id, count(*) as unread_count
+                from admin_user_messages
+                where direction = 'user' and read_at is null
+                group by user_id
+            ) as unread on unread.user_id = u.id
+            order by u.created_at desc
+            limit $1 offset $2
+            """,
+            limit,
+            offset,
+        )
+    return [dict(row) for row in rows]
+
+
+async def get_user_detail_admin(pool, *, user_id: str) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select
+                u.id,
+                u.email,
+                u.created_at,
+                u.last_sign_in_at,
+                p.plan,
+                p.stripe_status,
+                p.stripe_price_id,
+                p.current_period_end,
+                p.stripe_customer_id
+            from auth.users u
+            left join user_plans p on p.user_id = u.id
+            where u.id = $1
+            """,
+            user_id,
+        )
+        if not row:
+            return None
+        document_count = await conn.fetchval(
+            "select count(*) from documents where user_id = $1",
+            user_id,
+        )
+        chat_count = await conn.fetchval(
+            "select count(*) from document_chat_threads where user_id = $1",
+            user_id,
+        )
+        message_count = await conn.fetchval(
+            "select count(*) from document_chat_messages where user_id = $1",
+            user_id,
+        )
+        total_tokens = await conn.fetchval(
+            "select coalesce(sum(total_tokens), 0) from usage_logs where user_id = $1",
+            user_id,
+        )
+    result = dict(row)
+    result["documentCount"] = int(document_count or 0)
+    result["chatCount"] = int(chat_count or 0)
+    result["messageCount"] = int(message_count or 0)
+    result["totalTokens"] = int(total_tokens or 0)
+    return result
+
+
+async def list_usage_daily_admin(
+    pool,
+    *,
+    user_id: str,
+    days: int = 30,
+) -> list[dict[str, Any]]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            select
+                date_trunc('day', created_at) as day,
+                coalesce(sum(total_tokens), 0) as total_tokens
+            from usage_logs
+            where user_id = $1
+              and created_at >= (now() - make_interval(days => $2::int))
+            group by 1
+            order by 1
+            """,
+            user_id,
+            days,
+        )
+    return [dict(row) for row in rows]
+
+
+async def list_admin_announcements(
+    pool,
+    *,
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    async with pool.acquire() as conn:
+        if status:
+            rows = await conn.fetch(
+                """
+                select id, title, body, status, created_at, created_by, published_at
+                from admin_announcements
+                where status = $1
+                order by created_at desc
+                limit $2 offset $3
+                """,
+                status,
+                limit,
+                offset,
+            )
+        else:
+            rows = await conn.fetch(
+                """
+                select id, title, body, status, created_at, created_by, published_at
+                from admin_announcements
+                order by created_at desc
+                limit $1 offset $2
+                """,
+                limit,
+                offset,
+            )
+    return [dict(row) for row in rows]
+
+
+async def create_user_feedback(
+    pool,
+    *,
+    user_id: str,
+    category: str,
+    message: str,
+) -> dict[str, Any]:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            insert into user_feedback (user_id, category, message)
+            values ($1, $2, $3)
+            returning id, user_id, category, message, created_at, read_at
+            """,
+            user_id,
+            category,
+            message,
+        )
+    return dict(row) if row else {}
+
+
+async def list_feedback_admin(
+    pool,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            select id, user_id, category, message, created_at, read_at
+            from user_feedback
+            order by created_at desc
+            limit $1 offset $2
+            """,
+            limit,
+            offset,
+        )
+    return [dict(row) for row in rows]
+
+
+async def set_feedback_read_admin(
+    pool,
+    *,
+    feedback_id: str,
+    read: bool,
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            update user_feedback
+            set read_at = case when $2 then now() else null end
+            where id = $1
+            """,
+            feedback_id,
+            read,
+        )
+
+
+async def set_user_message_read_admin(
+    pool,
+    *,
+    message_id: str,
+    read: bool,
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            update admin_user_messages
+            set read_at = case when $2 then now() else null end
+            where id = $1
+            """,
+            message_id,
+            read,
+        )
+
+
+async def get_unread_messages_count_admin(pool) -> int:
+    async with pool.acquire() as conn:
+        value = await conn.fetchval(
+            """
+            select count(*)
+            from admin_user_messages
+            where direction = 'user' and read_at is null
+            """
+        )
+    return int(value or 0)
+
+
+async def get_unread_feedback_count_admin(pool) -> int:
+    async with pool.acquire() as conn:
+        value = await conn.fetchval(
+            """
+            select count(*)
+            from user_feedback
+            where read_at is null
+            """
+        )
+    return int(value or 0)
+
+
+async def create_admin_announcement(
+    pool,
+    *,
+    title: str,
+    body: str,
+    status: str,
+    created_by: str | None,
+    published_at,
+) -> dict[str, Any]:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            insert into admin_announcements (title, body, status, created_by, published_at)
+            values ($1, $2, $3, $4, $5)
+            returning id, title, body, status, created_at, created_by, published_at
+            """,
+            title,
+            body,
+            status,
+            created_by,
+            published_at,
+        )
+    return dict(row) if row else {}
+
+
+async def list_published_announcements(
+    pool,
+    *,
+    limit: int = 20,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            select id, title, body, status, created_at, created_by, published_at
+            from admin_announcements
+            where status = 'published'
+            order by published_at desc nulls last, created_at desc
+            limit $1 offset $2
+            """,
+            limit,
+            offset,
+        )
+    return [dict(row) for row in rows]
+
+
+async def list_user_messages(
+    pool,
+    *,
+    user_id: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            select id, user_id, direction, content, admin_id, created_at, read_at
+            from admin_user_messages
+            where user_id = $1
+            order by created_at desc
+            limit $2 offset $3
+            """,
+            user_id,
+            limit,
+            offset,
+        )
+    return [dict(row) for row in rows]
+
+
+async def create_user_message(
+    pool,
+    *,
+    user_id: str,
+    direction: str,
+    content: str,
+    admin_id: str | None = None,
+) -> dict[str, Any]:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            insert into admin_user_messages (user_id, direction, content, admin_id)
+            values ($1, $2, $3, $4)
+            returning id, user_id, direction, content, admin_id, created_at, read_at
+            """,
+            user_id,
+            direction,
+            content,
+            admin_id,
+        )
+    return dict(row) if row else {}

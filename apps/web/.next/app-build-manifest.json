@@ -1,9 +1,9 @@
 {
   "pages": {
-    "/[locale]/page": [
+    "/[locale]/admin/[section]/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/[locale]/page.js"
+      "static/chunks/app/[locale]/admin/[section]/page.js"
     ],
     "/[locale]/layout": [
       "static/chunks/webpack.js",
@@ -15,11 +15,6 @@
       "static/chunks/main-app.js",
       "static/css/app/layout.css",
       "static/chunks/app/layout.js"
-    ],
-    "/_not-found/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/_not-found/page.js"
     ]
   }
 }
