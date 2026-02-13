@@ -858,6 +858,8 @@ export default function Home() {
   const [shareNotice, setShareNotice] = useState<string | null>(null);
   const shareMenuRef = useRef<HTMLDivElement | null>(null);
   const sidebarShareMenuRef = useRef<HTMLDivElement | null>(null);
+  const [sidebarSharePopoverStyle, setSidebarSharePopoverStyle] =
+    useState<React.CSSProperties | null>(null);
   const [isMobileLayout, setIsMobileLayout] = useState(false);
   const [chatDrawerHeight, setChatDrawerHeight] = useState<number | null>(null);
   const [chatInputVisible, setChatInputVisible] = useState(true);
@@ -1140,6 +1142,29 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", onClick);
   }, [shareMenuOpen]);
 
+  useEffect(() => {
+    if (!shareMenuOpen || !isMobileLayout) {
+      setSidebarSharePopoverStyle(null);
+      return;
+    }
+    const raf = window.requestAnimationFrame(() => {
+      const wrap = sidebarShareMenuRef.current;
+      const button = wrap?.querySelector("button");
+      if (!button) return;
+      const rect = button.getBoundingClientRect();
+      const popoverWidth = 200;
+      const maxLeft = Math.max(12, window.innerWidth - popoverWidth - 12);
+      const left = Math.min(rect.left, maxLeft);
+      setSidebarSharePopoverStyle({
+        position: "fixed",
+        top: rect.bottom + 8,
+        left,
+        zIndex: 9999,
+      });
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [shareMenuOpen, isMobileLayout]);
+
   const getChatDrawerMin = () => chatHeaderRef.current?.offsetHeight ?? 56;
   const getChatDrawerMax = () =>
     typeof window !== "undefined" ? Math.round(window.innerHeight * 0.8) : 0;
@@ -1276,17 +1301,22 @@ export default function Home() {
     };
   }, [canUseApi, sidebarSearch, sidebarSearchMode]);
 
-  const mainStyle = useMemo(
-    () => ({
+  const mainStyle = useMemo(() => {
+    if (isMobileLayout) {
+      return {
+        gridTemplateColumns: "1fr",
+        ["--main-columns" as any]: "1fr",
+      };
+    }
+    return {
       gridTemplateColumns: chatOpen
         ? `minmax(0, 1fr) 6px ${chatWidth}px`
         : "minmax(0, 1fr) 0px 0px",
       ["--main-columns" as any]: chatOpen
         ? `minmax(0, 1fr) 6px ${chatWidth}px`
         : "minmax(0, 1fr) 0px 0px",
-    }),
-    [chatOpen, chatWidth]
-  );
+    };
+  }, [chatOpen, chatWidth, isMobileLayout]);
   const chatHeaderHeight = chatHeaderRef.current?.offsetHeight ?? 56;
   const isChatExpanded =
     isMobileLayout &&
@@ -4704,7 +4734,10 @@ export default function Home() {
                   <span className="label">{t("tooltip.share")}</span>
                 </button>
                 {shareMenuOpen ? (
-                  <div className="main-toolbar__menu-popover">
+                  <div
+                    className="main-toolbar__menu-popover"
+                    style={isMobileLayout ? sidebarSharePopoverStyle ?? undefined : undefined}
+                  >
                     <button
                       type="button"
                       className="main-toolbar__menu-item"
