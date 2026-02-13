@@ -5,7 +5,7 @@ import re
 import logging
 import asyncio
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Literal
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status, WebSocket, WebSocketDisconnect
@@ -289,6 +289,13 @@ async def index_document(
     content = await file.read()
     pool = request.app.state.db_pool
     _, limits = await _resolve_limits(pool, user)
+    active_uploads = await repository.count_active_uploads(pool, user.user_id)
+    limit = request.app.state.settings.max_concurrent_uploads
+    if active_uploads >= limit:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"同時にアップロード/解析できるPDFは{limit}つまでです。",
+        )
     _enforce_file_size_limit(len(content), limits)
     if limits.max_files is not None:
         count = await repository.count_documents(pool, user.user_id)
@@ -298,7 +305,7 @@ async def index_document(
                 detail="Document limit reached",
             )
     indexer: Indexer = request.app.state.indexer
-    return await indexer.index_document(pool, content, file.filename, user.user_id)
+    return await indexer.start_index_document(pool, content, file.filename, user.user_id)
 
 
 @router.get("/documents")
@@ -316,6 +323,23 @@ async def list_documents(
         (time.perf_counter() - start) * 1000,
     )
     return {"documents": rows}
+
+
+@router.post("/documents/processing/resume")
+async def resume_processing(
+    request: Request,
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    pool = request.app.state.db_pool
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
+    stale_count = await repository.mark_stale_documents_failed(
+        pool,
+        user_id=user.user_id,
+        cutoff=cutoff,
+    )
+    indexer: Indexer = request.app.state.indexer
+    started = await indexer.resume_processing(pool, user.user_id)
+    return {"started": started, "failed_stale": stale_count}
 
 
 @router.get("/documents/search")
@@ -365,10 +389,10 @@ async def get_document(
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
     pool = request.app.state.db_pool
-    exists = await repository.document_exists(pool, document_id, user.user_id)
-    if not exists:
+    row = await repository.get_document_status(pool, document_id, user.user_id)
+    if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-    return row
+    return {"id": str(row["id"]), "status": row.get("status")}
 
 
 @router.patch("/documents/{document_id}")
@@ -389,6 +413,28 @@ async def update_document(
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     return {"id": str(row["id"]), "title": row.get("title")}
+
+
+@router.patch("/documents/{document_id}/status")
+async def update_document_status(
+    request: Request,
+    document_id: str,
+    payload: dict[str, Any],
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    status_value = payload.get("status") if isinstance(payload, dict) else None
+    if not isinstance(status_value, str) or not status_value.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="status is required",
+        )
+    pool = request.app.state.db_pool
+    await repository.update_document_status(
+        pool,
+        document_id=document_id,
+        status=status_value.strip(),
+    )
+    return {"id": str(document_id), "status": status_value.strip()}
 
 
 @router.delete("/documents/{document_id}")

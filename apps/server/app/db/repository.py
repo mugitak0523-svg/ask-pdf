@@ -17,12 +17,15 @@ async def insert_document(
     metadata: dict[str, Any],
     result: dict[str, Any] | None = None,
     user_id: str | None = None,
+    status: str = "ready",
+    progress: int | None = None,
+    error_message: str | None = None,
 ) -> str:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            insert into documents (user_id, title, storage_path, metadata, result)
-            values ($1, $2, $3, $4::jsonb, $5::jsonb)
+            insert into documents (user_id, title, storage_path, metadata, result, status, progress, error_message)
+            values ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8)
             returning id
             """,
             user_id,
@@ -30,6 +33,9 @@ async def insert_document(
             storage_path,
             json.dumps(metadata),
             json.dumps(result) if result is not None else None,
+            status,
+            progress,
+            error_message,
         )
     return str(row["id"])
 
@@ -41,7 +47,7 @@ async def list_documents(
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            select id, title
+            select id, title, status
             from documents
             where user_id = $1
             order by created_at desc
@@ -67,6 +73,23 @@ async def count_documents(
     return int(row["total"] or 0)
 
 
+async def count_active_uploads(
+    pool: asyncpg.Pool,
+    user_id: str,
+) -> int:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select count(*) as total
+            from documents
+            where user_id = $1
+              and status in ('uploading', 'uploaded', 'processing')
+            """,
+            user_id,
+        )
+    return int(row["total"] or 0)
+
+
 async def get_document(
     pool: asyncpg.Pool,
     document_id: str,
@@ -75,7 +98,7 @@ async def get_document(
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            select id, title, storage_path, metadata, result, created_at
+            select id, title, storage_path, metadata, result, created_at, status, progress, error_message
             from documents
             where id = $1 and user_id = $2
             """,
@@ -83,6 +106,103 @@ async def get_document(
             user_id,
         )
     return dict(row) if row else None
+
+
+async def get_document_status(
+    pool: asyncpg.Pool,
+    document_id: str,
+    user_id: str,
+) -> dict[str, Any] | None:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select id, status
+            from documents
+            where id = $1 and user_id = $2
+            """,
+            document_id,
+            user_id,
+        )
+    return dict(row) if row else None
+
+
+async def update_document_status(
+    pool: asyncpg.Pool,
+    document_id: str,
+    status: str,
+    progress: int | None = None,
+    error_message: str | None = None,
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            update documents
+            set status = $2,
+                progress = $3,
+                error_message = $4,
+                updated_at = now()
+            where id = $1
+            """,
+            document_id,
+            status,
+            progress,
+            error_message,
+        )
+
+
+async def mark_stale_documents_failed(
+    pool: asyncpg.Pool,
+    user_id: str,
+    cutoff,
+) -> int:
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            update documents
+            set status = 'failed',
+                error_message = format('Stale for over 1 hour in %s', status),
+                updated_at = now()
+            where user_id = $1
+              and status in ('uploading', 'uploaded', 'processing')
+              and updated_at < $2
+            """,
+            user_id,
+            cutoff,
+        )
+    try:
+        return int(str(result).split()[-1])
+    except Exception:
+        return 0
+
+
+async def update_document_result(
+    pool: asyncpg.Pool,
+    document_id: str,
+    metadata: dict[str, Any],
+    result: dict[str, Any] | None,
+    status: str = "ready",
+    progress: int | None = None,
+    error_message: str | None = None,
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            update documents
+            set metadata = $2::jsonb,
+                result = $3::jsonb,
+                status = $4,
+                progress = $5,
+                error_message = $6,
+                updated_at = now()
+            where id = $1
+            """,
+            document_id,
+            json.dumps(metadata),
+            json.dumps(result) if result is not None else None,
+            status,
+            progress,
+            error_message,
+        )
 
 
 async def get_document_storage_path(
@@ -146,6 +266,23 @@ async def get_document_bundle(
             user_id,
         )
     return dict(row) if row else None
+
+
+async def list_processing_documents(
+    pool: asyncpg.Pool,
+    user_id: str,
+) -> list[dict[str, Any]]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            select id, user_id, metadata, metadata->>'parser_doc_id' as parser_doc_id
+            from documents
+            where status = 'processing' and user_id = $1
+            order by created_at asc
+            """,
+            user_id,
+        )
+    return [dict(row) for row in rows]
 
 
 async def document_exists(

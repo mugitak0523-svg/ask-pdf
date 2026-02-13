@@ -377,8 +377,23 @@
       "noDocumentChats": "このPDFのチャットはありません",
       "noMessages": "メッセージはまだありません",
       "placeholder": "質問してみましょう ⌘K",
+      "disabled": "解析が完了するまでチャットは利用できません。",
+      "disabledFailed": "解析に失敗したのでチャットは利用できません。",
       "send": "送信",
       "stop": "停止"
+    },
+    "status": {
+      "uploading": "アップロード中",
+      "uploaded": "解析待ち",
+      "processing": "解析中",
+      "failed": "失敗"
+    },
+    "badges": {
+      "new": "NEW"
+    },
+    "uploadLimit": {
+      "title": "アップロード制限",
+      "message": "同時にアップロード/解析できるPDFは上限があります。"
     },
     "model": {
       "fast": "高速",

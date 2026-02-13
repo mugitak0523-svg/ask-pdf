@@ -377,8 +377,23 @@
       "noDocumentChats": "No chats for this PDF",
       "noMessages": "No messages yet",
       "placeholder": "Ask something ⌘K",
+      "disabled": "Chat is unavailable until processing finishes.",
+      "disabledFailed": "Chat is unavailable because processing failed.",
       "send": "Send",
       "stop": "Stop"
+    },
+    "status": {
+      "uploading": "Uploading",
+      "uploaded": "Waiting",
+      "processing": "Processing",
+      "failed": "Failed"
+    },
+    "badges": {
+      "new": "NEW"
+    },
+    "uploadLimit": {
+      "title": "Upload limit",
+      "message": "You have reached the concurrent upload/processing limit."
     },
     "model": {
       "fast": "Fast",

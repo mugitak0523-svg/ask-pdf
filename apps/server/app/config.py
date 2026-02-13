@@ -30,6 +30,7 @@ class Settings:
     stripe_plus_price_id: str
     app_base_url: str
     admin_user_ids: list[str]
+    max_concurrent_uploads: int
 
 
 def _require_env(name: str) -> str:
@@ -69,6 +70,7 @@ def get_settings() -> Settings:
         for item in admin_user_ids_raw.split(",")
         if item.strip()
     ]
+    max_concurrent_uploads = int(os.getenv("MAX_CONCURRENT_UPLOADS", "2") or "2")
 
     return Settings(
         parser_api_base_url=base_url,
@@ -92,4 +94,5 @@ def get_settings() -> Settings:
         stripe_plus_price_id=stripe_plus_price_id,
         app_base_url=app_base_url,
         admin_user_ids=admin_user_ids,
+        max_concurrent_uploads=max_concurrent_uploads,
     )

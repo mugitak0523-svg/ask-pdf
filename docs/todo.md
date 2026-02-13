@@ -20,4 +20,13 @@ PDF
 - アカウント情報
 
 ## Chat / Account
+
 - plusからfreeの処理
+
+## pdf upload
+
+- [X] uploadingのUI
+- [X] upload後に一覧取得してるか聞く
+- [X] 解析中にチャットが不可になってるかの確認
+- [X] 同時に3つとは全員で？
+- [ ] ページ数で制限

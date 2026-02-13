@@ -31,6 +31,7 @@ type ChatMessage = {
 type DocumentItem = {
   id: string;
   title: string;
+  status?: string | null;
 };
 
 type OpenDocument = {
@@ -788,6 +789,14 @@ export default function Home() {
   const [tabsOverflow, setTabsOverflow] = useState(false);
   const [editingDocumentId, setEditingDocumentId] = useState<string | null>(null);
   const [documentTitleDraft, setDocumentTitleDraft] = useState("");
+  const documentStatusLabel = (status?: string | null) => {
+    if (!status || status === "ready" || status === "done") return null;
+    if (status === "uploading") return t("status.uploading");
+    if (status === "uploaded") return t("status.uploaded");
+    if (status === "processing") return t("status.processing");
+    if (status === "failed") return t("status.failed");
+    return status;
+  };
   const [openDocMenuId, setOpenDocMenuId] = useState<string | null>(null);
   const [referenceRequest, setReferenceRequest] = useState<ReferenceRequest | null>(null);
   const [activeRefId, setActiveRefId] = useState<string | null>(null);
@@ -850,6 +859,8 @@ export default function Home() {
   const [feedbackMessage, setFeedbackMessage] = useState("");
   const [feedbackBusy, setFeedbackBusy] = useState(false);
   const [feedbackNotice, setFeedbackNotice] = useState<string | null>(null);
+  const [uploadLimitModalOpen, setUploadLimitModalOpen] = useState(false);
+  const [uploadLimitMessage, setUploadLimitMessage] = useState<string | null>(null);
   const [dailyMessageUsage, setDailyMessageUsage] = useState<{
     used: number;
     limit: number | null;
@@ -876,6 +887,10 @@ export default function Home() {
   const restoreRef = useRef<any | null>(null);
   const restoreDoneRef = useRef(false);
   const [isHydrated, setIsHydrated] = useState(false);
+  const resumeProcessingStartedRef = useRef(false);
+  const documentsRefreshTimerRef = useRef<number | null>(null);
+  const documentsRefreshRunningRef = useRef(false);
+  const documentsRef = useRef<DocumentItem[]>([]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -965,6 +980,7 @@ export default function Home() {
       window.history.replaceState({}, "", next);
     }
   }, [isHydrated, t]);
+
 
   useEffect(() => {
     if (!isHydrated) return;
@@ -1461,6 +1477,75 @@ export default function Home() {
   useEffect(() => {
     resizeChatInput();
   }, [chatInput]);
+
+  useEffect(() => {
+    documentsRef.current = documents;
+  }, [documents]);
+
+  useEffect(() => {
+    if (!isHydrated || !canUseApi) return;
+    const targets = documentsRef.current.filter((doc) =>
+      ["uploading", "uploaded", "processing"].includes(String(doc.status ?? ""))
+    );
+    if (targets.length === 0) {
+      if (documentsRefreshTimerRef.current !== null) {
+        window.clearInterval(documentsRefreshTimerRef.current);
+        documentsRefreshTimerRef.current = null;
+      }
+      return;
+    }
+    if (documentsRefreshTimerRef.current !== null) return;
+    documentsRefreshTimerRef.current = window.setInterval(() => {
+      if (documentsRefreshRunningRef.current) return;
+      documentsRefreshRunningRef.current = true;
+      const run = async () => {
+        try {
+          const auth = await getAuthParams();
+          if (!auth) return;
+          const baseUrl =
+            process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+          const currentTargets = documentsRef.current.filter((doc) =>
+            ["uploading", "uploaded", "processing"].includes(String(doc.status ?? ""))
+          );
+          if (currentTargets.length === 0) return;
+          const updates = await Promise.all(
+            currentTargets.map(async (doc) => {
+              const response = await fetch(`${baseUrl}/documents/${doc.id}`, {
+                headers: auth.headers,
+              });
+              if (!response.ok) return null;
+              const payload = await response.json();
+              return {
+                id: String(payload.id ?? doc.id),
+                status:
+                  typeof payload.status === "string" ? payload.status : null,
+              };
+            })
+          );
+          const next = updates.filter(Boolean) as { id: string; status: string | null }[];
+          if (next.length === 0) return;
+          setDocuments((prev) =>
+            prev.map((item) => {
+              const hit = next.find((u) => u.id === item.id);
+              if (!hit) return item;
+              return { ...item, status: hit.status };
+            })
+          );
+        } catch {
+          // Ignore polling errors
+        } finally {
+          documentsRefreshRunningRef.current = false;
+        }
+      };
+      void run();
+    }, 5000);
+    return () => {
+      if (documentsRefreshTimerRef.current !== null) {
+        window.clearInterval(documentsRefreshTimerRef.current);
+        documentsRefreshTimerRef.current = null;
+      }
+    };
+  }, [documents, isHydrated, canUseApi]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2115,11 +2200,19 @@ export default function Home() {
       if (!response.ok) {
         throw new Error(`Failed to load documents (${response.status})`);
       }
+      if (!resumeProcessingStartedRef.current) {
+        resumeProcessingStartedRef.current = true;
+        fetch(`${baseUrl}/documents/processing/resume`, {
+          method: "POST",
+          headers: auth.headers,
+        }).catch(() => {});
+      }
       const payload = await response.json();
       const items = Array.isArray(payload.documents) ? payload.documents : [];
       const normalized = items.map((item) => ({
         id: String(item.id),
         title: String(item.title ?? t("common.untitled")),
+        status: typeof item.status === "string" ? item.status : null,
       }));
       setDocuments(normalized);
       if (!seenDocsCacheRef.current && normalized.length > 0) {
@@ -2787,11 +2880,27 @@ export default function Home() {
         body: form,
       });
       if (response.status === 403 || response.status === 413) {
+        let detail: string | null = null;
+        try {
+          const payload = await response.json();
+          if (payload && typeof payload.detail === "string") {
+            detail = payload.detail;
+          }
+        } catch {}
+        const isUploadLimit =
+          response.status === 403 &&
+          typeof detail === "string" &&
+          detail.includes("同時にアップロード/解析できるPDF");
         const message =
           response.status === 413
             ? t("errors.fileSizeLimit", { limit: planLimits.maxFileMb ?? "?" })
-            : t("errors.documentLimit", { limit: planLimits.maxFiles ?? "?" });
-        openLimitModal(message);
+            : detail ?? t("errors.documentLimit", { limit: planLimits.maxFiles ?? "?" });
+        if (isUploadLimit) {
+          setUploadLimitMessage(message);
+          setUploadLimitModalOpen(true);
+        } else {
+          openLimitModal(message);
+        }
         if (fileInputRef.current) fileInputRef.current.value = "";
         return;
       }
@@ -2812,6 +2921,26 @@ export default function Home() {
     doc: DocumentItem,
     options: { restoreChatId?: string | null; autoOpenChat?: boolean } = {}
   ) => {
+    if (doc.status === "ready") {
+      try {
+        const auth = await getAuthParams();
+        if (auth) {
+          const baseUrl =
+            process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+          fetch(`${baseUrl}/documents/${doc.id}/status`, {
+            method: "PATCH",
+            headers: {
+              ...auth.headers,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ status: "done" }),
+          }).catch(() => {});
+        }
+      } catch {}
+      setDocuments((prev) =>
+        prev.map((item) => (item.id === doc.id ? { ...item, status: "done" } : item))
+      );
+    }
     if (isMobileLayout) {
       setSidebarOpen(false);
     }
@@ -3121,6 +3250,11 @@ export default function Home() {
   };
 
   const isAllChatList = !selectedDocumentId || showAllChatList;
+  const selectedDocumentStatus = selectedDocumentId
+    ? documents.find((doc) => doc.id === selectedDocumentId)?.status ?? null
+    : null;
+  const isChatReady =
+    selectedDocumentStatus === "ready" || selectedDocumentStatus === "done";
   const activeChatTitle = selectedDocumentId
     ? showAllChatList
       ? t("chat.allChatList")
@@ -3329,6 +3463,7 @@ export default function Home() {
 
 
   const sendMessage = async () => {
+    if (!isChatReady) return;
     const trimmed = chatInput.trim();
     if (!trimmed) return;
     if (chatSending) return;
@@ -4253,6 +4388,7 @@ export default function Home() {
   };
 
   const handleCreateChat = async () => {
+    if (!isChatReady) return;
     if (!selectedDocumentId) return;
     const auth = await getAuthParams();
     if (!auth) return;
@@ -4707,7 +4843,9 @@ export default function Home() {
               </svg>
               <span className="history-item__label-row">
                 <span className="label history-item__label">{t("tooltip.account")}</span>
-                <span className="history-item__badge plan-badge">{planLabel}</span>
+                <span className={`history-item__badge plan-badge plan-badge--${plan}`}>
+                  {planLabel}
+                </span>
               </span>
             </button>
             <div className="sidebar__mobile-actions">
@@ -5080,8 +5218,26 @@ export default function Home() {
                             sidebarSearch
                           )}
                         </span>
-                        {!seenDocumentIds.has(item.doc.id) ? (
-                          <span className="history-item__badge">NEW</span>
+                        {documentStatusLabel(item.doc.status) ? (
+                          <span
+                            className={`history-item__badge ${
+                              item.doc.status === "failed"
+                                ? "history-item__badge--error"
+                                : ""
+                            } ${
+                              item.doc.status === "uploading" ||
+                              item.doc.status === "processing"
+                                ? "history-item__badge--loading"
+                                : ""
+                            }`}
+                          >
+                            {documentStatusLabel(item.doc.status)}
+                          </span>
+                        ) : null}
+                        {item.doc.status === "ready" ? (
+                          <span className="history-item__badge history-item__badge--new">
+                            {t("badges.new")}
+                          </span>
                         ) : null}
                       </span>
                       {item.snippet ? (
@@ -5203,7 +5359,7 @@ export default function Home() {
                             className="history-item__menu-item history-item__menu-item--danger"
                             onClick={() => {
                               setOpenDocMenuId(null);
-                              void handleDeleteDocument(doc.id);
+                              void handleDeleteDocument(item.doc.id);
                             }}
                           >
                             <span className="menu-item__icon" aria-hidden="true">
@@ -5507,6 +5663,49 @@ export default function Home() {
                       ))}
                     </div>
                   </div>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+
+      {uploadLimitModalOpen
+        ? createPortal(
+            <div
+              className="upload-limit-modal__overlay"
+              role="dialog"
+              aria-modal="true"
+              onClick={() => setUploadLimitModalOpen(false)}
+            >
+              <div
+                className="upload-limit-modal"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="upload-limit-modal__header">
+                  <div className="upload-limit-modal__title">
+                    {t("uploadLimit.title")}
+                  </div>
+                  <button
+                    type="button"
+                    className="upload-limit-modal__close"
+                    onClick={() => setUploadLimitModalOpen(false)}
+                    aria-label={t("aria.close")}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="upload-limit-modal__body">
+                  <p className="upload-limit-modal__message">
+                    {uploadLimitMessage ?? t("uploadLimit.message")}
+                  </p>
+                  <button
+                    type="button"
+                    className="upload-limit-modal__btn"
+                    onClick={() => setUploadLimitModalOpen(false)}
+                  >
+                    OK
+                  </button>
                 </div>
               </div>
             </div>,
@@ -6277,6 +6476,7 @@ export default function Home() {
                     aria-label={t("aria.newChat")}
                     onClick={handleCreateChat}
                     data-tooltip={t("tooltip.newChat")}
+                    disabled={!isChatReady}
                   >
                     <svg
                       viewBox="0 0 24 24"
@@ -6998,6 +7198,13 @@ export default function Home() {
             onSubmit={handleSendMessage}
             ref={chatInputFormRef}
           >
+            {!isChatReady ? (
+              <div className="chat__input-notice">
+                {selectedDocumentStatus === "failed"
+                  ? t("chat.disabledFailed")
+                  : t("chat.disabled")}
+              </div>
+            ) : null}
             <div className="input-panel">
               <div className="input-panel__top">
                 <textarea
@@ -7018,6 +7225,7 @@ export default function Home() {
                     }
                   }}
                   ref={chatInputRef}
+                  disabled={!isChatReady}
                 />
               </div>
               <div className="input-panel__bottom">
@@ -7027,6 +7235,7 @@ export default function Home() {
                       type="button"
                       className={`model-option ${chatMode === "fast" ? "is-active" : ""}`}
                       onClick={() => setChatMode("fast")}
+                      disabled={!isChatReady}
                     >
                       {t("model.fast")}
                     </button>
@@ -7034,6 +7243,7 @@ export default function Home() {
                       type="button"
                       className={`model-option ${chatMode === "standard" ? "is-active" : ""}`}
                       onClick={() => setChatMode("standard")}
+                      disabled={!isChatReady}
                     >
                       {t("model.standard")}
                     </button>
@@ -7041,6 +7251,7 @@ export default function Home() {
                       type="button"
                       className={`model-option ${chatMode === "think" ? "is-active" : ""}`}
                       onClick={() => setChatMode("think")}
+                      disabled={!isChatReady}
                     >
                       {t("model.think")}
                     </button>
@@ -7133,6 +7344,7 @@ export default function Home() {
                     !activeChatId ||
                     showThreadList ||
                     showAllChatList ||
+                    !isChatReady ||
                     chatLoading
                   }
                   aria-label={chatSending ? t("chat.stop") : t("chat.send")}
