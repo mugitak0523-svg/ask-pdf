@@ -728,6 +728,7 @@ export default function Home() {
   >([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [showThreadList, setShowThreadList] = useState(false);
+  const [showAllChatList, setShowAllChatList] = useState(false);
   const [editingChatTitle, setEditingChatTitle] = useState(false);
   const [chatTitleDraft, setChatTitleDraft] = useState("");
   const [openChatMenuId, setOpenChatMenuId] = useState<string | null>(null);
@@ -871,6 +872,7 @@ export default function Home() {
     dragging: false,
   });
   const chatDragMovedRef = useRef(false);
+  const chatLastExpandedHeightRef = useRef<number | null>(null);
   const restoreRef = useRef<any | null>(null);
   const restoreDoneRef = useRef(false);
   const [isHydrated, setIsHydrated] = useState(false);
@@ -1413,6 +1415,7 @@ export default function Home() {
     setActiveChatId(null);
     setAllChatThreads([]);
     setShowThreadList(true);
+    setShowAllChatList(false);
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(STORAGE_KEY);
     }
@@ -1784,13 +1787,13 @@ export default function Home() {
   ]);
 
   useEffect(() => {
-    if (showThreadList || !selectedDocumentId || chatMessages.length === 0) {
+    if (showThreadList || showAllChatList || !selectedDocumentId || chatMessages.length === 0) {
       setShowChatJump(false);
     }
-  }, [showThreadList, selectedDocumentId, chatMessages.length]);
+  }, [showThreadList, showAllChatList, selectedDocumentId, chatMessages.length]);
 
   useEffect(() => {
-    if (showThreadList || chatMessages.length === 0) return;
+    if (showThreadList || showAllChatList || chatMessages.length === 0) return;
     if (loadingMoreMessages) return;
     if (!isNearBottomRef.current) return;
     requestAnimationFrame(() => {
@@ -1799,7 +1802,7 @@ export default function Home() {
         isNearBottomRef.current = true;
       });
     });
-  }, [showThreadList, chatMessages.length, loadingMoreMessages]);
+  }, [showThreadList, showAllChatList, chatMessages.length, loadingMoreMessages]);
 
   const loadChatMessages = async (
     documentId: string,
@@ -2265,7 +2268,7 @@ export default function Home() {
 
   const handleReloadChatsList = async () => {
     try {
-      if (!selectedDocumentId) {
+      if (showAllChatList || !selectedDocumentId) {
         await loadAllChats();
         return;
       }
@@ -2833,6 +2836,7 @@ export default function Home() {
     setHasMoreMessages(false);
     setLoadingMoreMessages(false);
     setShowThreadList(false);
+    setShowAllChatList(false);
     setAllChatThreads([]);
     try {
       const auth = await getAuthParams();
@@ -3116,11 +3120,14 @@ export default function Home() {
     }
   };
 
+  const isAllChatList = !selectedDocumentId || showAllChatList;
   const activeChatTitle = selectedDocumentId
-    ? showThreadList
-      ? t("chat.documentChatList")
-      : chatThreads.find((thread) => thread.id === activeChatId)?.title ??
-        (activeChatId ? t("chat.newChat") : t("chat.chat"))
+    ? showAllChatList
+      ? t("chat.allChatList")
+      : showThreadList
+        ? t("chat.documentChatList")
+        : chatThreads.find((thread) => thread.id === activeChatId)?.title ??
+          (activeChatId ? t("chat.newChat") : t("chat.chat"))
     : t("chat.allChatList");
   const planLabel =
     plan === "guest"
@@ -4318,7 +4325,7 @@ export default function Home() {
   };
 
   const startEditChatTitle = () => {
-    if (!activeChatId || showThreadList) return;
+    if (!activeChatId || showThreadList || showAllChatList) return;
     const current =
       chatThreads.find((thread) => thread.id === activeChatId)?.title ??
       t("chat.newChat");
@@ -6047,7 +6054,7 @@ export default function Home() {
               if (
                 event.target instanceof Element &&
                 event.target.closest(
-                  "button, input, textarea, [contenteditable='true'], a, .chat__header-input, .chat__header-title, [role='button']"
+                  "button, input, textarea, [contenteditable='true'], a, .chat__header-input, [role='button']"
                 )
               ) {
                 return;
@@ -6076,9 +6083,8 @@ export default function Home() {
               event.currentTarget.releasePointerCapture?.(event.pointerId);
               const min = getChatDrawerMin();
               const max = Math.max(min, getChatDrawerMax());
-              const mid = (min + max) / 2;
               const current = chatDrawerHeight ?? min;
-              setChatDrawerHeight(current >= mid ? max : min);
+              setChatDrawerHeight(clampChatHeight(current, min, max));
             }}
             onPointerCancel={(event) => {
               if (!isMobileLayout) return;
@@ -6092,7 +6098,7 @@ export default function Home() {
               if (
                 event.target instanceof Element &&
                 event.target.closest(
-                  "button, input, textarea, [contenteditable='true'], a, .chat__header-input, .chat__header-title, [role='button']"
+                  "button, input, textarea, [contenteditable='true'], a, .chat__header-input, [role='button']"
                 )
               ) {
                 return;
@@ -6104,7 +6110,17 @@ export default function Home() {
               const min = getChatDrawerMin();
               const max = Math.max(min, getChatDrawerMax());
               const current = chatDrawerHeight ?? min;
-              setChatDrawerHeight(current <= min + 4 ? max : min);
+              if (current <= min + 4) {
+                const restore =
+                  chatLastExpandedHeightRef.current &&
+                  chatLastExpandedHeightRef.current > min + 4
+                    ? chatLastExpandedHeightRef.current
+                    : max;
+                setChatDrawerHeight(clampChatHeight(restore, min, max));
+              } else {
+                chatLastExpandedHeightRef.current = clampChatHeight(current, min, max);
+                setChatDrawerHeight(min);
+              }
             }}
           >
             {selectedDocumentId ? (
@@ -6116,6 +6132,7 @@ export default function Home() {
                     aria-label={t("aria.back")}
                     onClick={async () => {
                       setShowThreadList(true);
+                      setShowAllChatList(false);
                       if (selectedDocumentId) {
                         await loadChats(selectedDocumentId, { autoOpen: false });
                       }
@@ -6147,7 +6164,7 @@ export default function Home() {
                     <path d="M15 12v-1" />
                   </svg>
                 </span>
-                {editingChatTitle && activeChatId && !showThreadList ? (
+                {editingChatTitle && activeChatId && !showThreadList && !showAllChatList ? (
                   <input
                     className="chat__header-input"
                     value={chatTitleDraft}
@@ -6182,6 +6199,47 @@ export default function Home() {
                     {activeChatTitle}
                   </span>
                 )}
+                {showThreadList || showAllChatList ? (
+                  <button
+                    type="button"
+                    className="chat__header-action"
+                    aria-label={
+                      showAllChatList ? t("chat.documentChatList") : t("chat.allChatList")
+                    }
+                    data-tooltip={
+                      showAllChatList ? t("chat.documentChatList") : t("chat.allChatList")
+                    }
+                    onClick={() => {
+                      if (showAllChatList) {
+                        setShowAllChatList(false);
+                        setShowThreadList(true);
+                        return;
+                      }
+                      setShowAllChatList(true);
+                      setShowThreadList(true);
+                      void loadAllChats();
+                    }}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                      <path d="M16 3l4 4l-4 4" />
+                      <path d="M10 7l10 0" />
+                      <path d="M8 13l-4 4l4 4" />
+                      <path d="M4 17l9 0" />
+                    </svg>
+                  </button>
+                ) : null}
               </div>
             ) : (
               <div className="chat__header-left">
@@ -6244,7 +6302,7 @@ export default function Home() {
                 <div className="chat__messages-wrap">
             <div
               className={`chat__messages ${
-                !selectedDocumentId || showThreadList ? "is-thread-list" : ""
+                isAllChatList || showThreadList ? "is-thread-list" : ""
               }`}
               ref={chatMessagesRef}
             >
@@ -6280,7 +6338,7 @@ export default function Home() {
                 </div>
               ) : chatError ? (
                 <div className="empty-state">{t("common.errorOccurred")}</div>
-              ) : !selectedDocumentId ? (
+              ) : isAllChatList ? (
                 allChatThreads.length === 0 ? (
                   <div className="empty-state">{t("chat.noChats")}</div>
                 ) : (
@@ -7071,7 +7129,11 @@ export default function Home() {
                     }
                   }}
                   disabled={
-                    !selectedDocumentId || !activeChatId || showThreadList || chatLoading
+                    !selectedDocumentId ||
+                    !activeChatId ||
+                    showThreadList ||
+                    showAllChatList ||
+                    chatLoading
                   }
                   aria-label={chatSending ? t("chat.stop") : t("chat.send")}
                 >

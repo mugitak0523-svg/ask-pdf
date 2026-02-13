@@ -1301,6 +1301,7 @@ button {
 
 .limit-modal__content {
   padding: 18px 18px 12px;
+  min-width: 0;
 }
 
 .limit-modal__header {
@@ -1477,6 +1478,8 @@ button {
   border-top: 1px solid var(--line);
   margin-top: 12px;
   padding-top: 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .plan-table {
@@ -1762,6 +1765,17 @@ button {
 }
 
 @media (max-width: 900px) {
+  .limit-modal__overlay {
+    align-items: flex-start;
+    padding: 16px;
+  }
+
+  .limit-modal {
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
   .limit-modal--split {
     grid-template-columns: 1fr;
   }
@@ -1778,6 +1792,26 @@ button {
   .plan-table__row {
     grid-template-columns: minmax(120px, 1fr) repeat(4, minmax(64px, 1fr));
   }
+}
+
+@media (max-width: 520px) {
+  .limit-modal__desc,
+  .limit-modal__note,
+  .limit-modal__bullets,
+  .limit-plan__name,
+  .limit-plan__price,
+  .limit-modal__hint {
+    word-break: break-word;
+  }
+
+  .limit-modal .plan-table__cell {
+    word-break: break-word;
+  }
+}
+
+.limit-modal .plan-table {
+  width: max-content;
+  min-width: 100%;
 }
 
 .app--sidebar-closed .sidebar__footer {
@@ -2266,6 +2300,8 @@ body.tooltip-portal-enabled [data-tooltip]::after {
   overflow: hidden;
   position: relative;
   padding-bottom: 2px;
+  container-type: inline-size;
+  container-name: viewer;
 }
 
 .settings {
@@ -2367,6 +2403,8 @@ body.tooltip-portal-enabled [data-tooltip]::after {
   overflow: auto;
   /* background: #f9f9f7; */
   margin-bottom: 36px;
+  container-type: inline-size;
+  container-name: settings-detail;
 }
 
 .settings__title {
@@ -2440,6 +2478,144 @@ body.tooltip-portal-enabled [data-tooltip]::after {
   font-size: 12px;
   color: var(--danger-text);
   padding: 4px 6px 0 6px;
+}
+
+@container viewer (max-width: 760px) {
+  .settings {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    width: 100%;
+    margin: 12px 0;
+    box-sizing: border-box;
+    min-width: 0;
+    align-content: start;
+    row-gap: 0;
+    grid-auto-rows: max-content;
+  }
+
+  .settings__nav {
+    padding: 12px;
+    gap: 12px;
+    width: 100%;
+    box-sizing: border-box;
+    min-width: 0;
+    align-self: start;
+  }
+
+  .settings__nav-group {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    max-width: 100%;
+  }
+
+  .settings__nav-group::-webkit-scrollbar {
+    height: 0;
+  }
+
+  .settings__nav-item {
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+
+  .settings__detail {
+    padding: 16px 12px;
+    margin-bottom: 16px;
+    width: 100%;
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    align-self: stretch;
+    overflow: auto;
+  }
+
+  .settings__item {
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .settings__group {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .settings__value,
+  .settings__value--right {
+    text-align: left;
+  }
+
+  .settings__subsection--split {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .settings__subsection--split .settings__value {
+    min-width: 0;
+    text-align: left;
+    margin-left: 0;
+  }
+
+  .settings__subsection--split .settings__subvalue {
+    justify-content: flex-start;
+  }
+
+  .settings__subsection--split .settings__subsection-content {
+    min-width: 0;
+    justify-self: start;
+    justify-content: flex-start;
+    text-align: left;
+  }
+
+  .settings__subsection-content--right .settings__value {
+    text-align: left;
+  }
+
+  .settings__subsection--center .plan-table,
+  .settings__subsection--center .plan-cards,
+  .settings__subsection--center .plan-cta {
+    align-self: stretch;
+    margin-left: 0;
+    margin-right: 0;
+  }
+
+  .plan-compare {
+    grid-template-columns: 1fr;
+  }
+
+  .plan-table {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .plan-table__header,
+  .plan-table__row {
+    min-width: 520px;
+  }
+}
+
+@container settings-detail (max-width: 706px) {
+  .settings__subsection--center .plan-table,
+  .settings__subsection--center .plan-cards,
+  .settings__subsection--center .plan-cta {
+    align-self: stretch;
+    margin-left: 0;
+    margin-right: 0;
+  }
+
+  .plan-compare {
+    grid-template-columns: 1fr;
+  }
 }
 
 .notice-banner {
