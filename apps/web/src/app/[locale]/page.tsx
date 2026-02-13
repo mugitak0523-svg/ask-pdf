@@ -2946,6 +2946,9 @@ export default function Home() {
       if (prev.some((item) => item.id === SETTINGS_TAB_ID)) return prev;
       return [...prev, { id: SETTINGS_TAB_ID, title: t("settingsTitle") }];
     });
+    if (isMobileLayout) {
+      setSidebarOpen(false);
+    }
     setSettingsSection("general");
     handleSelectTab(SETTINGS_TAB_ID);
   };
@@ -2955,6 +2958,9 @@ export default function Home() {
       if (prev.some((item) => item.id === SETTINGS_TAB_ID)) return prev;
       return [...prev, { id: SETTINGS_TAB_ID, title: t("settingsTitle") }];
     });
+    if (isMobileLayout) {
+      setSidebarOpen(false);
+    }
     setSettingsSection(section);
     handleSelectTab(SETTINGS_TAB_ID);
   };

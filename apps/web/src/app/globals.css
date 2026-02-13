@@ -4998,6 +4998,7 @@ body.tooltip-portal-enabled [data-tooltip]::after {
     flex-direction: column;
     width: 100%;
     min-width: 0;
+    overflow: hidden;
   }
 
   .viewer__tabs {
@@ -5055,6 +5056,14 @@ body.tooltip-portal-enabled [data-tooltip]::after {
     display: block;
   }
 
+  .pdf-embed__toolbar[data-search-active="true"] .pdf-embed__toolbar-download {
+    display: none;
+  }
+
+  .right-col.is-mobile.is-chat-expanded .pdf-embed__markers {
+    display: none;
+  }
+
   .chat__input {
     padding: 12px;
     box-sizing: border-box;
@@ -5086,6 +5095,105 @@ body.tooltip-portal-enabled [data-tooltip]::after {
 
   .send {
     margin-left: auto;
+  }
+
+  .settings {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    width: 100%;
+    margin: 12px 0;
+    box-sizing: border-box;
+    min-width: 0;
+    align-content: start;
+    row-gap: 0;
+    grid-auto-rows: max-content;
+  }
+
+  .settings__nav {
+    padding: 12px;
+    gap: 12px;
+    width: 100%;
+    box-sizing: border-box;
+    min-width: 0;
+    align-self: start;
+  }
+
+  .settings__nav-group {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    max-width: 100%;
+  }
+
+  .settings__nav-group::-webkit-scrollbar {
+    height: 0;
+  }
+
+  .settings__nav-item {
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+
+  .settings__detail {
+    padding: 16px 12px;
+    margin-bottom: 16px;
+    width: 100%;
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    align-self: stretch;
+    overflow: auto;
+  }
+
+  .settings__item {
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .settings__group {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .settings__value,
+  .settings__value--right {
+    text-align: left;
+  }
+
+  .settings__subsection--split {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .settings__subsection--split .settings__value {
+    min-width: 0;
+    text-align: left;
+    margin-left: 0;
+  }
+
+  .settings__subsection--split .settings__subvalue {
+    justify-content: flex-start;
+  }
+
+  .settings__subsection--split .settings__subsection-content {
+    min-width: 0;
+    justify-self: start;
+    justify-content: flex-start;
+    text-align: left;
+  }
+
+  .settings__subsection-content--right .settings__value {
+    text-align: left;
   }
 
   .right-col {

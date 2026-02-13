@@ -3035,7 +3035,12 @@ const renderLoadingText = (text: string) => (
           <div ref={markersRef} className="pdf-embed__markers" aria-hidden="true" />
         </div>
       </div>
-      <div className="pdf-embed__toolbar" role="toolbar" aria-label="PDF controls">
+      <div
+        className="pdf-embed__toolbar"
+        role="toolbar"
+        aria-label="PDF controls"
+        data-search-active={searchActiveTotal > 0 ? "true" : "false"}
+      >
         <div className="pdf-embed__toolbar-group">
           <svg
             className="pdf-embed__toolbar-icon"
@@ -3228,7 +3233,7 @@ const renderLoadingText = (text: string) => (
         <span className="pdf-embed__toolbar-divider" />
         <button
           type="button"
-          className="pdf-embed__toolbar-btn"
+          className="pdf-embed__toolbar-btn pdf-embed__toolbar-download"
           onClick={handleDownload}
           aria-label={t("download")}
           data-tooltip={t("downloadTooltip")}
