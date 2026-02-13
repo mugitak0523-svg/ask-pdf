@@ -1287,6 +1287,11 @@ export default function Home() {
     }),
     [chatOpen, chatWidth]
   );
+  const chatHeaderHeight = chatHeaderRef.current?.offsetHeight ?? 56;
+  const isChatExpanded =
+    isMobileLayout &&
+    chatOpen &&
+    (chatDrawerHeight ?? chatHeaderHeight) > chatHeaderHeight + 24;
 
   const renderSearchSnippet = (snippet: string, query: string) => {
     if (!query) return <span>{snippet}</span>;
@@ -1428,6 +1433,20 @@ export default function Home() {
     if (typeof window === "undefined") return;
     window.dispatchEvent(new Event("askpdf:layout"));
   }, [chatOpen]);
+
+  useEffect(() => {
+    if (!isMobileLayout) return;
+    if (!chatOpen) return;
+    requestAnimationFrame(() => {
+      chatInputRef.current?.focus();
+    });
+  }, [chatOpen, isMobileLayout]);
+
+  useEffect(() => {
+    if (!isMobileLayout) return;
+    if (!selectedDocumentId) return;
+    setSidebarOpen(false);
+  }, [isMobileLayout, selectedDocumentId]);
 
   useEffect(() => {
     if (!isAuthed || settingsSection !== "account") return;
@@ -2760,6 +2779,9 @@ export default function Home() {
     doc: DocumentItem,
     options: { restoreChatId?: string | null; autoOpenChat?: boolean } = {}
   ) => {
+    if (isMobileLayout) {
+      setSidebarOpen(false);
+    }
     markDocumentSeen(doc.id);
     setSelectedTabId(doc.id);
     setSelectedDocumentId(doc.id);
@@ -5446,7 +5468,19 @@ export default function Home() {
           )
         : null}
 
-      <div className="right-col">
+      <div
+        className={`right-col ${chatOpen ? "is-chat-open" : ""} ${
+          isMobileLayout ? "is-mobile" : ""
+        } ${isChatExpanded ? "is-chat-expanded" : ""}`}
+        style={
+          isMobileLayout
+            ? ({
+                ["--chat-header-height" as React.CSSProperties["--chat-header-height"]]:
+                  `${chatHeaderHeight}px`,
+              } as React.CSSProperties)
+            : undefined
+        }
+      >
       {checkoutNotice ? (
         <div className={`notice-banner notice-banner--${checkoutNotice.type}`}>
           <span>{checkoutNotice.message}</span>

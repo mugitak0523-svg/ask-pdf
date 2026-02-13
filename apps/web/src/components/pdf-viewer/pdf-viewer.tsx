@@ -223,6 +223,17 @@ export function PdfViewer({
   const [showReloadButton, setShowReloadButton] = useState(false);
   const [annotationsLoading, setAnnotationsLoading] = useState(false);
   const [annotationsHydrated, setAnnotationsHydrated] = useState(false);
+  const pinchStateRef = useRef<{
+    isPinching: boolean;
+    startDistance: number;
+    startZoom: number;
+    lastTapAt: number;
+  }>({
+    isPinching: false,
+    startDistance: 0,
+    startZoom: 1,
+    lastTapAt: 0,
+  });
   const annotationsAbortRef = useRef<AbortController | null>(null);
   const resultAbortRef = useRef<AbortController | null>(null);
   const [pageMeta, setPageMeta] = useState<Record<number, PageMeta>>({});
@@ -1691,6 +1702,79 @@ const renderLoadingText = (text: string) => (
     });
   };
 
+  const setZoomClamped = useCallback(
+    (value: number) => {
+      const next = Math.min(maxZoom, Math.max(minZoom, value));
+      setZoom(Number(next.toFixed(2)));
+    },
+    [maxZoom, minZoom]
+  );
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const onGestureStart = (event: Event) => {
+      const gesture = event as unknown as { scale?: number; preventDefault?: () => void };
+      gesture.preventDefault?.();
+      pinchStateRef.current.isPinching = true;
+      pinchStateRef.current.startZoom = zoomRef.current;
+    };
+
+    const onGestureChange = (event: Event) => {
+      const gesture = event as unknown as { scale?: number; preventDefault?: () => void };
+      if (typeof gesture.scale !== "number") return;
+      gesture.preventDefault?.();
+      setZoomClamped(pinchStateRef.current.startZoom * gesture.scale);
+    };
+
+    const onGestureEnd = (event: Event) => {
+      const gesture = event as unknown as { preventDefault?: () => void };
+      gesture.preventDefault?.();
+      pinchStateRef.current.isPinching = false;
+    };
+
+    el.addEventListener("gesturestart", onGestureStart, { passive: false });
+    el.addEventListener("gesturechange", onGestureChange, { passive: false });
+    el.addEventListener("gestureend", onGestureEnd, { passive: false });
+
+    return () => {
+      el.removeEventListener("gesturestart", onGestureStart);
+      el.removeEventListener("gesturechange", onGestureChange);
+      el.removeEventListener("gestureend", onGestureEnd);
+    };
+  }, [setZoomClamped]);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const onTouchStart = (event: TouchEvent) => {
+      handleTouchStart(event);
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      handleTouchMove(event);
+    };
+    const onTouchEnd = (event: TouchEvent) => {
+      handleTouchEnd(event);
+    };
+    const onTouchCancel = (event: TouchEvent) => {
+      handleTouchEnd(event);
+    };
+
+    el.addEventListener("touchstart", onTouchStart, { passive: false });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd, { passive: false });
+    el.addEventListener("touchcancel", onTouchCancel, { passive: false });
+
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+      el.removeEventListener("touchcancel", onTouchCancel);
+    };
+  }, []);
+
   const handleDownload = async () => {
     try {
       const cacheKey = documentId ?? url;
@@ -2802,6 +2886,51 @@ const renderLoadingText = (text: string) => (
     return bestIndex;
   };
 
+
+  const handleTouchStart = (event: TouchEvent) => {
+    if (event.touches.length === 2) {
+      event.preventDefault();
+      const [a, b] = Array.from(event.touches);
+      const dx = a.clientX - b.clientX;
+      const dy = a.clientY - b.clientY;
+      pinchStateRef.current.isPinching = true;
+      pinchStateRef.current.startDistance = Math.hypot(dx, dy);
+      pinchStateRef.current.startZoom = zoomRef.current;
+    }
+  };
+
+  const handleTouchMove = (event: TouchEvent) => {
+    if (!pinchStateRef.current.isPinching || event.touches.length !== 2) return;
+    event.preventDefault();
+    const [a, b] = Array.from(event.touches);
+    const dx = a.clientX - b.clientX;
+    const dy = a.clientY - b.clientY;
+    const distance = Math.hypot(dx, dy);
+    if (!pinchStateRef.current.startDistance) return;
+    const scale = distance / pinchStateRef.current.startDistance;
+    const next = pinchStateRef.current.startZoom * scale;
+    setZoomClamped(next);
+  };
+
+  const handleTouchEnd = (event: TouchEvent) => {
+    if (pinchStateRef.current.isPinching) {
+      if (event.touches.length < 2) {
+        pinchStateRef.current.isPinching = false;
+      }
+      return;
+    }
+    if (event.touches.length !== 0) return;
+    const now = Date.now();
+    const last = pinchStateRef.current.lastTapAt;
+    if (now - last < 260) {
+      const target = zoomRef.current > 1 ? 1 : 1.6;
+      setZoomClamped(target);
+      pinchStateRef.current.lastTapAt = 0;
+      event.preventDefault();
+      return;
+    }
+    pinchStateRef.current.lastTapAt = now;
+  };
 
   return (
     <div className="pdf-embed">
