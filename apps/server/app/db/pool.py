@@ -6,6 +6,9 @@ async def create_pool(database_url: str) -> asyncpg.Pool:
         dsn=database_url,
         min_size=1,
         max_size=5,
+        # Supabase connection pooler (pgBouncer, transaction mode) is incompatible
+        # with prepared statement caching in asyncpg.
+        statement_cache_size=0,
         command_timeout=30,
         max_inactive_connection_lifetime=180,
     )
