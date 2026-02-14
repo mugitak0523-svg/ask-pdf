@@ -355,7 +355,8 @@
       "menu": "その他",
       "share": "共有",
       "feedback": "フィードバック",
-      "plan": "プラン"
+      "plan": "プラン",
+      "copyMessage": "メッセージをコピー"
     },
     "viewer": {
       "noDocument": "PDF未選択",

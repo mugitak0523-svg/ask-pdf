@@ -815,6 +815,11 @@ button {
   font-size: 12px;
 }
 
+.auth-notice {
+  color: #1f6b3a;
+  font-size: 12px;
+}
+
 .logout {
   margin-top: 12px;
   text-align: left;
@@ -2812,10 +2817,27 @@ body.tooltip-portal-enabled [data-tooltip]::after {
   flex-direction: column;
   align-items: flex-start;
   gap: 4px;
+  text-align: left;
+  width: 100%;
   padding: 8px 10px;
   border-radius: 8px;
   background: var(--panel);
   border: 1px solid var(--line);
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.billing-history__item:hover {
+  border-color: #c7c7bf;
+  box-shadow: 0 6px 16px rgba(15, 15, 15, 0.08);
+  transform: translateY(-1px);
+}
+
+.billing-history__item:disabled {
+  cursor: default;
+  opacity: 0.65;
+  box-shadow: none;
+  transform: none;
 }
 
 .billing-history__meta {
@@ -4819,8 +4841,24 @@ body.tooltip-portal-enabled [data-tooltip]::after {
   border-color: var(--line);
 }
 
-.bubble {
+.bubble-wrap {
+  position: relative;
   max-width: 85%;
+  padding-bottom: 0;
+}
+
+.bubble-wrap--assistant {
+  align-self: flex-start;
+  padding-right: 30px;
+}
+
+.bubble-wrap--user {
+  align-self: flex-end;
+  padding-left: 30px;
+}
+
+.bubble {
+  max-width: 100%;
   padding: 16px 12px;
   border-radius: 12px;
   font-size: 12px;
@@ -4864,6 +4902,47 @@ body.tooltip-portal-enabled [data-tooltip]::after {
   margin: 6px 0 0;
   font-size: 11px;
   color: var(--muted);
+}
+
+.bubble__copy {
+  position: absolute;
+  bottom: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  border: 1px solid rgba(120, 120, 120, 0.35);
+  background: #fff;
+  color: rgba(40, 40, 40, 0.55);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.bubble__copy svg {
+  width: 16px;
+  height: 16px;
+}
+
+.bubble-wrap:hover .bubble__copy,
+.bubble-wrap:focus-within .bubble__copy {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.bubble__copy--assistant {
+  right: 0;
+}
+
+.bubble__copy--user {
+  left: 0;
+}
+
+.bubble__copy:hover {
+  border-color: rgba(120, 120, 120, 0.6);
+  color: rgba(40, 40, 40, 0.8);
 }
 
 .bubble__content:first-child {

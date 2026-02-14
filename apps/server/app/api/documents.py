@@ -1078,6 +1078,7 @@ async def create_document_chat_assistant_message(
 
     top_k, min_k, score_threshold = _resolve_rag_params(settings, payload)
     client_matches = _normalize_client_matches(payload.client_matches)
+    recent_limit = 2 if payload.mode == "fast" else 3
     if client_matches:
         exists_ok = await repository.document_thread_exists(
             pool,
@@ -1093,7 +1094,7 @@ async def create_document_chat_assistant_message(
                 conn,
                 chat_id,
                 user.user_id,
-                limit=4,
+                limit=recent_limit,
             )
     else:
         check_task = repository.document_thread_exists(
@@ -1138,7 +1139,7 @@ async def create_document_chat_assistant_message(
                 conn,
                 chat_id,
                 user.user_id,
-                limit=4,
+                limit=recent_limit,
             )
 
     context_matches, _ = _split_matches(matches, min_k, score_threshold)

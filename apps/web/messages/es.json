@@ -316,7 +316,8 @@
       "delete": "Delete",
       "menu": "More",
       "share": "Compartir",
-      "plan": "Plan"
+      "plan": "Plan",
+      "copyMessage": "Copiar mensaje"
     },
     "viewer": {
       "noDocument": "No PDF selected",

@@ -108,7 +108,7 @@ type ChunkCache = {
 const DEFAULT_PLAN_LIMITS: Record<PlanName, PlanLimits> = {
   guest: { maxFiles: 1, maxFileMb: 10, maxMessagesPerThread: 5, maxThreadsPerDocument: null },
   free: { maxFiles: 5, maxFileMb: 20, maxMessagesPerThread: 20, maxThreadsPerDocument: null },
-  plus: { maxFiles: 50, maxFileMb: 50, maxMessagesPerThread: 100, maxThreadsPerDocument: null },
+  plus: { maxFiles: 50, maxFileMb: 50, maxMessagesPerThread: 120, maxThreadsPerDocument: null },
 };
 
 const PLAN_PRICES: Record<Exclude<PlanName, "guest">, string> = {
@@ -183,17 +183,29 @@ const normalizeRefs = (value: unknown): ChatRef[] | undefined => {
   return undefined;
 };
 
+const REF_TAG_REGEX =
+  /[\[\{(【「]?\s*(?:@|at|参照)\s*:\s*(?:chunk|チャンク|ref)\s*-\s*([A-Za-z0-9-]+)\s*[\]\})】」]?/gi;
+const normalizeRefTagSpacing = (text: string) =>
+  text.replace(REF_TAG_REGEX, (match, id, offset, full) => {
+    const next = (full as string).slice(offset + match.length);
+    if (REF_TAG_REGEX.test(next)) {
+      return `${match} `;
+    }
+    return match;
+  });
+
 const replaceRefTags = (text: string, refs?: ChatRef[]) => {
   if (!text) return text;
+  text = normalizeRefTagSpacing(text);
   if (!refs || refs.length === 0) {
-    return text.replace(/\[@:chunk-[^\]]+\]/gi, "");
+    return text.replace(REF_TAG_REGEX, "");
   }
   const lookup = new Map<string, ChatRef>();
   for (const ref of refs) {
     if (ref.aboveThreshold === false) continue;
     if (ref.id && !lookup.has(ref.id)) lookup.set(ref.id, ref);
   }
-  return text.replace(/\[@:chunk-([^\]]+)\]/gi, (_, rawId) => {
+  return text.replace(REF_TAG_REGEX, (_, rawId) => {
     const trimmed = String(rawId).trim();
     const key = `chunk-${trimmed}`;
     let ref = lookup.get(key);
@@ -209,15 +221,16 @@ const replaceRefTags = (text: string, refs?: ChatRef[]) => {
 
 const buildRefLinkedText = (text: string, refs?: ChatRef[]) => {
   if (!text) return text;
+  text = normalizeRefTagSpacing(text);
   if (!refs || refs.length === 0) {
-    return text.replace(/\[@:chunk-[^\]]+\]/gi, "");
+    return text.replace(REF_TAG_REGEX, "");
   }
   const lookup = new Map<string, ChatRef>();
   for (const ref of refs) {
     if (ref.aboveThreshold === false) continue;
     if (ref.id && !lookup.has(ref.id)) lookup.set(ref.id, ref);
   }
-  return text.replace(/\[@:chunk-([^\]]+)\]/gi, (_, rawId) => {
+  return text.replace(REF_TAG_REGEX, (_, rawId) => {
     const trimmed = String(rawId).trim();
     const key = `chunk-${trimmed}`;
     let ref = lookup.get(key);
@@ -1112,6 +1125,32 @@ export default function Home() {
     }
   };
 
+  const handleCopyMessage = async (text: string) => {
+    if (!text) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.position = "fixed";
+        textarea.style.top = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        textarea.remove();
+      }
+    } catch {
+      // Ignore copy failures
+    }
+  };
+
+  const getCopyMessageText = (message: ChatMessage) => {
+    if (!message.text) return "";
+    if (message.role !== "assistant") return message.text;
+    return replaceRefTags(message.text, message.refs);
+  };
+
   const handleShareNative = async () => {
     const { url, title } = getShareContext();
     if (!url) return;
@@ -1425,6 +1464,16 @@ export default function Home() {
     setSelectedDocumentId(null);
     setSelectedTabId(null);
     setSelectedDocumentTitle(null);
+    setSelectedDocumentUrl(null);
+    setSelectedDocumentToken(null);
+    setSelectedDocumentResult(null);
+    setSelectedDocumentAnnotations([]);
+    setViewerLoading(false);
+    setViewerError(null);
+    setBillingSummary(null);
+    setBillingLoading(false);
+    setBillingFetchError(null);
+    setBillingError(null);
     setChatMessages([]);
     setChatError(null);
     setChatThreads([]);
@@ -2648,7 +2697,7 @@ export default function Home() {
       }
       const payload = await response.json();
       if (payload?.url) {
-        window.location.href = payload.url;
+        openShareUrl(payload.url);
       } else {
         setCheckoutNotice({ type: "success", message: t("billingCheckoutSuccess") });
       }
@@ -2681,7 +2730,7 @@ export default function Home() {
       if (!payload?.url) {
         throw new Error("Missing portal URL");
       }
-      window.location.href = payload.url;
+      openShareUrl(payload.url);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Portal failed";
       setBillingError(message);
@@ -3467,13 +3516,26 @@ export default function Home() {
     const trimmed = chatInput.trim();
     if (!trimmed) return;
     if (chatSending) return;
-    if (!selectedDocumentId || !activeChatId) return;
+    if (!selectedDocumentId) return;
+    let chatId = activeChatId;
+    if (!chatId) {
+      const nextIndex = chatThreads.length + 1;
+      const title = t("chat.newChatNumber", { count: nextIndex });
+      const created = await createChat(selectedDocumentId, title);
+      if (!created) return;
+      chatId = created.id;
+      setChatThreads((prev) => [created, ...prev]);
+      setActiveChatId(created.id);
+      setChatMessages([]);
+      setShowThreadList(false);
+      setShowAllChatList(false);
+    }
     try {
       const auth = await getAuthParams();
       if (!auth) return;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const response = await fetch(
-        `${baseUrl}/documents/${selectedDocumentId}/chats/${activeChatId}/messages`,
+        `${baseUrl}/documents/${selectedDocumentId}/chats/${chatId}/messages`,
         {
           method: "POST",
           headers: {
@@ -3507,7 +3569,7 @@ export default function Home() {
       };
       setChatMessages((prev) => [...prev, message]);
       setChatInput("");
-      void requestAssistantReply(trimmed);
+      void requestAssistantReply(trimmed, { chatId });
     } catch (error) {
       const messageText =
         error instanceof Error ? error.message : "Failed to send message";
@@ -3517,9 +3579,10 @@ export default function Home() {
 
   const requestAssistantReply = async (
     question: string,
-    options: { existingId?: string } = {}
+    options: { existingId?: string; chatId?: string } = {}
   ) => {
-    if (!selectedDocumentId || !activeChatId) return;
+    const targetChatId = options.chatId ?? activeChatId;
+    if (!selectedDocumentId || !targetChatId) return;
     const pendingId = options.existingId ?? crypto.randomUUID();
     const pending: ChatMessage = {
       id: pendingId,
@@ -3544,9 +3607,9 @@ export default function Home() {
           ? await getClientMatches(question, selectedDocumentId)
           : null;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
-      const wsUrl = `${baseUrl.replace(/^http/, "ws")}/documents/${selectedDocumentId}/chats/${activeChatId}/assistant/ws?token=${encodeURIComponent(
-        auth.token
-      )}&token_type=${encodeURIComponent(auth.tokenType)}`;
+    const wsUrl = `${baseUrl.replace(/^http/, "ws")}/documents/${selectedDocumentId}/chats/${targetChatId}/assistant/ws?token=${encodeURIComponent(
+      auth.token
+    )}&token_type=${encodeURIComponent(auth.tokenType)}`;
       await new Promise<void>((resolve, reject) => {
         const socket = new WebSocket(wsUrl);
         chatSocketRef.current = socket;
@@ -3976,7 +4039,13 @@ export default function Home() {
                       <div className="settings__value">{t("common.fetchFailed")}</div>
                     ) : billingSummary?.invoices?.length ? (
                       billingSummary.invoices.map((invoice) => (
-                        <div key={invoice.id} className="billing-history__item">
+                        <button
+                          type="button"
+                          key={invoice.id}
+                          className="billing-history__item"
+                          onClick={() => void openBillingPortal()}
+                          disabled={!isAuthed || billingBusy}
+                        >
                           <div className="billing-history__meta">
                             <div className="billing-history__amount">
                               {formatCurrency(invoice.amountPaid, invoice.currency)}
@@ -4016,7 +4085,7 @@ export default function Home() {
                               </div>
                             )}
                           </div>
-                        </div>
+                        </button>
                       ))
                     ) : (
                       <div className="settings__value">{t("billingNone")}</div>
@@ -6904,6 +6973,8 @@ export default function Home() {
                         .reverse()
                         .find((item) => item.role === "user")
                     : undefined;
+                  const canCopyMessage =
+                    msg.status !== "loading" && typeof msg.text === "string" && msg.text.trim();
                   const displayText =
                     msg.role === "assistant"
                       ? msg.text
@@ -6911,7 +6982,8 @@ export default function Home() {
                   const refLabelLookup = buildRefLabelLookup(msg.refs);
                   const refIdLookup = buildRefIdLookup(msg.refs);
                   return (
-                  <div key={msg.id} className={`bubble bubble--${msg.role}`}>
+                  <div key={msg.id} className={`bubble-wrap bubble-wrap--${msg.role}`}>
+                    <div className={`bubble bubble--${msg.role}`}>
                     {msg.status === "loading" ? (
                       msg.text ? (
                         <div className="bubble__content markdown">
@@ -7116,7 +7188,7 @@ export default function Home() {
                     ) : (
                       <p className="bubble__content">{displayText}</p>
                     )}
-                    {msg.refs ? (
+                    {msg.refs && msg.refs.some(isRefVisible) ? (
                       <div className="refs">
                         <div className="refs__title">REFERENCES</div>
                         <div className="refs__list">
@@ -7170,6 +7242,34 @@ export default function Home() {
                           ))}
                         </div>
                       </div>
+                    ) : null}
+                    </div>
+                    {canCopyMessage ? (
+                      <button
+                        type="button"
+                        className={`bubble__copy bubble__copy--${msg.role}`}
+                        onClick={() => handleCopyMessage(getCopyMessageText(msg))}
+                        aria-label={t("tooltip.copyMessage")}
+                        data-tooltip={t("tooltip.copyMessage")}
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          width="24"
+                          height="24"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className="icon icon-tabler icons-tabler-outline icon-tabler-copy"
+                          aria-hidden="true"
+                        >
+                          <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                          <path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666" />
+                          <path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" />
+                        </svg>
+                      </button>
                     ) : null}
                   </div>
                   );
@@ -7341,7 +7441,6 @@ export default function Home() {
                   }}
                   disabled={
                     !selectedDocumentId ||
-                    !activeChatId ||
                     showThreadList ||
                     showAllChatList ||
                     !isChatReady ||

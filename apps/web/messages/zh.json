@@ -316,7 +316,8 @@
       "delete": "Delete",
       "menu": "More",
       "share": "分享",
-      "plan": "方案"
+      "plan": "方案",
+      "copyMessage": "复制消息"
     },
     "viewer": {
       "noDocument": "No PDF selected",

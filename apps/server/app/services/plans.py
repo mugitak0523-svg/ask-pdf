@@ -14,9 +14,9 @@ class PlanLimits:
 
 
 PLAN_LIMITS: dict[str, PlanLimits] = {
-    "guest": PlanLimits(max_files=1, max_file_mb=10, max_messages_per_thread=5, max_threads_per_document=None),
+    "guest": PlanLimits(max_files=1, max_file_mb=10, max_messages_per_thread=8, max_threads_per_document=None),
     "free": PlanLimits(max_files=5, max_file_mb=20, max_messages_per_thread=20, max_threads_per_document=None),
-    "plus": PlanLimits(max_files=None, max_file_mb=50, max_messages_per_thread=None, max_threads_per_document=None),
+    "plus": PlanLimits(max_files=None, max_file_mb=50, max_messages_per_thread=120, max_threads_per_document=None),
 }
 
 

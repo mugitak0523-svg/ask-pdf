@@ -851,7 +851,7 @@ async def count_user_ok_answers_since(
             select count(*) as total
             from document_chat_messages
             where user_id = $1
-              and role = 'assistant'
+              and role in ('assistant', 'user')
               and status = 'ok'
               and created_at >= $2::timestamptz
             """,
@@ -871,7 +871,7 @@ async def count_user_ok_answers_since_conn(
         select count(*) as total
         from document_chat_messages
         where user_id = $1
-          and role = 'assistant'
+          and role in ('assistant', 'user')
           and status = 'ok'
           and created_at >= $2::timestamptz
         """,

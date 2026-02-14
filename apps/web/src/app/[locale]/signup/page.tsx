@@ -8,16 +8,22 @@ export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const handleSignUp = async () => {
     setError(null);
+    setNotice(null);
     setLoading(true);
     const { error: authError } = await supabase.auth.signUp({
       email,
       password,
     });
-    if (authError) setError(authError.message);
+    if (authError) {
+      setError(authError.message);
+    } else {
+      setNotice("確認メールを送信しました。メールを確認して認証してください。");
+    }
     setLoading(false);
   };
 
@@ -59,6 +65,7 @@ export default function SignupPage() {
             placeholder="••••••••"
           />
         </label>
+        {notice ? <p className="auth-notice">{notice}</p> : null}
         {error ? <p className="auth-error">{error}</p> : null}
         <button className="primary" type="button" onClick={handleSignUp} disabled={loading}>
           サインアップ

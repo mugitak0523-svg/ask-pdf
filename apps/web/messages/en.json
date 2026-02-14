@@ -355,7 +355,8 @@
       "menu": "More",
       "share": "Share",
       "feedback": "Feedback",
-      "plan": "Plan"
+      "plan": "Plan",
+      "copyMessage": "Copy message"
     },
     "viewer": {
       "noDocument": "No PDF selected",
