@@ -216,6 +216,7 @@ const AdminPage = () => {
       stripeCustomerId: item?.stripe_customer_id ?? null,
       stripePriceId: item?.stripe_price_id ?? null,
       currentPeriodEnd: item?.current_period_end ?? null,
+      unreadMessages: Number(item?.unread_message_count ?? 0),
       documentCount: Number(item?.documentCount ?? 0),
       chatCount: Number(item?.chatCount ?? 0),
       messageCount: Number(item?.messageCount ?? 0),
