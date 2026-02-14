@@ -34,8 +34,10 @@ export default function LoginPage() {
     setError(null);
     setNotice(null);
     setLoading(true);
+    const redirectTo = `${window.location.origin}/`;
     const { error: authError } = await supabase.auth.signInWithOAuth({
       provider: "google",
+      options: { redirectTo },
     });
     if (authError) setError(authError.message);
     setLoading(false);

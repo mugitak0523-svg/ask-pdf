@@ -13,9 +13,11 @@ export default function SignupPage() {
   const handleSignUp = async () => {
     setError(null);
     setLoading(true);
+    const emailRedirectTo = `${window.location.origin}/`;
     const { error: authError } = await supabase.auth.signUp({
       email,
       password,
+      options: { emailRedirectTo },
     });
     if (authError) setError(authError.message);
     setLoading(false);
@@ -24,8 +26,10 @@ export default function SignupPage() {
   const handleGoogle = async () => {
     setError(null);
     setLoading(true);
+    const redirectTo = `${window.location.origin}/`;
     const { error: authError } = await supabase.auth.signInWithOAuth({
       provider: "google",
+      options: { redirectTo },
     });
     if (authError) setError(authError.message);
     setLoading(false);

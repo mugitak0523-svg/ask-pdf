@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useParams } from "next/navigation";
 import { Link } from "@/i18n/navigation";
 import { supabase } from "@/lib/supabase";
 
@@ -10,14 +11,20 @@ export default function SignupPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const params = useParams();
+  const locale = typeof params?.locale === "string" ? params.locale : null;
 
   const handleSignUp = async () => {
     setError(null);
     setNotice(null);
     setLoading(true);
+    const emailRedirectTo = locale
+      ? `${window.location.origin}/${locale}`
+      : `${window.location.origin}/`;
     const { error: authError } = await supabase.auth.signUp({
       email,
       password,
+      options: { emailRedirectTo },
     });
     if (authError) {
       setError(authError.message);
@@ -30,8 +37,12 @@ export default function SignupPage() {
   const handleGoogle = async () => {
     setError(null);
     setLoading(true);
+    const redirectTo = locale
+      ? `${window.location.origin}/${locale}`
+      : `${window.location.origin}/`;
     const { error: authError } = await supabase.auth.signInWithOAuth({
       provider: "google",
+      options: { redirectTo },
     });
     if (authError) setError(authError.message);
     setLoading(false);
