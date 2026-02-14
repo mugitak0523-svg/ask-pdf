@@ -22,7 +22,7 @@ export function PdfEmbed({ url }: PdfEmbedProps) {
       if (!container) return;
       container.innerHTML = "";
       try {
-        const pdfjs = await import("pdfjs-dist/legacy/build/pdf");
+        const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
         pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
         const loadingTask = pdfjs.getDocument({ url });
         const pdf = await loadingTask.promise;

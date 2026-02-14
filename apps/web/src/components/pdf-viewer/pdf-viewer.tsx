@@ -305,9 +305,7 @@ const renderLoadingText = (text: string) => (
       {text.split("").map((char, index) => (
         <span
           key={`${char}-${index}`}
-          style={{
-            ["--fade-delay" as React.CSSProperties["--fade-delay"]]: `${index * 0.08}s`,
-          }}
+          style={{ "--fade-delay": `${index * 0.08}s` } as React.CSSProperties}
         >
           {char}
         </span>
@@ -359,10 +357,10 @@ const renderLoadingText = (text: string) => (
       const width = Number(page.width ?? page.widthInch);
       const height = Number(page.height ?? page.heightInch);
       if (!pageNumber || !Number.isFinite(width) || !Number.isFinite(height)) continue;
-      const words = Array.isArray(page.words) ? page.words : [];
-      const lines = Array.isArray(page.lines) ? page.lines : [];
+      const words: any[] = Array.isArray(page.words) ? page.words : [];
+      const lines: any[] = Array.isArray(page.lines) ? page.lines : [];
       const wordToLine = new Map<number, number>();
-      lines.forEach((line, index) => {
+      lines.forEach((line: any, index: number) => {
         const indexes = Array.isArray(line.word_indexes)
           ? line.word_indexes
           : Array.isArray(line.wordIndexes)
@@ -413,7 +411,7 @@ const renderLoadingText = (text: string) => (
         nextRects[pageNumber].push(normalized);
       }
       nextWords[pageNumber] = words
-        .map((word) => ({
+        .map((word: any) => ({
           wordIndex: Number(word.word_index ?? word.wordIndex ?? word.index ?? -1),
           text: String(word.content ?? word.text ?? ""),
         }))
@@ -745,7 +743,7 @@ const renderLoadingText = (text: string) => (
         thumbs.innerHTML = "";
       }
       try {
-        const pdfjs = await import("pdfjs-dist/legacy/build/pdf");
+        const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
         pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
         const cacheKey = documentId ?? url;
         cacheKeyRef.current = cacheKey;

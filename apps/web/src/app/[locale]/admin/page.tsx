@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { Suspense, useEffect, useMemo, useState } from "react";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -75,7 +75,7 @@ const normalizeSection = (value?: string | null) => {
   return "users";
 };
 
-const AdminPage = () => {
+const AdminPageContent = () => {
   const t = useTranslations("app");
   const locale = useLocale();
   const router = useRouter();
@@ -854,5 +854,11 @@ const AdminPage = () => {
     </div>
   );
 };
+
+const AdminPage = () => (
+  <Suspense fallback={null}>
+    <AdminPageContent />
+  </Suspense>
+);
 
 export default AdminPage;

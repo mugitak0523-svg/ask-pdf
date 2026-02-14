@@ -37,27 +37,27 @@ export function PdfViewer({
 
   const highlightStyles = useMemo<HighlightStyle[]>(() => {
     const pageMap = new Map(pages.map((p) => [p.pageNumber, p]));
-    return highlights
-      .map((highlight) => {
-        const page = pageMap.get(highlight.pageNumber);
-        if (!page) return null;
-        const [x1, y1, x2, y2] = highlight.bbox;
-        const left = (x1 / page.widthInch) * 100;
-        const top = (y1 / page.heightInch) * 100;
-        const width = ((x2 - x1) / page.widthInch) * 100;
-        const height = ((y2 - y1) / page.heightInch) * 100;
-        return {
-          id: highlight.id,
-          pageNumber: highlight.pageNumber,
-          style: {
-            left: `${left}%`,
-            top: `${top}%`,
-            width: `${width}%`,
-            height: `${height}%`,
-          },
-        };
-      })
-      .filter((item): item is HighlightStyle => item !== null);
+    const styles: HighlightStyle[] = [];
+    for (const highlight of highlights) {
+      const page = pageMap.get(highlight.pageNumber);
+      if (!page) continue;
+      const [x1, y1, x2, y2] = highlight.bbox;
+      const left = (x1 / page.widthInch) * 100;
+      const top = (y1 / page.heightInch) * 100;
+      const width = ((x2 - x1) / page.widthInch) * 100;
+      const height = ((y2 - y1) / page.heightInch) * 100;
+      styles.push({
+        id: highlight.id,
+        pageNumber: highlight.pageNumber,
+        style: {
+          left: `${left}%`,
+          top: `${top}%`,
+          width: `${width}%`,
+          height: `${height}%`,
+        },
+      });
+    }
+    return styles;
   }, [highlights, pages]);
 
   useEffect(() => {

@@ -8,9 +8,7 @@ import remarkGfm from "remark-gfm";
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { PdfViewer } from "@/components/pdf-viewer/pdf-viewer";
 import { supabase } from "@/lib/supabase";
-import termsMd from "../../../../../docs/legal/terms.md";
-import privacyMd from "../../../../../docs/legal/privacy.md";
-import tokushoMd from "../../../../../docs/legal/tokusho.md";
+import { privacyMd, termsMd, tokushoMd } from "@/content/legal";
 
 type ChatRef = {
   label: string;
@@ -286,7 +284,7 @@ const buildRefIdLookup = (refs?: ChatRef[]) => {
 const getNodeText = (node: React.ReactNode): string => {
   if (typeof node === "string" || typeof node === "number") return String(node);
   if (Array.isArray(node)) return node.map(getNodeText).join("");
-  if (React.isValidElement(node)) return getNodeText(node.props.children);
+  if (React.isValidElement<{ children?: React.ReactNode }>(node)) return getNodeText(node.props.children);
   return "";
 };
 
@@ -1266,7 +1264,8 @@ export default function Home() {
   const [contentSearchError, setContentSearchError] = useState<string | null>(null);
   const contentSearchAbortRef = useRef<AbortController | null>(null);
 
-  const searchResults = useMemo(() => {
+  const searchResults = useMemo<{ doc: DocumentItem; snippet: string | null; extraHits: number }[]>(
+    () => {
     if (!sidebarSearch.trim()) {
       return documents.map((doc) => ({ doc, snippet: null, extraHits: 0 }));
     }
@@ -1274,11 +1273,13 @@ export default function Home() {
       return filteredDocuments.map((doc) => ({ doc, snippet: null, extraHits: 0 }));
     }
     return contentSearchHits.map((hit) => ({
-      doc: { id: hit.documentId, title: hit.title || t("common.untitled") },
+      doc: { id: hit.documentId, title: hit.title || t("common.untitled"), status: null },
       snippet: hit.snippet,
       extraHits: Math.max(0, hit.hitCount - 1),
     }));
-  }, [sidebarSearch, sidebarSearchMode, documents, filteredDocuments, contentSearchHits, t]);
+    },
+    [sidebarSearch, sidebarSearchMode, documents, filteredDocuments, contentSearchHits, t]
+  );
 
   const sidebarDocumentCount = sidebarSearch.trim()
     ? searchResults.length
@@ -2087,7 +2088,7 @@ export default function Home() {
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
-        return;
+        return [];
       }
       const message = error instanceof Error ? error.message : "Failed to load chats";
       setChatError(message);
@@ -2258,11 +2259,13 @@ export default function Home() {
       }
       const payload = await response.json();
       const items = Array.isArray(payload.documents) ? payload.documents : [];
-      const normalized = items.map((item) => ({
-        id: String(item.id),
-        title: String(item.title ?? t("common.untitled")),
-        status: typeof item.status === "string" ? item.status : null,
-      }));
+      const normalized: { id: string; title: string; status: string | null }[] = items.map(
+        (item: { id: string; title?: string | null; status?: unknown }) => ({
+          id: String(item.id),
+          title: String(item.title ?? t("common.untitled")),
+          status: typeof item.status === "string" ? item.status : null,
+        })
+      );
       setDocuments(normalized);
       if (!seenDocsCacheRef.current && normalized.length > 0) {
         const seed = new Set(normalized.map((doc) => doc.id));
@@ -2503,7 +2506,7 @@ export default function Home() {
         throw new Error(`Failed to load plan (${response.status})`);
       }
       const payload = await response.json();
-      const nextPlan =
+      const nextPlan: "free" | "plus" =
         payload?.plan === "free" || payload?.plan === "plus" ? payload.plan : "free";
       const limits = payload?.limits ?? {};
       setPlan(nextPlan);
@@ -2552,7 +2555,7 @@ export default function Home() {
       upcomingInvoice: payload?.upcomingInvoice ?? null,
       invoices: Array.isArray(payload?.invoices) ? payload.invoices : [],
     });
-    return payload as BillingSummary | null;
+    return payload;
   };
 
   const loadAnnouncements = async () => {
@@ -2859,7 +2862,7 @@ export default function Home() {
         throw new Error(`Failed to update plan (${response.status})`);
       }
       const payload = await response.json();
-      const planName =
+      const planName: "free" | "plus" =
         payload?.plan === "free" || payload?.plan === "plus" ? payload.plan : nextPlan;
       const limits = payload?.limits ?? {};
       setPlan(planName);
@@ -3165,7 +3168,9 @@ export default function Home() {
     handleSelectTab(SETTINGS_TAB_ID);
   };
 
-  const openSettingsSection = (section: string) => {
+  const openSettingsSection = (
+    section: "general" | "account" | "usage" | "messages" | "manual" | "service" | "faq"
+  ) => {
     setOpenDocuments((prev) => {
       if (prev.some((item) => item.id === SETTINGS_TAB_ID)) return prev;
       return [...prev, { id: SETTINGS_TAB_ID, title: t("settingsTitle") }];
@@ -3764,7 +3769,7 @@ export default function Home() {
       {text.split("").map((char, index) => (
         <span
           key={`${char}-${index}`}
-          style={{ ["--fade-delay" as React.CSSProperties["--fade-delay"]]: `${index * 0.08}s` }}
+          style={{ "--fade-delay": `${index * 0.08}s` } as React.CSSProperties}
         >
           {char}
         </span>
@@ -5682,7 +5687,7 @@ export default function Home() {
                         <div className="plan-table__cell plan-table__cell--feature" />
                         <div
                           className={`plan-table__cell ${
-                            selectedPlan === "guest" ? "is-selected" : ""
+                            plan === "guest" ? "is-selected" : ""
                           }`}
                         >
                           {t("planGuest")}
@@ -5709,7 +5714,7 @@ export default function Home() {
                           </div>
                           <div
                             className={`plan-table__cell ${
-                              selectedPlan === "guest" ? "is-selected" : ""
+                              plan === "guest" ? "is-selected" : ""
                             }`}
                           >
                             {row.values.guest}
@@ -5789,8 +5794,7 @@ export default function Home() {
         style={
           isMobileLayout
             ? ({
-                ["--chat-header-height" as React.CSSProperties["--chat-header-height"]]:
-                  `${chatHeaderHeight}px`,
+                "--chat-header-height": `${chatHeaderHeight}px`,
               } as React.CSSProperties)
             : undefined
         }
@@ -6308,8 +6312,7 @@ export default function Home() {
           style={
             isMobileLayout && chatDrawerHeight
               ? ({
-                  ["--chat-drawer-height" as React.CSSProperties["--chat-drawer-height"]]:
-                    `${chatDrawerHeight}px`,
+                  "--chat-drawer-height": `${chatDrawerHeight}px`,
                 } as React.CSSProperties)
               : undefined
           }
@@ -6352,7 +6355,7 @@ export default function Home() {
               const min = getChatDrawerMin();
               const max = Math.max(min, getChatDrawerMax());
               const current = chatDrawerHeight ?? min;
-              setChatDrawerHeight(clampChatHeight(current, min, max));
+              setChatDrawerHeight(clampChatHeight(current));
             }}
             onPointerCancel={(event) => {
               if (!isMobileLayout) return;
@@ -6384,9 +6387,9 @@ export default function Home() {
                   chatLastExpandedHeightRef.current > min + 4
                     ? chatLastExpandedHeightRef.current
                     : max;
-                setChatDrawerHeight(clampChatHeight(restore, min, max));
+                setChatDrawerHeight(clampChatHeight(restore));
               } else {
-                chatLastExpandedHeightRef.current = clampChatHeight(current, min, max);
+                chatLastExpandedHeightRef.current = clampChatHeight(current);
                 setChatDrawerHeight(min);
               }
             }}
@@ -7313,8 +7316,7 @@ export default function Home() {
                   value={chatInput}
                   onChange={(event) => setChatInput(event.target.value)}
                   onKeyDown={(event) => {
-                    const isComposing =
-                      event.nativeEvent.isComposing || event.isComposing || false;
+                    const isComposing = event.nativeEvent.isComposing || false;
                     const hasModifier =
                       event.shiftKey || event.metaKey || event.ctrlKey || event.altKey;
                     if (event.key === "Enter" && !hasModifier && !isComposing) {
