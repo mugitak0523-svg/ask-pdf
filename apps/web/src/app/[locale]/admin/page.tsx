@@ -13,6 +13,7 @@ import {
 import { Line } from "react-chartjs-2";
 import { useLocale, useTranslations } from "next-intl";
 import { useRouter } from "@/i18n/navigation";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type AdminUser = {
@@ -68,25 +69,23 @@ type FeedbackItem = {
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler);
 
-type AdminPageProps = {
-  initialSection?: string | null;
-};
-
 const normalizeSection = (value?: string | null) => {
   if (value === "announcements") return "announcements";
   if (value === "feedback") return "feedback";
   return "users";
 };
 
-const AdminPage = ({ initialSection }: AdminPageProps) => {
+const AdminPage = () => {
   const t = useTranslations("app");
   const locale = useLocale();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const initialSection = normalizeSection(searchParams?.get("section"));
   const [authError, setAuthError] = useState<string | null>(null);
   const [authStatus, setAuthStatus] = useState<"checking" | "ok" | "denied">("checking");
   const [adminSection, setAdminSection] = useState<
     "users" | "announcements" | "feedback"
-  >(() => normalizeSection(initialSection));
+  >(initialSection);
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [adminUsersLoading, setAdminUsersLoading] = useState(false);
   const [adminUsersError, setAdminUsersError] = useState<string | null>(null);
@@ -105,6 +104,10 @@ const AdminPage = ({ initialSection }: AdminPageProps) => {
     body: "",
   });
   const [adminAnnouncementBusy, setAdminAnnouncementBusy] = useState(false);
+
+  useEffect(() => {
+    setAdminSection(normalizeSection(searchParams?.get("section")));
+  }, [searchParams]);
 
   const baseUrl = useMemo(
     () => process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000",
