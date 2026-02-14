@@ -716,6 +716,7 @@ export default function Home() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [chatSending, setChatSending] = useState(false);
+  const chatSendingRef = useRef(false);
   const chatSocketRef = useRef<WebSocket | null>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
   const isNearBottomRef = useRef(true);
@@ -734,6 +735,10 @@ export default function Home() {
     if (!target) return;
     const bottom = Math.max(0, target.scrollHeight - target.clientHeight);
     target.scrollTo({ top: bottom, behavior });
+  };
+  const setChatSendingState = (value: boolean) => {
+    chatSendingRef.current = value;
+    setChatSending(value);
   };
   const [chatThreads, setChatThreads] = useState<
     { id: string; title: string | null; updatedAt: string | null; lastMessage?: string | null }[]
@@ -3520,14 +3525,18 @@ export default function Home() {
     if (!isChatReady) return;
     const trimmed = chatInput.trim();
     if (!trimmed) return;
-    if (chatSending) return;
+    if (chatSendingRef.current) return;
     if (!selectedDocumentId) return;
+    setChatSendingState(true);
     let chatId = activeChatId;
     if (!chatId) {
       const nextIndex = chatThreads.length + 1;
       const title = t("chat.newChatNumber", { count: nextIndex });
       const created = await createChat(selectedDocumentId, title);
-      if (!created) return;
+      if (!created) {
+        setChatSendingState(false);
+        return;
+      }
       chatId = created.id;
       setChatThreads((prev) => [created, ...prev]);
       setActiveChatId(created.id);
@@ -3537,7 +3546,10 @@ export default function Home() {
     }
     try {
       const auth = await getAuthParams();
-      if (!auth) return;
+      if (!auth) {
+        setChatSendingState(false);
+        return;
+      }
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const response = await fetch(
         `${baseUrl}/documents/${selectedDocumentId}/chats/${chatId}/messages`,
@@ -3558,6 +3570,7 @@ export default function Home() {
           limit: planLimits.maxMessagesPerThread ?? "?",
         });
         openLimitModal(messageText);
+        setChatSendingState(false);
         return;
       }
       if (!response.ok) {
@@ -3565,7 +3578,10 @@ export default function Home() {
       }
       const payload = await response.json();
       const saved = payload?.message;
-      if (!saved?.id) return;
+      if (!saved?.id) {
+        setChatSendingState(false);
+        return;
+      }
       const message: ChatMessage = {
         id: String(saved.id),
         role: "user",
@@ -3579,6 +3595,7 @@ export default function Home() {
       const messageText =
         error instanceof Error ? error.message : "Failed to send message";
       setChatError(messageText);
+      setChatSendingState(false);
     }
   };
 
@@ -3601,7 +3618,7 @@ export default function Home() {
         ? prev.map((item) => (item.id === pendingId ? pending : item))
         : [...prev, pending]
     );
-    setChatSending(true);
+    setChatSendingState(true);
     setChatError(null);
     streamingMessageIdRef.current = pendingId;
     try {
@@ -3739,7 +3756,7 @@ export default function Home() {
         )
       );
     } finally {
-      setChatSending(false);
+      setChatSendingState(false);
     }
   };
 
@@ -3760,7 +3777,7 @@ export default function Home() {
           : item
       )
     );
-    setChatSending(false);
+    setChatSendingState(false);
     streamingMessageIdRef.current = null;
   };
 
