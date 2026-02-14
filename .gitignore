@@ -5,3 +5,4 @@ __pycache__/
 .DS_Store
 samples/
 node_modules/
+apps/web/.next/

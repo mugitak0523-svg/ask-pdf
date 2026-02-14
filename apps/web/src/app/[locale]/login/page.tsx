@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 import { Link } from "@/i18n/navigation";
 import { supabase } from "@/lib/supabase";
 
@@ -8,21 +9,32 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const params = useParams();
+  const locale = typeof params?.locale === "string" ? params.locale : null;
+  const router = useRouter();
 
   const handleSignIn = async () => {
     setError(null);
+    setNotice(null);
     setLoading(true);
     const { error: authError } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
-    if (authError) setError(authError.message);
+    if (authError) {
+      setError(authError.message);
+    } else {
+      router.replace(locale ? `/${locale}` : "/");
+      router.refresh();
+    }
     setLoading(false);
   };
 
   const handleGoogle = async () => {
     setError(null);
+    setNotice(null);
     setLoading(true);
     const { error: authError } = await supabase.auth.signInWithOAuth({
       provider: "google",
@@ -31,11 +43,35 @@ export default function LoginPage() {
     setLoading(false);
   };
 
+  const handleResetPassword = async () => {
+    setError(null);
+    setNotice(null);
+    if (!email.trim()) {
+      setError("メールアドレスを入力してください。");
+      return;
+    }
+    setLoading(true);
+    const redirectTo = locale
+      ? `${window.location.origin}/${locale}/reset`
+      : `${window.location.origin}/reset`;
+    const { error: authError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo,
+    });
+    if (authError) {
+      setError(authError.message);
+    } else {
+      setNotice("パスワードリセットのメールを送信しました。メールをご確認ください。");
+    }
+    setLoading(false);
+  };
+
   return (
     <main className="auth-page">
       <div className="auth-card">
         <div className="auth-brand">
-          <span className="logo">◎</span>
+          <span className="logo" aria-hidden="true">
+            <img className="logo__icon" src="/icon.svg" alt="" />
+          </span>
           <span className="brand">AskPDF</span>
         </div>
         <h1>サインイン</h1>
@@ -57,9 +93,13 @@ export default function LoginPage() {
             placeholder="••••••••"
           />
         </label>
+        {notice ? <p className="auth-notice">{notice}</p> : null}
         {error ? <p className="auth-error">{error}</p> : null}
         <button className="primary" type="button" onClick={handleSignIn} disabled={loading}>
           ログイン
+        </button>
+        <button className="ghost" type="button" onClick={handleResetPassword} disabled={loading}>
+          パスワードを忘れた場合
         </button>
         <button className="ghost oauth" type="button" onClick={handleGoogle} disabled={loading}>
           <span className="g-icon" aria-hidden="true">

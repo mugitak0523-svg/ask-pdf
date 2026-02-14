@@ -7,6 +7,7 @@ from fastapi import APIRouter, Request
 
 from app.db import repository
 from app.services.auth import AuthDependency, AuthUser
+from app.services.plans import get_plan_limits, resolve_user_plan
 
 router = APIRouter()
 
@@ -53,4 +54,25 @@ async def get_usage_summary(
                 **all_time,
             }
         ),
+    }
+
+
+@router.get("/usage/messages/daily")
+async def get_daily_message_usage(
+    request: Request,
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    pool = request.app.state.db_pool
+    now = datetime.now(timezone.utc)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    used = await repository.count_user_ok_answers_since(pool, user.user_id, day_start)
+    if user.is_guest:
+        plan = "guest"
+    else:
+        plan = await resolve_user_plan(pool, user.user_id)
+    limits = get_plan_limits(plan)
+    return {
+        "used": used,
+        "limit": limits.max_messages_per_thread,
+        "periodStart": day_start.isoformat(),
     }
