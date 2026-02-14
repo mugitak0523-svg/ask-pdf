@@ -29,6 +29,7 @@ class Settings:
     stripe_webhook_secret: str
     stripe_plus_price_id: str
     app_base_url: str
+    cors_allow_origins: list[str]
     admin_user_ids: list[str]
     max_concurrent_uploads: int
 
@@ -64,6 +65,12 @@ def get_settings() -> Settings:
     stripe_webhook_secret = _require_env("STRIPE_WEBHOOK_SECRET")
     stripe_plus_price_id = _require_env("STRIPE_PLUS_PRICE_ID")
     app_base_url = _require_env("APP_BASE_URL").rstrip("/")
+    cors_allow_origins_raw = os.getenv("CORS_ALLOW_ORIGINS", "")
+    cors_allow_origins = [
+        item.strip().rstrip("/")
+        for item in cors_allow_origins_raw.split(",")
+        if item.strip()
+    ]
     admin_user_ids_raw = os.getenv("ADMIN_USER_IDS", "")
     admin_user_ids = [
         item.strip()
@@ -93,6 +100,7 @@ def get_settings() -> Settings:
         stripe_webhook_secret=stripe_webhook_secret,
         stripe_plus_price_id=stripe_plus_price_id,
         app_base_url=app_base_url,
+        cors_allow_origins=cors_allow_origins,
         admin_user_ids=admin_user_ids,
         max_concurrent_uploads=max_concurrent_uploads,
     )

@@ -11,14 +11,19 @@ from app.services.storage import create_storage_client
 
 
 def create_app() -> FastAPI:
+    settings = get_settings()
     app = FastAPI(title="AskPDF Backend")
+
+    allow_origins = {
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        settings.app_base_url.rstrip("/"),
+    }
+    allow_origins.update(settings.cors_allow_origins)
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-        ],
+        allow_origins=sorted(allow_origins),
         allow_origin_regex=r"^http://(localhost|127\\.0\\.0\\.1):3000$",
         allow_credentials=True,
         allow_methods=["*"],
@@ -27,7 +32,6 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def startup() -> None:
-        settings = get_settings()
         app.state.settings = settings
         app.state.supabase_jwks = None
         try:
