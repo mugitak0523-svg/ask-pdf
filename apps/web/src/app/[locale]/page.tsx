@@ -183,6 +183,7 @@ const normalizeRefs = (value: unknown): ChatRef[] | undefined => {
 
 const REF_TAG_REGEX =
   /[\[\{(【「]?\s*(?:@|at|参照)\s*:\s*(?:chunk|チャンク|ref)\s*-\s*([A-Za-z0-9-]+)\s*[\]\})】」]?/gi;
+const normalizeRefHyphens = (text: string) => text.replace(/[‑–—]/g, "-");
 const normalizeRefTagSpacing = (text: string) =>
   text.replace(REF_TAG_REGEX, (match, id, offset, full) => {
     const next = (full as string).slice(offset + match.length);
@@ -194,6 +195,7 @@ const normalizeRefTagSpacing = (text: string) =>
 
 const replaceRefTags = (text: string, refs?: ChatRef[]) => {
   if (!text) return text;
+  text = normalizeRefHyphens(text);
   text = normalizeRefTagSpacing(text);
   if (!refs || refs.length === 0) {
     return text.replace(REF_TAG_REGEX, "");
@@ -219,6 +221,7 @@ const replaceRefTags = (text: string, refs?: ChatRef[]) => {
 
 const buildRefLinkedText = (text: string, refs?: ChatRef[]) => {
   if (!text) return text;
+  text = normalizeRefHyphens(text);
   text = normalizeRefTagSpacing(text);
   if (!refs || refs.length === 0) {
     return text.replace(REF_TAG_REGEX, "");
