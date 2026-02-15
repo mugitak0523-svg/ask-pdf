@@ -181,8 +181,24 @@ const normalizeRefs = (value: unknown): ChatRef[] | undefined => {
   return undefined;
 };
 
+const SEARCH_SPACE_CHAR_REGEX = /[\s\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000\uFEFF]/u;
 const normalizeSearchText = (value: string) =>
   value.replace(/\u3000/g, " ").replace(/\s+/g, "").trim().toLowerCase();
+
+const buildSearchIndex = (value: string) => {
+  const normalizedChars: string[] = [];
+  const sourceIndexMap: number[] = [];
+  for (let i = 0; i < value.length; i += 1) {
+    const ch = value[i];
+    if (SEARCH_SPACE_CHAR_REGEX.test(ch)) continue;
+    normalizedChars.push(ch.toLowerCase());
+    sourceIndexMap.push(i);
+  }
+  return {
+    normalized: normalizedChars.join(""),
+    sourceIndexMap,
+  };
+};
 
 const REF_TAG_REGEX =
   /[\[\{(【「]?\s*(?:@|at|参照)\s*:\s*(?:chunk|チャンク|ref)\s*-\s*([A-Za-z0-9-]+)\s*[\]\})】」]?/gi;
@@ -1399,14 +1415,18 @@ export default function Home() {
     (chatDrawerHeight ?? chatHeaderHeight) > chatHeaderHeight + 24;
 
   const renderSearchSnippet = (snippet: string, query: string) => {
-    if (!query) return <span>{snippet}</span>;
-    const lowerSnippet = snippet.toLowerCase();
-    const lowerQuery = query.toLowerCase();
-    const idx = lowerSnippet.indexOf(lowerQuery);
+    const needle = normalizeSearchText(query);
+    if (!needle) return <span>{snippet}</span>;
+    const indexed = buildSearchIndex(snippet);
+    const idx = indexed.normalized.indexOf(needle);
     if (idx < 0) return <span>{snippet}</span>;
-    const before = snippet.slice(0, idx);
-    const match = snippet.slice(idx, idx + query.length);
-    const after = snippet.slice(idx + query.length);
+    const start = indexed.sourceIndexMap[idx] ?? 0;
+    const endIndex = idx + needle.length - 1;
+    const end =
+      (indexed.sourceIndexMap[Math.min(endIndex, indexed.sourceIndexMap.length - 1)] ?? start) + 1;
+    const before = snippet.slice(0, start);
+    const match = snippet.slice(start, end);
+    const after = snippet.slice(end);
     return (
       <>
         <span>{before}</span>

@@ -32,6 +32,8 @@ class ChatAnswerRequest(BaseModel):
 
 ChatAnswerRequest.model_rebuild()
 
+_SEARCH_SPACE_PATTERN = re.compile(r"[\s\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000\uFEFF]+")
+
 
 def _build_model(settings, mode: str | None) -> str | None:
     if mode == "fast":
@@ -147,7 +149,18 @@ def _extract_tag_refs(answer: str, ref_map: dict[str, dict[str, Any]]) -> list[d
 
 
 def _normalize_search_query(value: str) -> str:
-    return re.sub(r"[\s\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000\uFEFF]+", "", value).strip()
+    return _SEARCH_SPACE_PATTERN.sub("", value).strip()
+
+
+def _build_normalized_index(value: str) -> tuple[str, list[int]]:
+    chars: list[str] = []
+    positions: list[int] = []
+    for idx, ch in enumerate(value):
+        if _SEARCH_SPACE_PATTERN.fullmatch(ch):
+            continue
+        chars.append(ch.lower())
+        positions.append(idx)
+    return "".join(chars), positions
 
 
 async def _record_usage(
@@ -360,13 +373,20 @@ async def search_documents_text(
     rows = await repository.search_document_chunks(pool, user.user_id, q, limit=limit)
 
     def build_snippet(text: str, needle: str) -> str:
-        lower_text = text.lower()
-        lower_needle = needle.lower()
-        idx = lower_text.find(lower_needle)
+        normalized_text, positions = _build_normalized_index(text)
+        normalized_needle = needle.lower()
+        idx = normalized_text.find(normalized_needle)
         if idx < 0:
             return text[:40].strip()
-        start = max(0, idx - 12)
-        end = min(len(text), idx + len(needle) + 12)
+        start_source = positions[idx] if idx < len(positions) else 0
+        end_source_index = idx + len(normalized_needle) - 1
+        end_source = (
+            positions[min(end_source_index, len(positions) - 1)] + 1
+            if positions
+            else start_source + 1
+        )
+        start = max(0, start_source - 12)
+        end = min(len(text), end_source + 12)
         snippet = text[start:end].strip()
         prefix = "..." if start > 0 else ""
         suffix = "..." if end < len(text) else ""
