@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import Any
 
@@ -8,6 +9,10 @@ import asyncpg
 
 def _vector_literal(values: list[float]) -> str:
     return "[" + ",".join(str(v) for v in values) + "]"
+
+
+def _normalize_whitespace_for_search(value: str) -> str:
+    return re.sub(r"[\s\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000\uFEFF]+", "", value).strip()
 
 
 async def insert_document(
@@ -505,6 +510,9 @@ async def search_document_chunks(
     query: str,
     limit: int = 30,
 ) -> list[dict[str, Any]]:
+    normalized_query = _normalize_whitespace_for_search(query)
+    if not normalized_query:
+        return []
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
@@ -518,7 +526,55 @@ async def search_document_chunks(
                 from document_chunks dc
                 join documents d on d.id = dc.document_id
                 where dc.user_id = $1
-                  and dc.content ilike $2
+                  and replace(
+                        replace(
+                          replace(
+                            replace(
+                              replace(
+                                replace(
+                                  replace(
+                                    replace(
+                                      replace(
+                                        replace(
+                                          replace(
+                                            replace(
+                                              replace(dc.content, '　', ''),
+                                              ' ',
+                                              ''
+                                            ),
+                                            E'\n',
+                                            ''
+                                          ),
+                                          E'\r',
+                                          ''
+                                        ),
+                                        E'\t',
+                                        ''
+                                      ),
+                                      chr(160),
+                                      ''
+                                    ),
+                                    chr(5760),
+                                    ''
+                                  ),
+                                  chr(8192),
+                                  ''
+                                ),
+                                chr(8193),
+                                ''
+                              ),
+                              chr(8194),
+                              ''
+                            ),
+                            chr(8195),
+                            ''
+                          ),
+                          chr(8196),
+                          ''
+                        ),
+                        chr(8197),
+                        ''
+                      ) ilike $2
             )
             select distinct on (document_id)
                 document_id,
@@ -530,7 +586,7 @@ async def search_document_chunks(
             limit $3
             """,
             user_id,
-            f"%{query}%",
+            f"%{normalized_query}%",
             limit,
         )
     return [dict(row) for row in rows]

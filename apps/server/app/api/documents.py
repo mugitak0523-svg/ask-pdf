@@ -146,6 +146,10 @@ def _extract_tag_refs(answer: str, ref_map: dict[str, dict[str, Any]]) -> list[d
     return refs
 
 
+def _normalize_search_query(value: str) -> str:
+    return re.sub(r"[\s\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000\uFEFF]+", "", value).strip()
+
+
 async def _record_usage(
     pool,
     *,
@@ -349,7 +353,7 @@ async def search_documents_text(
     limit: int = 30,
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
-    q = query.strip()
+    q = _normalize_search_query(query)
     if not q:
         return {"items": []}
     pool = request.app.state.db_pool

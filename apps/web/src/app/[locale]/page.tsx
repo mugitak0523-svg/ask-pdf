@@ -181,6 +181,9 @@ const normalizeRefs = (value: unknown): ChatRef[] | undefined => {
   return undefined;
 };
 
+const normalizeSearchText = (value: string) =>
+  value.replace(/\u3000/g, " ").replace(/\s+/g, "").trim().toLowerCase();
+
 const REF_TAG_REGEX =
   /[\[\{(【「]?\s*(?:@|at|参照)\s*:\s*(?:chunk|チャンク|ref)\s*-\s*([A-Za-z0-9-]+)\s*[\]\})】」]?/gi;
 const normalizeRefHyphens = (text: string) => text.replace(/[‑–—]/g, "-");
@@ -1262,9 +1265,9 @@ export default function Home() {
   const SETTINGS_TAB_ID = "__settings__";
   const canUseApi = isAuthed || Boolean(guestToken);
   const filteredDocuments = useMemo(() => {
-    const query = sidebarSearch.trim().toLowerCase();
+    const query = normalizeSearchText(sidebarSearch);
     if (!query) return documents;
-    return documents.filter((doc) => (doc.title || "").toLowerCase().includes(query));
+    return documents.filter((doc) => normalizeSearchText(doc.title || "").includes(query));
   }, [documents, sidebarSearch]);
   const [contentSearchHits, setContentSearchHits] = useState<
     {
@@ -1280,7 +1283,7 @@ export default function Home() {
 
   const searchResults = useMemo<{ doc: DocumentItem; snippet: string | null; extraHits: number }[]>(
     () => {
-    if (!sidebarSearch.trim()) {
+    if (!normalizeSearchText(sidebarSearch)) {
       return documents.map((doc) => ({ doc, snippet: null, extraHits: 0 }));
     }
     if (sidebarSearchMode === "title") {
@@ -1295,7 +1298,7 @@ export default function Home() {
     [sidebarSearch, sidebarSearchMode, documents, filteredDocuments, contentSearchHits, t]
   );
 
-  const sidebarDocumentCount = sidebarSearch.trim()
+  const sidebarDocumentCount = normalizeSearchText(sidebarSearch)
     ? searchResults.length
     : documents.length;
   const openLimitModal = (message?: string | null) => {
@@ -1321,7 +1324,7 @@ export default function Home() {
   }, [canUseApi, planLimits.maxMessagesPerThread]);
 
   useEffect(() => {
-    const query = sidebarSearch.trim();
+    const query = normalizeSearchText(sidebarSearch);
     if (!canUseApi || !query || sidebarSearchMode !== "content") {
       setContentSearchHits([]);
       setContentSearchError(null);
