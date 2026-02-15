@@ -400,6 +400,9 @@ export default function Home() {
     if (y < padding) y = padding;
     return { x, y };
   };
+  const isTouchDevice = () =>
+    typeof window !== "undefined" &&
+    window.matchMedia("(hover: none), (pointer: coarse)").matches;
 
   const showRefTooltip = (
     event: React.MouseEvent<HTMLElement>,
@@ -407,6 +410,7 @@ export default function Home() {
     documentId: string | undefined,
     fallbackTitle: string
   ) => {
+    if (isTouchDevice()) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const { x, y } = computeRefTooltipPosition(rect);
     const preview = getRefPreviewData(refId, documentId);
@@ -432,6 +436,7 @@ export default function Home() {
   };
 
   const moveRefTooltip = (event: React.MouseEvent<HTMLElement>) => {
+    if (isTouchDevice()) return;
     if (!refTooltip.visible) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const { x, y } = computeRefTooltipPosition(rect);
@@ -449,6 +454,7 @@ export default function Home() {
   };
 
   useEffect(() => {
+    if (isTouchDevice()) return;
     const handleGlobalPointer = (event: MouseEvent) => {
       if (!refTooltip.visible) return;
       const target = event.target as HTMLElement | null;
@@ -6223,7 +6229,7 @@ export default function Home() {
                 </div>
               </div>
             )}
-            {tooltipContainer
+            {tooltipContainer && !isMobileLayout
               ? createPortal(
                   <div
                     className="ref-tooltip"
