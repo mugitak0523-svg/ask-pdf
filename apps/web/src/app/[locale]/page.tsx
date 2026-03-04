@@ -2388,20 +2388,13 @@ export default function Home() {
       const auth = await getAuthParams();
       if (!auth) return;
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
-      const response = await fetch(`${baseUrl}/documents/${documentId}/signed-url`, {
+      const response = await fetch(`${baseUrl}/documents/${documentId}/download`, {
         headers: auth.headers,
       });
       if (!response.ok) {
-        throw new Error(`Failed to get signed url (${response.status})`);
+        throw new Error(`Failed to download PDF (${response.status})`);
       }
-      const payload = await response.json();
-      const url = String(payload.signed_url ?? "");
-      if (!url) return;
-      const fileResponse = await fetch(url);
-      if (!fileResponse.ok) {
-        throw new Error(`Failed to download PDF (${fileResponse.status})`);
-      }
-      const blob = await fileResponse.blob();
+      const blob = await response.blob();
       const objectUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = objectUrl;

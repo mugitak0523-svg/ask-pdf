@@ -7,8 +7,9 @@ import asyncio
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Literal
+from urllib.parse import quote
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile, status, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from app.db import repository
@@ -479,7 +480,7 @@ async def get_document_signed_url(
     request: Request,
     document_id: str,
     user: AuthUser = AuthDependency,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     start = time.perf_counter()
     pool = request.app.state.db_pool
     storage_path = await repository.get_document_storage_path(pool, document_id, user.user_id)
@@ -503,6 +504,39 @@ async def get_document_signed_url(
         (time.perf_counter() - start) * 1000,
     )
     return {"signed_url": signed_url, "expires_at": expires_at}
+
+
+@router.get("/documents/{document_id}/download")
+async def download_document_file(
+    request: Request,
+    document_id: str,
+    user: AuthUser = AuthDependency,
+) -> Response:
+    pool = request.app.state.db_pool
+    document = await repository.get_document(pool, document_id, user.user_id)
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    storage_path = document.get("storage_path")
+    if not storage_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    storage_client: StorageClient = request.app.state.storage_client
+    try:
+        file_bytes = storage_client.download_pdf(str(storage_path))
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to fetch file",
+        )
+
+    raw_title = str(document.get("title") or "document.pdf").strip() or "document.pdf"
+    filename = raw_title if raw_title.lower().endswith(".pdf") else f"{raw_title}.pdf"
+    encoded_filename = quote(filename, safe="")
+    content_disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
+    return Response(
+        content=file_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": content_disposition},
+    )
 
 
 @router.get("/documents/{document_id}/bundle")

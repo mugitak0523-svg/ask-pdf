@@ -40,6 +40,14 @@ class StorageClient:
                 return url, expires_at
         return "", 0.0
 
+    def download_pdf(self, storage_path: str) -> bytes:
+        payload = self.client.storage.from_(self.bucket).download(storage_path)
+        if isinstance(payload, bytes):
+            return payload
+        if isinstance(payload, bytearray):
+            return bytes(payload)
+        raise RuntimeError("Unexpected storage download response")
+
 
 def create_storage_client(url: str, service_role_key: str, bucket: str) -> StorageClient:
     base_url = url.rstrip("/") + "/"

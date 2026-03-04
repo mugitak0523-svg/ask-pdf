@@ -1775,24 +1775,38 @@ const renderLoadingText = (text: string) => (
 
   const handleDownload = async () => {
     try {
-      const cacheKey = documentId ?? url;
       let blob: Blob | null = null;
-      const cached = getCachedPdfBuffer(cacheKey);
-      if (cached) {
-        try {
-          blob = new Blob([cloneBuffer(cached)], { type: "application/pdf" });
-        } catch {
-          pdfBufferCache.delete(cacheKey);
+      if (documentId && accessToken) {
+        const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+        const response = await fetch(`${baseUrl}/documents/${documentId}/download`, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
+        if (!response.ok) {
+          throw new Error("download failed");
+        }
+        blob = await response.blob();
+      } else {
+        const cacheKey = documentId ?? url;
+        const cached = getCachedPdfBuffer(cacheKey);
+        if (cached) {
+          try {
+            blob = new Blob([cloneBuffer(cached)], { type: "application/pdf" });
+          } catch {
+            pdfBufferCache.delete(cacheKey);
+          }
+        }
+        if (!blob) {
+          const response = await fetch(url);
+          if (!response.ok) throw new Error("download failed");
+          const fetchedBlob = await response.blob();
+          const buffer = await fetchedBlob.arrayBuffer();
+          setCachedPdfBuffer(cacheKey, buffer);
+          blob = fetchedBlob;
         }
       }
-      if (!blob) {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error("download failed");
-        const fetchedBlob = await response.blob();
-        const buffer = await fetchedBlob.arrayBuffer();
-        setCachedPdfBuffer(cacheKey, buffer);
-        blob = fetchedBlob;
-      }
+      if (!blob) throw new Error("download failed");
       const objectUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = objectUrl;
@@ -1801,11 +1815,7 @@ const renderLoadingText = (text: string) => (
       link.click();
       URL.revokeObjectURL(objectUrl);
     } catch {
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "document.pdf";
-      link.rel = "noopener";
-      link.click();
+      // Keep the failure silent to avoid interrupting reading flow.
     }
   };
 
