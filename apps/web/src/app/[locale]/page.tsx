@@ -104,10 +104,26 @@ type ChunkCache = {
 };
 
 const DEFAULT_PLAN_LIMITS: Record<PlanName, PlanLimits> = {
-  guest: { maxFiles: 1, maxFileMb: 10, maxMessagesPerThread: 5, maxThreadsPerDocument: null },
+  guest: { maxFiles: 1, maxFileMb: 10, maxMessagesPerThread: 8, maxThreadsPerDocument: null },
   free: { maxFiles: 5, maxFileMb: 20, maxMessagesPerThread: 20, maxThreadsPerDocument: null },
   plus: { maxFiles: 50, maxFileMb: 50, maxMessagesPerThread: 120, maxThreadsPerDocument: null },
 };
+
+const normalizePlanLimits = (
+  raw: any,
+  fallback: PlanLimits
+): PlanLimits => ({
+  maxFiles: typeof raw?.maxFiles === "number" ? raw.maxFiles : fallback.maxFiles,
+  maxFileMb: typeof raw?.maxFileMb === "number" ? raw.maxFileMb : fallback.maxFileMb,
+  maxMessagesPerThread:
+    typeof raw?.maxMessagesPerThread === "number"
+      ? raw.maxMessagesPerThread
+      : fallback.maxMessagesPerThread,
+  maxThreadsPerDocument:
+    typeof raw?.maxThreadsPerDocument === "number"
+      ? raw.maxThreadsPerDocument
+      : fallback.maxThreadsPerDocument,
+});
 
 const PLAN_PRICES: Record<Exclude<PlanName, "guest">, string> = {
   free: "¥0",
@@ -889,6 +905,8 @@ export default function Home() {
   const [usageError, setUsageError] = useState<string | null>(null);
   const [theme, setTheme] = useState<ThemeMode>("system");
   const [plan, setPlan] = useState<PlanName>("guest");
+  const [planCatalog, setPlanCatalog] =
+    useState<Record<PlanName, PlanLimits>>(DEFAULT_PLAN_LIMITS);
   const [planLimits, setPlanLimits] = useState<PlanLimits>(DEFAULT_PLAN_LIMITS.guest);
   const [limitModalOpen, setLimitModalOpen] = useState(false);
   const [limitModalMessage, setLimitModalMessage] = useState<string | null>(null);
@@ -1529,7 +1547,7 @@ export default function Home() {
     setUserEmail(null);
     setUserId(null);
     setPlan("guest");
-    setPlanLimits(DEFAULT_PLAN_LIMITS.guest);
+    setPlanLimits(planCatalog.guest);
     setAnnouncements([]);
     setSupportMessages([]);
     setDocuments([]);
@@ -1560,6 +1578,7 @@ export default function Home() {
   };
 
   useEffect(() => {
+    void loadPlanCatalog();
     supabase.auth.getSession().then(({ data }) => {
       setIsAuthed(Boolean(data.session));
       if (data.session) {
@@ -1595,6 +1614,26 @@ export default function Home() {
       subscription.unsubscribe();
     };
   }, []);
+
+  const getFallbackPlanLimits = (targetPlan: PlanName) =>
+    planCatalog[targetPlan] ?? DEFAULT_PLAN_LIMITS[targetPlan];
+
+  const loadPlanCatalog = async () => {
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/plans/limits`);
+      if (!response.ok) return;
+      const payload = await response.json();
+      const plans = payload?.plans ?? {};
+      setPlanCatalog({
+        guest: normalizePlanLimits(plans?.guest, DEFAULT_PLAN_LIMITS.guest),
+        free: normalizePlanLimits(plans?.free, DEFAULT_PLAN_LIMITS.free),
+        plus: normalizePlanLimits(plans?.plus, DEFAULT_PLAN_LIMITS.plus),
+      });
+    } catch {
+      // ignore
+    }
+  };
 
   useEffect(() => {
     resizeChatInput();
@@ -2571,30 +2610,19 @@ export default function Home() {
         throw new Error(`Failed to load plan (${response.status})`);
       }
       const payload = await response.json();
-      const nextPlan: "free" | "plus" =
-        payload?.plan === "free" || payload?.plan === "plus" ? payload.plan : "free";
-      const limits = payload?.limits ?? {};
+      const nextPlan: PlanName =
+        payload?.plan === "guest" || payload?.plan === "free" || payload?.plan === "plus"
+          ? payload.plan
+          : "free";
+      const fallbackLimits = getFallbackPlanLimits(nextPlan);
       setPlan(nextPlan);
-      setSelectedPlan(nextPlan);
-      setPlanLimits({
-        maxFiles:
-          typeof limits.maxFiles === "number" ? limits.maxFiles : DEFAULT_PLAN_LIMITS[nextPlan].maxFiles,
-        maxFileMb:
-          typeof limits.maxFileMb === "number" ? limits.maxFileMb : DEFAULT_PLAN_LIMITS[nextPlan].maxFileMb,
-        maxMessagesPerThread:
-          typeof limits.maxMessagesPerThread === "number"
-            ? limits.maxMessagesPerThread
-            : DEFAULT_PLAN_LIMITS[nextPlan].maxMessagesPerThread,
-        maxThreadsPerDocument:
-          typeof limits.maxThreadsPerDocument === "number"
-            ? limits.maxThreadsPerDocument
-            : DEFAULT_PLAN_LIMITS[nextPlan].maxThreadsPerDocument,
-      });
+      setSelectedPlan(nextPlan === "guest" ? "plus" : nextPlan);
+      setPlanLimits(normalizePlanLimits(payload?.limits ?? {}, fallbackLimits));
       return nextPlan as PlanName;
     } catch {
       const fallback = isAuthed ? "free" : "guest";
       setPlan(fallback);
-      setPlanLimits(DEFAULT_PLAN_LIMITS[fallback]);
+      setPlanLimits(getFallbackPlanLimits(fallback));
       return fallback as PlanName;
     }
   };
@@ -2941,23 +2969,10 @@ export default function Home() {
       const payload = await response.json();
       const planName: "free" | "plus" =
         payload?.plan === "free" || payload?.plan === "plus" ? payload.plan : nextPlan;
-      const limits = payload?.limits ?? {};
+      const fallbackLimits = getFallbackPlanLimits(planName);
       setPlan(planName);
       setSelectedPlan(planName);
-      setPlanLimits({
-        maxFiles:
-          typeof limits.maxFiles === "number" ? limits.maxFiles : DEFAULT_PLAN_LIMITS[planName].maxFiles,
-        maxFileMb:
-          typeof limits.maxFileMb === "number" ? limits.maxFileMb : DEFAULT_PLAN_LIMITS[planName].maxFileMb,
-        maxMessagesPerThread:
-          typeof limits.maxMessagesPerThread === "number"
-            ? limits.maxMessagesPerThread
-            : DEFAULT_PLAN_LIMITS[planName].maxMessagesPerThread,
-        maxThreadsPerDocument:
-          typeof limits.maxThreadsPerDocument === "number"
-            ? limits.maxThreadsPerDocument
-            : DEFAULT_PLAN_LIMITS[planName].maxThreadsPerDocument,
-      });
+      setPlanLimits(normalizePlanLimits(payload?.limits ?? {}, fallbackLimits));
       void loadDailyMessageUsage();
       if (options.closeModal) {
         setLimitModalOpen(false);
@@ -3463,27 +3478,27 @@ export default function Home() {
       key: "files",
       label: t("planTableFiles"),
       values: {
-        guest: String(DEFAULT_PLAN_LIMITS.guest.maxFiles ?? t("common.unlimited")),
-        free: String(DEFAULT_PLAN_LIMITS.free.maxFiles ?? t("common.unlimited")),
-        plus: String(DEFAULT_PLAN_LIMITS.plus.maxFiles ?? t("common.unlimited")),
+        guest: String(planCatalog.guest.maxFiles ?? t("common.unlimited")),
+        free: String(planCatalog.free.maxFiles ?? t("common.unlimited")),
+        plus: String(planCatalog.plus.maxFiles ?? t("common.unlimited")),
       },
     },
     {
       key: "size",
       label: t("planTableFileSize"),
       values: {
-        guest: `${DEFAULT_PLAN_LIMITS.guest.maxFileMb ?? "-"}MB`,
-        free: `${DEFAULT_PLAN_LIMITS.free.maxFileMb ?? "-"}MB`,
-        plus: `${DEFAULT_PLAN_LIMITS.plus.maxFileMb ?? "-"}MB`,
+        guest: `${planCatalog.guest.maxFileMb ?? "-"}MB`,
+        free: `${planCatalog.free.maxFileMb ?? "-"}MB`,
+        plus: `${planCatalog.plus.maxFileMb ?? "-"}MB`,
       },
     },
     {
       key: "chats",
       label: t("planTableChats"),
       values: {
-        guest: String(DEFAULT_PLAN_LIMITS.guest.maxMessagesPerThread ?? t("common.unlimited")),
-        free: String(DEFAULT_PLAN_LIMITS.free.maxMessagesPerThread ?? t("common.unlimited")),
-        plus: String(DEFAULT_PLAN_LIMITS.plus.maxMessagesPerThread ?? t("common.unlimited")),
+        guest: String(planCatalog.guest.maxMessagesPerThread ?? t("common.unlimited")),
+        free: String(planCatalog.free.maxMessagesPerThread ?? t("common.unlimited")),
+        plus: String(planCatalog.plus.maxMessagesPerThread ?? t("common.unlimited")),
       },
     },
   ];

@@ -72,12 +72,12 @@ export default function LoginPage() {
   return (
     <main className="auth-page">
       <div className="auth-card">
-        <div className="auth-brand">
+        <Link className="auth-brand" href="/" aria-label="ホームへ">
           <span className="logo" aria-hidden="true">
             <img className="logo__icon" src="/icon.svg" alt="" />
           </span>
           <span className="brand">AskPDF</span>
-        </div>
+        </Link>
         <h1>サインイン</h1>
         <label className="field">
           <span>Email</span>
