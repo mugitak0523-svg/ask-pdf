@@ -1,4 +1,11 @@
-uvicorn app.main:app --app-dir apps/server --reload
+cp .env.development.example .env.development
+cp apps/web/.env.development.example apps/web/.env.local
+
+# backend (dev)
+APP_ENV=development uvicorn app.main:app --app-dir apps/server --reload
+
+# backend (prod)
+APP_ENV=production uvicorn app.main:app --app-dir apps/server --host 0.0.0.0 --port 8000
 
 # Auth
 # Authorization: Bearer <supabase-jwt>
@@ -10,4 +17,7 @@ source .venv/bin/activate
 pip install -r apps/server/requirements.txt
 
 curl -F "file=@/Users/programs/ask-pdf/samples/sample.pdf" http://127.0.0.1:8000/documents/index
-支払い履歴は全部表示ボタンとダウンロードボタンもつけて
+
+
+APP_ENV=development uvicorn app.main:app --app-dir apps/server --reload
+cd apps/web && npm run dev

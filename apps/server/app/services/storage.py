@@ -45,3 +45,30 @@ def create_storage_client(url: str, service_role_key: str, bucket: str) -> Stora
     base_url = url.rstrip("/") + "/"
     logger.info("supabase_url=%s", base_url)
     return StorageClient(client=create_client(base_url, service_role_key), bucket=bucket)
+
+
+def _chunks(values: list[str], size: int) -> list[list[str]]:
+    return [values[idx : idx + size] for idx in range(0, len(values), size)]
+
+
+def _dedupe_paths(storage_paths: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for path in storage_paths:
+        item = str(path).strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
+def remove_storage_files(storage_client: StorageClient, storage_paths: list[str]) -> None:
+    targets = _dedupe_paths(storage_paths)
+    if not targets:
+        return
+    for batch in _chunks(targets, 100):
+        try:
+            storage_client.client.storage.from_(storage_client.bucket).remove(batch)
+        except Exception:
+            logger.exception("storage remove failed for %d files", len(batch))

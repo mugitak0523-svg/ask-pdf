@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 
-from app.api import admin, billing, documents, messages, plans, search, usage
+from app.api import account, admin, billing, documents, messages, plans, search, usage
 from app.config import get_settings
 from app.db.pool import close_pool, create_pool
 from app.services.indexer import Indexer
@@ -24,7 +24,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=sorted(allow_origins),
-        allow_origin_regex=r"^http://(localhost|127\\.0\\.0\\.1):3000$",
+        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -72,6 +72,7 @@ def create_app() -> FastAPI:
     app.include_router(usage.router)
     app.include_router(plans.router)
     app.include_router(billing.router)
+    app.include_router(account.router)
     app.include_router(messages.router)
     app.include_router(admin.router)
 

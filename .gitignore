@@ -1,4 +1,6 @@
 .env
+.env.development
+.env.production
 .venv
 __pycache__/
 *.pyc
@@ -6,3 +8,6 @@ __pycache__/
 samples/
 node_modules/
 apps/web/.next/
+apps/web/.env.local
+apps/web/.env.development.local
+apps/web/.env.production.local

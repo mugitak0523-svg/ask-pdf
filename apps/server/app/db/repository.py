@@ -1301,6 +1301,57 @@ async def get_user_plan_conn(
     return str(row["plan"]) if row and row.get("plan") else None
 
 
+async def list_user_document_storage_paths(
+    pool: asyncpg.Pool,
+    user_id: str,
+) -> list[str]:
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            select storage_path
+            from documents
+            where user_id = $1
+              and storage_path is not null
+            """,
+            user_id,
+        )
+    paths: list[str] = []
+    for row in rows:
+        value = row.get("storage_path")
+        if value:
+            paths.append(str(value))
+    return paths
+
+
+async def delete_user_account_data(
+    pool: asyncpg.Pool,
+    user_id: str,
+) -> None:
+    statements = [
+        "delete from usage_logs where user_id = $1",
+        "delete from admin_user_messages where user_id = $1",
+        "delete from user_feedback where user_id = $1",
+        "delete from global_chat_messages where user_id = $1",
+        "delete from global_chat_threads where user_id = $1",
+        "delete from document_chat_messages where user_id = $1",
+        "delete from document_chat_threads where user_id = $1",
+        "delete from document_chats where user_id = $1",
+        "delete from document_annotations where user_id = $1",
+        "delete from document_chunks where user_id = $1",
+        "delete from documents where user_id = $1",
+        "delete from user_plans where user_id = $1",
+    ]
+    async with pool.acquire() as conn:
+        for statement in statements:
+            try:
+                # Isolate each delete in its own transaction so one missing table
+                # does not abort all subsequent statements.
+                async with conn.transaction():
+                    await conn.execute(statement, user_id)
+            except asyncpg.UndefinedTableError:
+                continue
+
+
 async def get_user_billing(
     pool: asyncpg.Pool,
     user_id: str,

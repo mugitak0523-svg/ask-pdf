@@ -8,19 +8,53 @@ export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
 
   const handleSignUp = async () => {
     setError(null);
+    setNotice(null);
     setLoading(true);
     const emailRedirectTo = `${window.location.origin}/`;
-    const { error: authError } = await supabase.auth.signUp({
+    const { data, error: authError } = await supabase.auth.signUp({
       email,
       password,
       options: { emailRedirectTo },
     });
-    if (authError) setError(authError.message);
+    if (authError) {
+      setError(authError.message);
+    } else if (data.session) {
+      setNotice("登録が完了しました。すぐにログインできます。");
+    } else if ((data.user?.identities?.length ?? 0) === 0) {
+      setError("このメールアドレスのアカウントは既に存在します。ログインしてください。");
+    } else {
+      setNotice("確認メールを送信しました。メールを確認して認証してください。");
+    }
     setLoading(false);
+  };
+
+  const handleResendConfirmation = async () => {
+    const targetEmail = email.trim();
+    if (!targetEmail) {
+      setError("メールアドレスを入力してください。");
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    setResending(true);
+    const emailRedirectTo = `${window.location.origin}/`;
+    const { error: resendError } = await supabase.auth.resend({
+      type: "signup",
+      email: targetEmail,
+      options: { emailRedirectTo },
+    });
+    if (resendError) {
+      setError(resendError.message);
+    } else {
+      setNotice("確認メールを再送しました。迷惑メールフォルダも確認してください。");
+    }
+    setResending(false);
   };
 
   const handleGoogle = async () => {
@@ -63,9 +97,18 @@ export default function SignupPage() {
             placeholder="••••••••"
           />
         </label>
+        {notice ? <p className="auth-notice">{notice}</p> : null}
         {error ? <p className="auth-error">{error}</p> : null}
         <button className="primary" type="button" onClick={handleSignUp} disabled={loading}>
           サインアップ
+        </button>
+        <button
+          className="ghost"
+          type="button"
+          onClick={handleResendConfirmation}
+          disabled={loading || resending}
+        >
+          {resending ? "再送中..." : "確認メールを再送"}
         </button>
         <button className="ghost oauth" type="button" onClick={handleGoogle} disabled={loading}>
           <span className="g-icon" aria-hidden="true">

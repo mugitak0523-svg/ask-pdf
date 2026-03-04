@@ -169,16 +169,47 @@ const getAuthParams = async (): Promise<AuthParams | null> => {
 };
 
 const normalizeRefs = (value: unknown): ChatRef[] | undefined => {
-  if (Array.isArray(value)) return value as ChatRef[];
-  if (typeof value === "string") {
+  let source: unknown = value;
+  if (typeof source === "string") {
     try {
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed) ? (parsed as ChatRef[]) : undefined;
+      source = JSON.parse(source);
     } catch {
       return undefined;
     }
   }
-  return undefined;
+  if (source && typeof source === "object" && !Array.isArray(source)) {
+    const nested = (source as Record<string, unknown>).refs;
+    if (Array.isArray(nested)) source = nested;
+  }
+  if (!Array.isArray(source)) return undefined;
+
+  const refs: ChatRef[] = [];
+  for (const item of source) {
+    if (!item || typeof item !== "object") continue;
+    const raw = item as Record<string, unknown>;
+    const id = raw.id;
+    const label = raw.label;
+    if (typeof id !== "string" || !id.trim()) continue;
+    if (typeof label !== "string" || !label.trim()) continue;
+    const aboveThreshold =
+      typeof raw.aboveThreshold === "boolean"
+        ? raw.aboveThreshold
+        : typeof raw.above_threshold === "boolean"
+          ? raw.above_threshold
+          : undefined;
+    refs.push({
+      id: id.trim(),
+      label: label.trim(),
+      documentId:
+        typeof raw.documentId === "string"
+          ? raw.documentId
+          : typeof raw.document_id === "string"
+            ? raw.document_id
+            : undefined,
+      aboveThreshold,
+    });
+  }
+  return refs.length > 0 ? refs : undefined;
 };
 
 const SEARCH_SPACE_CHAR_REGEX = /[\s\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000\uFEFF]/u;
@@ -322,7 +353,8 @@ export default function Home() {
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const [chatWidth, setChatWidth] = useState(360);
   const [chatInput, setChatInput] = useState("");
-  const [chatMode, setChatMode] = useState<"fast" | "standard" | "think">("standard");
+  const [chatMode, setChatMode] = useState<"fast" | "standard">("standard");
+  const [accountDeleting, setAccountDeleting] = useState(false);
   const [chatOpen, setChatOpen] = useState(true);
   const [sidebarListCollapsed, setSidebarListCollapsed] = useState(false);
   const [sidebarSettingsCollapsed, setSidebarSettingsCollapsed] = useState(true);
@@ -702,7 +734,7 @@ export default function Home() {
       if (parsed.theme === "system" || parsed.theme === "light" || parsed.theme === "dark") {
         setTheme(parsed.theme);
       }
-      if (parsed.chatMode === "fast" || parsed.chatMode === "standard" || parsed.chatMode === "think") {
+      if (parsed.chatMode === "fast" || parsed.chatMode === "standard") {
         setChatMode(parsed.chatMode);
       }
       if (Number.isFinite(parsed.chatWidth)) {
@@ -3251,6 +3283,36 @@ export default function Home() {
     await supabase.auth.signOut();
   };
 
+  const handleDeleteAccount = async () => {
+    if (!isAuthed || accountDeleting) return;
+    const confirmed = window.confirm(
+      t("accountDeleteConfirm")
+    );
+    if (!confirmed) return;
+    setAccountDeleting(true);
+    setChatError(null);
+    try {
+      const auth = await getAuthParams();
+      if (!auth || auth.tokenType !== "supabase") {
+        throw new Error("Not authenticated");
+      }
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/account/me`, {
+        method: "DELETE",
+        headers: auth.headers,
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to delete account (${response.status})`);
+      }
+      await supabase.auth.signOut();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to delete account";
+      setChatError(message);
+    } finally {
+      setAccountDeleting(false);
+    }
+  };
+
   const handleRefClick = async (refId: string, options: { documentId?: string } = {}) => {
     const targetDocumentId = options.documentId ?? selectedDocumentId;
     if (!targetDocumentId) return;
@@ -4162,6 +4224,20 @@ export default function Home() {
                 onClick={handleSignOut}
               >
                 {t("signOut")}
+              </button>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">{t("accountDelete")}</div>
+                <div className="settings__item-desc">{t("accountDeleteDesc")}</div>
+              </div>
+              <button
+                type="button"
+                className="settings__btn settings__btn--danger"
+                onClick={() => void handleDeleteAccount()}
+                disabled={!isAuthed || accountDeleting}
+              >
+                {accountDeleting ? t("common.loading") : t("accountDelete")}
               </button>
             </div>
           </div>
@@ -7033,6 +7109,9 @@ export default function Home() {
                       : replaceRefTags(msg.text, msg.refs);
                   const refLabelLookup = buildRefLabelLookup(msg.refs);
                   const refIdLookup = buildRefIdLookup(msg.refs);
+                  const visibleRefs = Array.isArray(msg.refs)
+                    ? msg.refs.filter(isRefVisible)
+                    : [];
                   return (
                   <div key={msg.id} className={`bubble-wrap bubble-wrap--${msg.role}`}>
                     <div className={`bubble bubble--${msg.role}`}>
@@ -7240,11 +7319,11 @@ export default function Home() {
                     ) : (
                       <p className="bubble__content">{displayText}</p>
                     )}
-                    {msg.refs && msg.refs.some(isRefVisible) ? (
+                    {visibleRefs.length > 0 ? (
                       <div className="refs">
                         <div className="refs__title">REFERENCES</div>
                         <div className="refs__list">
-                          {msg.refs.filter(isRefVisible).map((ref) => (
+                          {visibleRefs.map((ref) => (
                             <button
                               type="button"
                               key={ref.id}
@@ -7397,14 +7476,6 @@ export default function Home() {
                       disabled={!isChatReady}
                     >
                       {t("model.standard")}
-                    </button>
-                    <button
-                      type="button"
-                      className={`model-option ${chatMode === "think" ? "is-active" : ""}`}
-                      onClick={() => setChatMode("think")}
-                      disabled={!isChatReady}
-                    >
-                      {t("model.think")}
                     </button>
                   </div>
                   {(() => {

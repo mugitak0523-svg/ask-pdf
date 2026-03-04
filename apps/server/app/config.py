@@ -1,10 +1,33 @@
 from dataclasses import dataclass
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 
-load_dotenv()
+def _select_server_env_file() -> Path | None:
+    root = Path(__file__).resolve().parents[3]
+    app_env = (
+        os.getenv("APP_ENV", "")
+        or os.getenv("PY_ENV", "")
+        or os.getenv("ENV", "")
+        or os.getenv("NODE_ENV", "")
+    ).strip().lower()
+    if app_env in {"prod", "production"}:
+        target = root / ".env.production"
+        if target.exists():
+            return target
+    else:
+        target = root / ".env.development"
+        if target.exists():
+            return target
+    fallback = root / ".env"
+    return fallback if fallback.exists() else None
+
+
+_env_file = _select_server_env_file()
+if _env_file is not None:
+    load_dotenv(dotenv_path=_env_file, override=False)
 
 
 @dataclass(frozen=True)
