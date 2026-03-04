@@ -3,8 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "legal:generate": "node ./scripts/generate-legal-content.mjs",
+    "dev": "npm run legal:generate && next dev",
+    "build": "npm run legal:generate && next build",
     "start": "next start",
     "lint": "next lint"
   },

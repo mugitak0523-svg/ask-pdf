@@ -234,11 +234,44 @@ async def create_checkout(
         subscription = await _retrieve_subscription(config["secret_key"], subscription_id)
         status_value = subscription.get("status")
         if status_value not in {"canceled", "incomplete_expired"}:
-            await _update_subscription_price(
+            updated_subscription = await _update_subscription_price(
                 secret_key=config["secret_key"],
                 subscription_id=subscription_id,
                 price_id=price_id,
                 plan=plan,
+            )
+            updated_items = updated_subscription.get("items", {}).get("data", []) or []
+            updated_price_id = (
+                updated_items[0].get("price", {}).get("id")
+                if updated_items
+                else None
+            )
+            updated_plan = (
+                _plan_from_price(updated_price_id, config["price_plus"])
+                or _plan_from_metadata(updated_subscription.get("metadata"))
+                or plan
+            )
+            period_end = updated_subscription.get("current_period_end")
+            period_end_dt = (
+                datetime.fromtimestamp(period_end, tz=timezone.utc)
+                if isinstance(period_end, (int, float))
+                else None
+            )
+            await repository.upsert_user_billing(
+                pool,
+                user.user_id,
+                plan=updated_plan,
+                stripe_customer_id=(
+                    updated_subscription.get("customer")
+                    or customer_id
+                ),
+                stripe_subscription_id=(
+                    updated_subscription.get("id")
+                    or subscription_id
+                ),
+                stripe_price_id=updated_price_id,
+                stripe_status=updated_subscription.get("status"),
+                current_period_end=period_end_dt,
             )
             return {"status": "ok"}
         subscription_id = None
@@ -343,25 +376,44 @@ async def get_billing_summary(
                 if subscription_fallback and subscription_fallback.get("id") == subscription_id
                 else await _retrieve_subscription(config["secret_key"], subscription_id)
             )
+            sub_items = subscription.get("items", {}).get("data", []) or []
+            sub_price_id = (
+                sub_items[0].get("price", {}).get("id")
+                if sub_items
+                else None
+            )
+            derived_plan = (
+                _plan_from_price(sub_price_id, config["price_plus"])
+                or _plan_from_metadata(subscription.get("metadata"))
+                or plan_value
+            )
+            if derived_plan == "pro":
+                derived_plan = "plus"
+            if derived_plan:
+                plan_value = derived_plan
             period_end = subscription.get("current_period_end")
             if not period_end:
                 items = subscription.get("items", {}).get("data", [])
                 if items:
                     period_end = items[0].get("current_period_end")
-            if not current_period_end and isinstance(period_end, (int, float)):
-                current_period_end = datetime.fromtimestamp(period_end, tz=timezone.utc)
-                await repository.upsert_user_billing(
-                    request.app.state.db_pool,
-                    user.user_id,
-                    current_period_end=current_period_end,
-                )
+            period_end_dt = (
+                datetime.fromtimestamp(period_end, tz=timezone.utc)
+                if isinstance(period_end, (int, float))
+                else current_period_end
+            )
+            current_period_end = period_end_dt
             cancel_at_period_end = subscription.get("cancel_at_period_end")
-            if subscription_id and billing and billing.get("stripe_subscription_id") != subscription_id:
-                await repository.upsert_user_billing(
-                    request.app.state.db_pool,
-                    user.user_id,
-                    stripe_subscription_id=subscription_id,
-                )
+            if cancel_at_period_end:
+                upcoming = None
+            await repository.upsert_user_billing(
+                request.app.state.db_pool,
+                user.user_id,
+                plan=plan_value,
+                stripe_subscription_id=subscription_id,
+                stripe_price_id=sub_price_id,
+                stripe_status=subscription.get("status"),
+                current_period_end=period_end_dt,
+            )
         except Exception:
             current_period_end = None
             cancel_at_period_end = None

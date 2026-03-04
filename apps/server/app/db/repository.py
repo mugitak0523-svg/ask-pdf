@@ -1352,6 +1352,22 @@ async def delete_user_account_data(
                 continue
 
 
+async def insert_account_deletion_log(
+    pool: asyncpg.Pool,
+    user_id: str,
+    reason: str,
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            insert into account_deletion_logs (user_id, reason)
+            values ($1::uuid, $2)
+            """,
+            user_id,
+            reason,
+        )
+
+
 async def get_user_billing(
     pool: asyncpg.Pool,
     user_id: str,

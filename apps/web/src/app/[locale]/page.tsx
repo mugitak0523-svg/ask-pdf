@@ -111,7 +111,7 @@ const DEFAULT_PLAN_LIMITS: Record<PlanName, PlanLimits> = {
 
 const PLAN_PRICES: Record<Exclude<PlanName, "guest">, string> = {
   free: "¥0",
-  plus: "¥1,280",
+  plus: "¥1,980",
 };
 
 const STORAGE_KEY = "askpdf.ui.v1";
@@ -355,6 +355,9 @@ export default function Home() {
   const [chatInput, setChatInput] = useState("");
   const [chatMode, setChatMode] = useState<"fast" | "standard">("standard");
   const [accountDeleting, setAccountDeleting] = useState(false);
+  const [deleteAccountModalOpen, setDeleteAccountModalOpen] = useState(false);
+  const [deleteAccountReason, setDeleteAccountReason] = useState("");
+  const [deleteAccountReasonError, setDeleteAccountReasonError] = useState<string | null>(null);
   const [chatOpen, setChatOpen] = useState(true);
   const [sidebarListCollapsed, setSidebarListCollapsed] = useState(false);
   const [sidebarSettingsCollapsed, setSidebarSettingsCollapsed] = useState(true);
@@ -2769,9 +2772,15 @@ export default function Home() {
       }
       const payload = await response.json();
       if (payload?.url) {
-        openShareUrl(payload.url);
+        if (typeof window !== "undefined") {
+          window.location.assign(String(payload.url));
+        }
+      } else if (payload?.status === "ok") {
+        setCheckoutNotice({ type: "success", message: t("billingPlanUpdated") });
+        void loadPlan();
+        void loadBillingSummary();
       } else {
-        setCheckoutNotice({ type: "success", message: t("billingCheckoutSuccess") });
+        throw new Error("Missing checkout URL");
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Checkout failed";
@@ -2871,6 +2880,8 @@ export default function Home() {
 
   const isCancelScheduled =
     plan === "plus" && Boolean(billingSummary?.cancelAtPeriodEnd);
+  const isLimitModalFromLimit = Boolean(limitModalMessage);
+  const limitModalTitle = isLimitModalFromLimit ? t("planUpgradeTitle") : t("planUpgrade");
   const planCtaLabel =
     plan === selectedPlan
       ? t("planCurrent")
@@ -2881,6 +2892,10 @@ export default function Home() {
           : t("planUpgrade");
 
   const handlePlanCta = async () => {
+    if (!isAuthed) {
+      router.push("/login");
+      return;
+    }
     if (billingBusy) return;
     const targetPlan = selectedPlan;
     try {
@@ -3283,12 +3298,21 @@ export default function Home() {
     await supabase.auth.signOut();
   };
 
+  const openDeleteAccountModal = () => {
+    if (!isAuthed || accountDeleting) return;
+    setDeleteAccountReason("");
+    setDeleteAccountReasonError(null);
+    setDeleteAccountModalOpen(true);
+  };
+
   const handleDeleteAccount = async () => {
     if (!isAuthed || accountDeleting) return;
-    const confirmed = window.confirm(
-      t("accountDeleteConfirm")
-    );
-    if (!confirmed) return;
+    const reason = deleteAccountReason.trim();
+    if (!reason) {
+      setDeleteAccountReasonError(t("accountDeleteReasonRequired"));
+      return;
+    }
+    setDeleteAccountReasonError(null);
     setAccountDeleting(true);
     setChatError(null);
     try {
@@ -3299,11 +3323,16 @@ export default function Home() {
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
       const response = await fetch(`${baseUrl}/account/me`, {
         method: "DELETE",
-        headers: auth.headers,
+        headers: {
+          ...auth.headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ reason }),
       });
       if (!response.ok) {
         throw new Error(`Failed to delete account (${response.status})`);
       }
+      setDeleteAccountModalOpen(false);
       await supabase.auth.signOut();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to delete account";
@@ -3973,7 +4002,7 @@ export default function Home() {
                   <div className="settings__subsection-desc">{t("usernameDesc")}</div>
                 </div>
                 <div className="settings__subsection-content">
-                  <div className="settings__value">{userId ?? "-"}</div>
+                  <div className="settings__value settings__value--right">{userId ?? "-"}</div>
                 </div>
               </div>
             </div>
@@ -3984,7 +4013,7 @@ export default function Home() {
                   <div className="settings__subsection-desc">{t("planDesc")}</div>
                 </div>
                 <div className="settings__subsection-content">
-                  <div className="settings__value">
+                  <div className="settings__value settings__value--right">
                     <div>{planLabel}</div>
                     {billingSummary?.nextPlan ? (
                       <div className="settings__subvalue">
@@ -4095,24 +4124,12 @@ export default function Home() {
                   <div className="settings__subsection-title">{t("billingNextPayment")}</div>
                   <div className="settings__subsection-desc">{t("billingNextPaymentDesc")}</div>
                 </div>
-                <div className="settings__subsection-content">
+                <div className="settings__subsection-content settings__subsection-content--right">
                   <div className="billing-summary">
                     {billingLoading ? (
                       <div className="settings__value">{t("common.loading")}</div>
                     ) : billingFetchError ? (
                       <div className="settings__value">{t("common.fetchFailed")}</div>
-                    ) : billingSummary?.upcomingInvoice ? (
-                      <div className="billing-summary__row">
-                        <div className="billing-summary__amount">
-                          {formatCurrency(
-                            billingSummary.upcomingInvoice.amountDue,
-                            billingSummary.upcomingInvoice.currency
-                          )}
-                        </div>
-                        <div className="billing-summary__date">
-                          {formatDate(billingSummary.upcomingInvoice.nextPaymentAt)}
-                        </div>
-                      </div>
                     ) : billingSummary?.plan === "free" ||
                       billingSummary?.cancelAtPeriodEnd ? (
                       <div className="billing-summary__row">
@@ -4126,6 +4143,18 @@ export default function Home() {
                         </div>
                         <div className="billing-summary__date">
                           {formatDate(billingSummary.currentPeriodEnd)}
+                        </div>
+                      </div>
+                    ) : billingSummary?.upcomingInvoice ? (
+                      <div className="billing-summary__row">
+                        <div className="billing-summary__amount">
+                          {formatCurrency(
+                            billingSummary.upcomingInvoice.amountDue,
+                            billingSummary.upcomingInvoice.currency
+                          )}
+                        </div>
+                        <div className="billing-summary__date">
+                          {formatDate(billingSummary.upcomingInvoice.nextPaymentAt)}
                         </div>
                       </div>
                     ) : billingSummary?.currentPeriodEnd ? (
@@ -4147,7 +4176,7 @@ export default function Home() {
                   <div className="settings__subsection-title">{t("billingHistory")}</div>
                   <div className="settings__subsection-desc">{t("billingHistoryDesc")}</div>
                 </div>
-                <div className="settings__subsection-content">
+                <div className="settings__subsection-content settings__subsection-content--right">
                   <div className="billing-history">
                     {billingLoading ? (
                       <div className="settings__value">{t("common.loading")}</div>
@@ -4234,7 +4263,7 @@ export default function Home() {
               <button
                 type="button"
                 className="settings__btn settings__btn--danger"
-                onClick={() => void handleDeleteAccount()}
+                onClick={openDeleteAccountModal}
                 disabled={!isAuthed || accountDeleting}
               >
                 {accountDeleting ? t("common.loading") : t("accountDelete")}
@@ -4409,28 +4438,38 @@ export default function Home() {
                   </div>
             <div className="settings__item settings__item--stack">
               <div>
-                <div className="settings__item-title">{t("servicePolicyTitle")}</div>
-                <div className="settings__item-desc">{t("servicePolicyDesc")}</div>
+                <div className="settings__item-title">{t("servicePolicyTermsTitle")}</div>
               </div>
               <div className="settings__value settings__stack">
                 <div className="settings__stack-item">
-                  <div className="settings__stack-title">{t("servicePolicyTermsTitle")}</div>
                   <div className="settings__stack-desc">
                     <ReactMarkdown className="markdown" remarkPlugins={[remarkGfm]}>
                       {termsMd}
                     </ReactMarkdown>
                   </div>
                 </div>
+              </div>
+            </div>
+            <div className="settings__item settings__item--stack">
+              <div>
+                <div className="settings__item-title">{t("servicePolicyPrivacyTitle")}</div>
+              </div>
+              <div className="settings__value settings__stack">
                 <div className="settings__stack-item">
-                  <div className="settings__stack-title">{t("servicePolicyPrivacyTitle")}</div>
                   <div className="settings__stack-desc">
                     <ReactMarkdown className="markdown" remarkPlugins={[remarkGfm]}>
                       {privacyMd}
                     </ReactMarkdown>
                   </div>
                 </div>
+              </div>
+            </div>
+            <div className="settings__item settings__item--stack">
+              <div>
+                <div className="settings__item-title">{t("servicePolicyTokushoTitle")}</div>
+              </div>
+              <div className="settings__value settings__stack">
                 <div className="settings__stack-item">
-                  <div className="settings__stack-title">{t("servicePolicyTokushoTitle")}</div>
                   <div className="settings__stack-desc">
                     <ReactMarkdown className="markdown" remarkPlugins={[remarkGfm]}>
                       {tokushoMd}
@@ -4999,7 +5038,7 @@ export default function Home() {
               type="button"
               className="history-item"
               onClick={() => openSettingsSection("messages")}
-              aria-label={t("notifications")}
+              aria-label={t("messages.title")}
             >
               <svg
                 className="btn-icon"
@@ -5017,7 +5056,7 @@ export default function Home() {
                 <path d="M10 5a2 2 0 1 1 4 0a7 7 0 0 1 4 6v3a4 4 0 0 0 2 3h-16a4 4 0 0 0 2 -3v-3a7 7 0 0 1 4 -6" />
                 <path d="M9 17v1a3 3 0 0 0 6 0v-1" />
               </svg>
-              <span className="label">{t("notifications")}</span>
+              <span className="label">{t("messages.title")}</span>
             </button>
             <button
               type="button"
@@ -5716,14 +5755,16 @@ export default function Home() {
                 onClick={(event) => event.stopPropagation()}
               >
                 <div className="limit-modal__art">
-                  <div className="limit-modal__art-badge">{t("common.limitTitle")}</div>
+                  <div className="limit-modal__art-badge">
+                    {isLimitModalFromLimit ? t("common.limitTitle") : limitModalTitle}
+                  </div>
                   <div className="limit-modal__art-figure" />
                   <div className="limit-modal__art-cloud limit-modal__art-cloud--one" />
                   <div className="limit-modal__art-cloud limit-modal__art-cloud--two" />
                 </div>
                 <div className="limit-modal__content">
                   <div className="limit-modal__header">
-                    <div className="limit-modal__title">{t("planUpgradeTitle")}</div>
+                    <div className="limit-modal__title">{limitModalTitle}</div>
                     <button
                       type="button"
                       className="limit-modal__close"
@@ -5734,7 +5775,9 @@ export default function Home() {
                     </button>
                   </div>
                   <div className="limit-modal__body">
-                    <p className="limit-modal__desc">{t("common.limitDesc")}</p>
+                    <p className="limit-modal__desc">
+                      {isLimitModalFromLimit ? t("common.limitDesc") : t("planModalDesc")}
+                    </p>
                     {limitModalMessage ? (
                       <div className="limit-modal__note">{limitModalMessage}</div>
                     ) : null}
@@ -5904,6 +5947,80 @@ export default function Home() {
                     onClick={() => setUploadLimitModalOpen(false)}
                   >
                     OK
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+
+      {deleteAccountModalOpen
+        ? createPortal(
+            <div
+              className="account-delete-modal__overlay"
+              role="dialog"
+              aria-modal="true"
+              onClick={() => {
+                if (accountDeleting) return;
+                setDeleteAccountModalOpen(false);
+              }}
+            >
+              <div
+                className="account-delete-modal"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="account-delete-modal__header">
+                  <div className="account-delete-modal__title">{t("accountDelete")}</div>
+                  <button
+                    type="button"
+                    className="account-delete-modal__close"
+                    onClick={() => {
+                      if (accountDeleting) return;
+                      setDeleteAccountModalOpen(false);
+                    }}
+                    aria-label={t("aria.close")}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="account-delete-modal__body">
+                  <p className="account-delete-modal__message">{t("accountDeleteConfirm")}</p>
+                  <label className="account-delete-modal__label" htmlFor="account-delete-reason">
+                    {t("accountDeleteReasonPrompt")}
+                  </label>
+                  <textarea
+                    id="account-delete-reason"
+                    className="account-delete-modal__textarea"
+                    value={deleteAccountReason}
+                    onChange={(event) => {
+                      setDeleteAccountReason(event.target.value);
+                      if (deleteAccountReasonError) setDeleteAccountReasonError(null);
+                    }}
+                    rows={4}
+                    maxLength={1000}
+                    placeholder={t("accountDeleteReasonPrompt")}
+                  />
+                  {deleteAccountReasonError ? (
+                    <div className="account-delete-modal__error">{deleteAccountReasonError}</div>
+                  ) : null}
+                </div>
+                <div className="account-delete-modal__actions">
+                  <button
+                    type="button"
+                    className="account-delete-modal__btn account-delete-modal__btn--ghost"
+                    onClick={() => setDeleteAccountModalOpen(false)}
+                    disabled={accountDeleting}
+                  >
+                    {t("accountDeleteCancel")}
+                  </button>
+                  <button
+                    type="button"
+                    className="account-delete-modal__btn account-delete-modal__btn--danger"
+                    onClick={() => void handleDeleteAccount()}
+                    disabled={accountDeleting}
+                  >
+                    {accountDeleting ? t("common.loading") : t("accountDeleteSubmit")}
                   </button>
                 </div>
               </div>
@@ -6227,7 +6344,7 @@ export default function Home() {
               <div className="settings">
                 <aside className="settings__nav">
                   <div className="settings__profile">
-                    <div className="settings__avatar">
+                    <div className={`settings__avatar settings__avatar--${plan}`}>
                       {(userEmail?.[0] ?? "U").toUpperCase()}
                     </div>
                     <div>

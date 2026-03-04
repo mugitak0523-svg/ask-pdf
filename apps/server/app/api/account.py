@@ -4,6 +4,7 @@ import logging
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, status
+from pydantic import BaseModel
 
 from app.db import repository
 from app.services.auth import AuthDependency, AuthUser
@@ -11,6 +12,10 @@ from app.services.storage import remove_storage_files
 
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
+
+
+class DeleteAccountRequest(BaseModel):
+    reason: str
 
 
 async def _delete_supabase_user(request: Request, user_id: str) -> None:
@@ -39,6 +44,7 @@ async def _delete_supabase_user(request: Request, user_id: str) -> None:
 @router.delete("/account/me")
 async def delete_my_account(
     request: Request,
+    payload: DeleteAccountRequest,
     user: AuthUser = AuthDependency,
 ) -> dict[str, str]:
     if user.is_guest:
@@ -48,7 +54,19 @@ async def delete_my_account(
         )
     pool = request.app.state.db_pool
     storage_client = request.app.state.storage_client
+    reason = payload.reason.strip()
+    if not reason:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Deletion reason is required",
+        )
+    if len(reason) > 1000:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Deletion reason is too long",
+        )
     storage_paths = await repository.list_user_document_storage_paths(pool, user.user_id)
+    await repository.insert_account_deletion_log(pool, user.user_id, reason)
     await repository.delete_user_account_data(pool, user.user_id)
     remove_storage_files(storage_client, storage_paths)
     await _delete_supabase_user(request, user.user_id)

@@ -11,3 +11,5 @@ apps/web/.next/
 apps/web/.env.local
 apps/web/.env.development.local
 apps/web/.env.production.local
+docs/specs/*
+!docs/specs/.gitignore
