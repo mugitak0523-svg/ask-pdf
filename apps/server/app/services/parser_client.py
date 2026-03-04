@@ -99,9 +99,21 @@ class ParserClient:
             payload["model"] = model
         headers = {"X-API-Key": self._client.headers.get("X-API-Key", "")}
         try:
-            websocket_ctx = websockets.connect(url, additional_headers=headers)
+            websocket_ctx = websockets.connect(
+                url,
+                additional_headers=headers,
+                ping_interval=30,
+                ping_timeout=120,
+                close_timeout=10,
+            )
         except TypeError:
-            websocket_ctx = websockets.connect(url, extra_headers=headers)
+            websocket_ctx = websockets.connect(
+                url,
+                extra_headers=headers,
+                ping_interval=30,
+                ping_timeout=120,
+                close_timeout=10,
+            )
         async with websocket_ctx as websocket:
             await websocket.send(json.dumps(payload))
             async for message in websocket:

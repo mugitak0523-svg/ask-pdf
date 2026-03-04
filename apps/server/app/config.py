@@ -5,24 +5,37 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 
+def _candidate_env_roots() -> list[Path]:
+    current = Path(__file__).resolve()
+    candidates: list[Path] = [Path.cwd(), current.parent]
+    candidates.extend(current.parents)
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        unique.append(path)
+    return unique
+
+
 def _select_server_env_file() -> Path | None:
-    root = Path(__file__).resolve().parents[3]
     app_env = (
         os.getenv("APP_ENV", "")
         or os.getenv("PY_ENV", "")
         or os.getenv("ENV", "")
         or os.getenv("NODE_ENV", "")
     ).strip().lower()
-    if app_env in {"prod", "production"}:
-        target = root / ".env.production"
+    primary_name = ".env.production" if app_env in {"prod", "production"} else ".env.development"
+    for root in _candidate_env_roots():
+        target = root / primary_name
         if target.exists():
             return target
-    else:
-        target = root / ".env.development"
-        if target.exists():
-            return target
-    fallback = root / ".env"
-    return fallback if fallback.exists() else None
+    for root in _candidate_env_roots():
+        fallback = root / ".env"
+        if fallback.exists():
+            return fallback
+    return None
 
 
 _env_file = _select_server_env_file()

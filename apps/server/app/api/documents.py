@@ -1546,8 +1546,11 @@ async def stream_document_chat_assistant_message(
                 break
 
         answer = "".join(answer_parts).strip()
-        if parser_error or not answer:
+        if not answer:
             raise RuntimeError("Answer generation failed")
+        save_status = "ok"
+        if parser_error:
+            save_status = "stopped"
         _ = _extract_tag_refs(answer, ref_map)
         final_refs = refs if refs else None
         if payload.message_id:
@@ -1557,7 +1560,7 @@ async def stream_document_chat_assistant_message(
                 user.user_id,
                 payload.message_id,
                 answer,
-                "ok",
+                save_status,
                 final_refs,
             )
             if saved is None:
@@ -1573,7 +1576,7 @@ async def stream_document_chat_assistant_message(
                 user.user_id,
                 "assistant",
                 answer,
-                "ok",
+                save_status,
                 final_refs,
             )
         message_payload = {
@@ -1635,6 +1638,61 @@ async def stream_document_chat_assistant_message(
             payload.message_id,
             exc,
         )
+        if answer_parts:
+            answer = "".join(answer_parts).strip()
+            if answer:
+                _ = _extract_tag_refs(answer, ref_map)
+                final_refs = refs if refs else None
+                if payload.message_id:
+                    saved = await repository.update_document_chat_message(
+                        pool,
+                        chat_id,
+                        user.user_id,
+                        payload.message_id,
+                        answer,
+                        "stopped",
+                        final_refs,
+                    )
+                else:
+                    saved = await repository.insert_document_chat_message(
+                        pool,
+                        chat_id,
+                        user.user_id,
+                        "assistant",
+                        answer,
+                        "stopped",
+                        final_refs,
+                    )
+                if saved is not None:
+                    message_payload = {
+                        "id": str(saved["id"]),
+                        "role": saved["role"],
+                        "text": saved["content"],
+                        "status": saved.get("status"),
+                        "refs": saved.get("refs"),
+                        "createdAt": saved["created_at"].isoformat()
+                        if saved.get("created_at")
+                        else None,
+                    }
+                    try:
+                        await websocket.send_text(
+                            json.dumps({"type": "message", "message": message_payload})
+                        )
+                    except Exception:
+                        pass
+                try:
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "type": "error",
+                                "message": parser_error or "Connection interrupted while streaming",
+                            }
+                        )
+                    )
+                    await websocket.send_text(json.dumps({"type": "done"}))
+                except Exception:
+                    pass
+                return
         try:
             await websocket.send_text(
                 json.dumps({"type": "error", "message": "Answer generation failed"})
