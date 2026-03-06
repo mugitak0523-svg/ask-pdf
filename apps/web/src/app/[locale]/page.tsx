@@ -4475,6 +4475,11 @@ export default function Home() {
             <div className="settings__item settings__item--stack">
               <div>
                 <div className="settings__item-title">{t("servicePolicyTokushoTitle")}</div>
+                <div className="settings__item-actions">
+                  <Link className="settings__btn" href="/tokushoho">
+                    {t("open")}
+                  </Link>
+                </div>
               </div>
               <div className="settings__value settings__stack">
                 <div className="settings__stack-item">

@@ -1681,6 +1681,10 @@ button {
   text-align: left;
 }
 
+.settings__item-actions {
+  margin-top: 8px;
+}
+
 .settings__item--stack .settings__item-title,
 .settings__item--stack .settings__item-desc {
   text-align: left;
@@ -5082,6 +5086,61 @@ body.tooltip-portal-enabled [data-tooltip]::after {
   background: transparent;
   padding: 0;
   color: inherit;
+}
+
+.markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+
+.markdown th,
+.markdown td {
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown th {
+  background: var(--panel-soft);
+  font-weight: 700;
+}
+
+.legal-page {
+  min-height: 100vh;
+  background: var(--bg);
+  padding: 24px;
+}
+
+.legal-card {
+  width: min(980px, 100%);
+  margin: 0 auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px 18px 20px;
+}
+
+.legal-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin-bottom: 12px;
+}
+
+.legal-card__back {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.legal-card__back:hover {
+  color: var(--text);
+}
+
+.legal-card__body {
+  color: var(--text);
 }
 
 .bubble--assistant {
