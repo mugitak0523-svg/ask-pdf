@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useLocale, useTranslations } from "next-intl";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { PdfViewer } from "@/components/pdf-viewer/pdf-viewer";
 import { supabase } from "@/lib/supabase";
@@ -4451,7 +4452,11 @@ export default function Home() {
               <div className="settings__value settings__stack">
                 <div className="settings__stack-item">
                   <div className="settings__stack-desc">
-                    <ReactMarkdown className="markdown" remarkPlugins={[remarkGfm]}>
+                    <ReactMarkdown
+                      className="markdown"
+                      remarkPlugins={[remarkGfm]}
+                      rehypePlugins={[rehypeRaw]}
+                    >
                       {termsMd}
                     </ReactMarkdown>
                   </div>
@@ -4465,7 +4470,11 @@ export default function Home() {
               <div className="settings__value settings__stack">
                 <div className="settings__stack-item">
                   <div className="settings__stack-desc">
-                    <ReactMarkdown className="markdown" remarkPlugins={[remarkGfm]}>
+                    <ReactMarkdown
+                      className="markdown"
+                      remarkPlugins={[remarkGfm]}
+                      rehypePlugins={[rehypeRaw]}
+                    >
                       {privacyMd}
                     </ReactMarkdown>
                   </div>
@@ -4484,7 +4493,11 @@ export default function Home() {
               <div className="settings__value settings__stack">
                 <div className="settings__stack-item">
                   <div className="settings__stack-desc">
-                    <ReactMarkdown className="markdown" remarkPlugins={[remarkGfm]}>
+                    <ReactMarkdown
+                      className="markdown"
+                      remarkPlugins={[remarkGfm]}
+                      rehypePlugins={[rehypeRaw]}
+                    >
                       {tokushoMd}
                     </ReactMarkdown>
                   </div>
