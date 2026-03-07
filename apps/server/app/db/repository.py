@@ -1731,19 +1731,7 @@ async def list_users_admin(pool, *, limit: int = 50, offset: int = 0) -> list[di
                     user_id::text as user_id,
                     min(created_at) as first_seen,
                     max(created_at) as last_seen
-                from (
-                    select user_id, created_at from documents
-                    union all
-                    select user_id, created_at from document_chat_threads
-                    union all
-                    select user_id, created_at from document_chat_messages
-                    union all
-                    select user_id, created_at from usage_logs
-                    union all
-                    select user_id, created_at from admin_user_messages
-                    union all
-                    select user_id, created_at from user_feedback
-                ) as events
+                from usage_logs
                 group by user_id::text
             ),
             registered as (
@@ -1815,19 +1803,8 @@ async def get_user_detail_admin(pool, *, user_id: str) -> dict[str, Any] | None:
                 select
                     min(created_at) as first_seen,
                     max(created_at) as last_seen
-                from (
-                    select created_at from documents where user_id::text = $1
-                    union all
-                    select created_at from document_chat_threads where user_id::text = $1
-                    union all
-                    select created_at from document_chat_messages where user_id::text = $1
-                    union all
-                    select created_at from usage_logs where user_id::text = $1
-                    union all
-                    select created_at from admin_user_messages where user_id::text = $1
-                    union all
-                    select created_at from user_feedback where user_id::text = $1
-                ) as events
+                from usage_logs
+                where user_id::text = $1
             ),
             registered as (
                 select
