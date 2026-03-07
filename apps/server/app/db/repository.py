@@ -2397,7 +2397,10 @@ async def get_admin_overview(
     for row in daily_rows:
         item = dict(row)
         day = item.get("day")
-        day_key = day.isoformat() if day is not None else ""
+        if isinstance(day, datetime):
+            day_key = day.date().isoformat()
+        else:
+            day_key = day.isoformat() if day is not None else ""
         daily_by_day[day_key] = {
             "token_cost_usd": 0.0,
             "parse_cost_usd": 0.0,
@@ -2420,13 +2423,16 @@ async def get_admin_overview(
         day_key = ""
         if created_at is not None:
             day_key = created_at.date().isoformat()
+        is_parse = str(data.get("operation") or "").lower() == "parse"
+        if is_parse:
+            parse_cost_window += cost
+        else:
+            token_cost_window += cost
         if day_key in daily_by_day:
-            if str(data.get("operation") or "").lower() == "parse":
+            if is_parse:
                 daily_by_day[day_key]["parse_cost_usd"] += cost
-                parse_cost_window += cost
             else:
                 daily_by_day[day_key]["token_cost_usd"] += cost
-                token_cost_window += cost
 
     daily = []
     for row in daily_rows:
@@ -2434,7 +2440,10 @@ async def get_admin_overview(
         day_tokens = int(item.get("tokens") or 0)
         day_pages = int(item.get("parse_pages") or 0)
         day = item.get("day")
-        day_key = day.isoformat() if day is not None else ""
+        if isinstance(day, datetime):
+            day_key = day.date().isoformat()
+        else:
+            day_key = day.isoformat() if day is not None else ""
         costs = daily_by_day.get(day_key, {"token_cost_usd": 0.0, "parse_cost_usd": 0.0})
         item["token_cost_usd"] = round(float(costs.get("token_cost_usd") or 0.0), 6)
         item["parse_cost_usd"] = round(float(costs.get("parse_cost_usd") or 0.0), 6)

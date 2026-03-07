@@ -231,6 +231,19 @@ const AdminPageContent = () => {
     return date.toLocaleString(locale);
   };
 
+  const formatUsd = (value: number) => {
+    if (!Number.isFinite(value)) return "$0";
+    if (value === 0) return "$0";
+    if (Math.abs(value) < 0.0001) return "< $0.0001";
+    if (Math.abs(value) < 1) {
+      return `$${value.toLocaleString(locale, {
+        minimumFractionDigits: 4,
+        maximumFractionDigits: 6,
+      })}`;
+    }
+    return `$${value.toLocaleString(locale, { maximumFractionDigits: 2 })}`;
+  };
+
   const getOverviewPeriodLabel = (key: OverviewPeriod) => {
     if (key === "today") return "今日";
     if (key === "yesterday") return "昨日";
@@ -1050,7 +1063,7 @@ const AdminPageContent = () => {
                       <div className="admin-overview__stat">
                         <div className="admin-overview__label">推定LLM料金(直近, USD)</div>
                         <div className="admin-overview__value">
-                          ${adminOverview.summary.tokenCostWindowYen.toLocaleString()}
+                          {formatUsd(adminOverview.summary.tokenCostWindowYen)}
                         </div>
                       </div>
                       <div className="admin-overview__stat">
@@ -1068,7 +1081,7 @@ const AdminPageContent = () => {
                       <div className="admin-overview__stat">
                         <div className="admin-overview__label">推定解析料金(直近, USD)</div>
                         <div className="admin-overview__value">
-                          ${adminOverview.summary.parseCostWindowYen.toLocaleString()}
+                          {formatUsd(adminOverview.summary.parseCostWindowYen)}
                         </div>
                       </div>
                       <div className="admin-overview__stat">
