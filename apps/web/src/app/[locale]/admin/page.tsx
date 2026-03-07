@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Suspense, useEffect, useMemo, useState } from "react";
+import React, { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -21,10 +21,16 @@ type AdminUser = {
   email: string | null;
   createdAt: string | null;
   lastSignInAt: string | null;
+  lastActivityAt: string | null;
   plan: string | null;
+  userType: "registered" | "guest";
   stripeStatus: string | null;
   currentPeriodEnd: string | null;
   unreadMessages: number;
+  documentCount: number;
+  chatCount: number;
+  messageCount: number;
+  totalTokens: number;
 };
 
 type AdminUserDetail = AdminUser & {
@@ -58,6 +64,53 @@ type UsageDailyPoint = {
   total_tokens: number | null;
 };
 
+type OverviewDailyPoint = {
+  day: string | null;
+  signups: number;
+  activeUsers: number;
+  documents: number;
+  messages: number;
+  tokens: number;
+  parsePages: number;
+  tokenCostYen: number;
+  parseCostYen: number;
+};
+
+type OverviewModelPoint = {
+  model: string;
+  calls: number;
+  totalTokens: number;
+  share: number;
+};
+
+type AdminOverview = {
+  windowDays: number;
+  rates: {
+    tokenCostPer1kYen: number;
+    parseCostPerPageYen: number;
+  };
+  summary: {
+    registeredUsers: number;
+    guestUsers: number;
+    usersTotal: number;
+    activeUsersWindow: number;
+    documentsTotal: number;
+    documentsWindow: number;
+    messagesTotal: number;
+    messagesWindow: number;
+    tokensTotal: number;
+    tokensWindow: number;
+    parsePagesTotal: number;
+    parsePagesWindow: number;
+    tokenCostWindowYen: number;
+    parseCostWindowYen: number;
+    unreadMessages: number;
+    unreadFeedback: number;
+  };
+  daily: OverviewDailyPoint[];
+  models: OverviewModelPoint[];
+};
+
 type FeedbackItem = {
   id: string;
   userId: string;
@@ -70,6 +123,7 @@ type FeedbackItem = {
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler);
 
 const normalizeSection = (value?: string | null) => {
+  if (value === "overview") return "overview";
   if (value === "announcements") return "announcements";
   if (value === "feedback") return "feedback";
   return "users";
@@ -84,13 +138,43 @@ const AdminPageContent = () => {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authStatus, setAuthStatus] = useState<"checking" | "ok" | "denied">("checking");
   const [adminSection, setAdminSection] = useState<
-    "users" | "announcements" | "feedback"
+    "overview" | "users" | "announcements" | "feedback"
   >(initialSection);
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
+  const [adminUsersTotal, setAdminUsersTotal] = useState(0);
+  const [adminUsersLimit, setAdminUsersLimit] = useState(50);
+  const [adminUsersOffset, setAdminUsersOffset] = useState(0);
   const [adminUsersLoading, setAdminUsersLoading] = useState(false);
   const [adminUsersError, setAdminUsersError] = useState<string | null>(null);
+  const [adminUserQueryInput, setAdminUserQueryInput] = useState("");
+  const [adminUserQuery, setAdminUserQuery] = useState("");
+  const [adminUserTypeFilter, setAdminUserTypeFilter] = useState<"all" | "registered" | "guest">(
+    "all"
+  );
+  const [adminPlanFilter, setAdminPlanFilter] = useState<"all" | "free" | "plus" | "guest">(
+    "all"
+  );
+  const [adminStripeStatusFilter, setAdminStripeStatusFilter] = useState<
+    "all" | "active" | "trialing" | "past_due" | "canceled" | "incomplete"
+  >("all");
+  const [adminUnreadFilter, setAdminUnreadFilter] = useState<"all" | "only" | "none">("all");
+  const [adminActiveDaysFilter, setAdminActiveDaysFilter] = useState<
+    "all" | "1" | "7" | "30" | "90"
+  >("all");
+  const [adminSortBy, setAdminSortBy] = useState<
+    | "created_at"
+    | "last_sign_in_at"
+    | "last_activity_at"
+    | "unread"
+    | "tokens"
+    | "documents"
+    | "messages"
+    | "id"
+  >("created_at");
+  const [adminSortDir, setAdminSortDir] = useState<"asc" | "desc">("desc");
   const [adminSelectedUserId, setAdminSelectedUserId] = useState<string | null>(null);
   const [adminUserDetail, setAdminUserDetail] = useState<AdminUserDetail | null>(null);
+  const [adminUserDetailLoading, setAdminUserDetailLoading] = useState(false);
   const [adminMessages, setAdminMessages] = useState<SupportMessage[]>([]);
   const [adminUsageDaily, setAdminUsageDaily] = useState<UsageDailyPoint[]>([]);
   const [adminMessageDraft, setAdminMessageDraft] = useState("");
@@ -99,11 +183,15 @@ const AdminPageContent = () => {
   const [adminFeedbackUnreadTotal, setAdminFeedbackUnreadTotal] = useState(0);
   const [adminAnnouncements, setAdminAnnouncements] = useState<AdminAnnouncement[]>([]);
   const [adminFeedback, setAdminFeedback] = useState<FeedbackItem[]>([]);
+  const [adminOverview, setAdminOverview] = useState<AdminOverview | null>(null);
+  const [adminOverviewLoading, setAdminOverviewLoading] = useState(false);
+  const [adminOverviewError, setAdminOverviewError] = useState<string | null>(null);
   const [adminAnnouncementDraft, setAdminAnnouncementDraft] = useState({
     title: "",
     body: "",
   });
   const [adminAnnouncementBusy, setAdminAnnouncementBusy] = useState(false);
+  const detailRequestIdRef = useRef(0);
 
   useEffect(() => {
     setAdminSection(normalizeSection(searchParams?.get("section")));
@@ -127,6 +215,50 @@ const AdminPageContent = () => {
     if (Number.isNaN(date.getTime())) return "-";
     return date.toLocaleString(locale);
   };
+
+  const formatRelativeFromNow = (value: number | string | null) => {
+    if (!value) return null;
+    const date = typeof value === "string" ? new Date(value) : new Date(value * 1000);
+    if (Number.isNaN(date.getTime())) return null;
+    const diffMs = Date.now() - date.getTime();
+    if (diffMs < 0) return "0日前";
+    const dayMs = 24 * 60 * 60 * 1000;
+    const hourMs = 60 * 60 * 1000;
+    const minMs = 60 * 1000;
+    const days = Math.floor(diffMs / dayMs);
+    if (days >= 1) return `${days}日前`;
+    const hours = Math.floor(diffMs / hourMs);
+    if (hours >= 1) return `${hours}時間前`;
+    const mins = Math.max(1, Math.floor(diffMs / minMs));
+    return `${mins}分前`;
+  };
+
+  const buildLineData = (
+    label: string,
+    values: number[],
+    color: string,
+    fillColor: string
+  ) => ({
+    labels: adminOverview?.daily.map((point) => formatDate(point.day)) ?? [],
+    datasets: [
+      {
+        label,
+        data: values,
+        borderColor: color,
+        backgroundColor: fillColor,
+        tension: 0.3,
+        fill: true,
+        pointRadius: 2,
+      },
+    ],
+  });
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setAdminUserQuery(adminUserQueryInput.trim());
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [adminUserQueryInput]);
 
   const getAuthHeaders = async () => {
     const session = await supabase.auth.getSession();
@@ -163,23 +295,52 @@ const AdminPageContent = () => {
     setAdminUsersLoading(true);
     setAdminUsersError(null);
     try {
-      const response = await fetch(`${baseUrl}/admin/users`, { headers });
+      const url = new URL(`${baseUrl}/admin/users`);
+      url.searchParams.set("limit", String(adminUsersLimit));
+      url.searchParams.set("offset", String(adminUsersOffset));
+      if (adminUserQuery) url.searchParams.set("q", adminUserQuery);
+      if (adminUserTypeFilter !== "all") url.searchParams.set("user_type", adminUserTypeFilter);
+      if (adminPlanFilter !== "all") url.searchParams.set("plan", adminPlanFilter);
+      if (adminStripeStatusFilter !== "all")
+        url.searchParams.set("stripe_status", adminStripeStatusFilter);
+      if (adminUnreadFilter !== "all") url.searchParams.set("unread", adminUnreadFilter);
+      if (adminActiveDaysFilter !== "all") url.searchParams.set("active_days", adminActiveDaysFilter);
+      url.searchParams.set("sort_by", adminSortBy);
+      url.searchParams.set("sort_dir", adminSortDir);
+      const response = await fetch(url.toString(), { headers });
       if (!response.ok) throw new Error(`Failed to load users (${response.status})`);
       const payload = await response.json();
       const items = Array.isArray(payload?.users) ? payload.users : [];
       const normalized = items.map((item: any) => ({
         id: String(item?.id ?? ""),
-        email: item?.email ?? null,
+        email:
+          item?.user_type === "guest" ? "未ログイン" : item?.email ? String(item.email) : null,
         createdAt: item?.created_at ?? null,
         lastSignInAt: item?.last_sign_in_at ?? null,
-        plan: item?.plan ?? null,
+        lastActivityAt: item?.last_activity_at ?? null,
+        plan:
+          item?.plan && String(item.plan).trim().length > 0
+            ? String(item.plan)
+            : item?.user_type === "guest"
+              ? "guest"
+              : "free",
+        userType: item?.user_type === "guest" ? "guest" : "registered",
         stripeStatus: item?.stripe_status ?? null,
         currentPeriodEnd: item?.current_period_end ?? null,
         unreadMessages: Number(item?.unread_message_count ?? 0),
+        documentCount: Number(item?.document_count ?? 0),
+        chatCount: Number(item?.chat_count ?? 0),
+        messageCount: Number(item?.message_count ?? 0),
+        totalTokens: Number(item?.total_tokens ?? 0),
       }));
       setAdminUsers(normalized);
+      setAdminUsersTotal(Number(payload?.total ?? normalized.length));
       await loadUnreadTotal();
-      if (!adminSelectedUserId && normalized.length > 0) {
+      if (normalized.length === 0) {
+        setAdminSelectedUserId(null);
+      } else if (!adminSelectedUserId) {
+        setAdminSelectedUserId(normalized[0].id);
+      } else if (!normalized.some((item: AdminUser) => item.id === adminSelectedUserId)) {
         setAdminSelectedUserId(normalized[0].id);
       }
     } catch (error) {
@@ -190,10 +351,11 @@ const AdminPageContent = () => {
     }
   };
 
-  const loadUserDetail = async (targetUserId: string) => {
+  const loadUserDetail = async (targetUserId: string, requestId: number) => {
     const headers = await getAuthHeaders();
     if (!headers) return;
     const response = await fetch(`${baseUrl}/admin/users/${targetUserId}`, { headers });
+    if (requestId !== detailRequestIdRef.current) return;
     if (!response.ok) {
       setAdminUserDetail(null);
       setAdminUsageDaily([]);
@@ -208,10 +370,18 @@ const AdminPageContent = () => {
     }
     setAdminUserDetail({
       id: String(item?.id ?? ""),
-      email: item?.email ?? null,
+      email:
+        item?.user_type === "guest" ? "未ログイン" : item?.email ? String(item.email) : null,
       createdAt: item?.created_at ?? null,
       lastSignInAt: item?.last_sign_in_at ?? null,
-      plan: item?.plan ?? null,
+      lastActivityAt: item?.last_activity_at ?? null,
+      plan:
+        item?.plan && String(item.plan).trim().length > 0
+          ? String(item.plan)
+          : item?.user_type === "guest"
+            ? "guest"
+            : "free",
+      userType: item?.user_type === "guest" ? "guest" : "registered",
       stripeStatus: item?.stripe_status ?? null,
       stripeCustomerId: item?.stripe_customer_id ?? null,
       stripePriceId: item?.stripe_price_id ?? null,
@@ -223,6 +393,7 @@ const AdminPageContent = () => {
       totalTokens: Number(item?.totalTokens ?? 0),
     });
     const usage = Array.isArray(payload?.usageDaily) ? payload.usageDaily : [];
+    if (requestId !== detailRequestIdRef.current) return;
     setAdminUsageDaily(
       usage.map((point: any) => ({
         day: point?.day ?? null,
@@ -231,7 +402,7 @@ const AdminPageContent = () => {
     );
   };
 
-  const loadMessages = async (targetUserId: string) => {
+  const loadMessages = async (targetUserId: string, requestId: number) => {
     const headers = await getAuthHeaders();
     if (!headers) return;
     const url = new URL(`${baseUrl}/admin/messages`);
@@ -240,6 +411,7 @@ const AdminPageContent = () => {
     if (!response.ok) return;
     const payload = await response.json();
     const items = Array.isArray(payload?.messages) ? payload.messages : [];
+    if (requestId !== detailRequestIdRef.current) return;
     setAdminMessages(
       items.map((item: any) => ({
         id: String(item?.id ?? ""),
@@ -249,6 +421,81 @@ const AdminPageContent = () => {
         readAt: item?.read_at ?? null,
       }))
     );
+  };
+
+  const loadSelectedUser = async (targetUserId: string) => {
+    const requestId = detailRequestIdRef.current + 1;
+    detailRequestIdRef.current = requestId;
+    setAdminUserDetailLoading(true);
+    setAdminUserDetail(null);
+    setAdminUsageDaily([]);
+    setAdminMessages([]);
+    await Promise.all([loadUserDetail(targetUserId, requestId), loadMessages(targetUserId, requestId)]);
+    if (requestId === detailRequestIdRef.current) {
+      setAdminUserDetailLoading(false);
+    }
+  };
+
+  const loadOverview = async () => {
+    const headers = await getAuthHeaders();
+    if (!headers) return;
+    setAdminOverviewLoading(true);
+    setAdminOverviewError(null);
+    try {
+      const response = await fetch(`${baseUrl}/admin/overview?days=60`, { headers });
+      if (!response.ok) throw new Error(`Failed to load overview (${response.status})`);
+      const payload = await response.json();
+      const summary = payload?.summary ?? {};
+      const dailySource = Array.isArray(payload?.daily) ? payload.daily : [];
+      const modelsSource = Array.isArray(payload?.models) ? payload.models : [];
+      setAdminOverview({
+        windowDays: Number(payload?.windowDays ?? 60),
+        rates: {
+          tokenCostPer1kYen: Number(payload?.rates?.tokenCostPer1kYen ?? 0),
+          parseCostPerPageYen: Number(payload?.rates?.parseCostPerPageYen ?? 0),
+        },
+        summary: {
+          registeredUsers: Number(summary?.registeredUsers ?? 0),
+          guestUsers: Number(summary?.guestUsers ?? 0),
+          usersTotal: Number(summary?.usersTotal ?? 0),
+          activeUsersWindow: Number(summary?.activeUsersWindow ?? 0),
+          documentsTotal: Number(summary?.documentsTotal ?? 0),
+          documentsWindow: Number(summary?.documentsWindow ?? 0),
+          messagesTotal: Number(summary?.messagesTotal ?? 0),
+          messagesWindow: Number(summary?.messagesWindow ?? 0),
+          tokensTotal: Number(summary?.tokensTotal ?? 0),
+          tokensWindow: Number(summary?.tokensWindow ?? 0),
+          parsePagesTotal: Number(summary?.parsePagesTotal ?? 0),
+          parsePagesWindow: Number(summary?.parsePagesWindow ?? 0),
+          tokenCostWindowYen: Number(summary?.tokenCostWindowYen ?? 0),
+          parseCostWindowYen: Number(summary?.parseCostWindowYen ?? 0),
+          unreadMessages: Number(summary?.unreadMessages ?? 0),
+          unreadFeedback: Number(summary?.unreadFeedback ?? 0),
+        },
+        daily: dailySource.map((item: any) => ({
+          day: item?.day ?? null,
+          signups: Number(item?.signups ?? 0),
+          activeUsers: Number(item?.active_users ?? 0),
+          documents: Number(item?.documents ?? 0),
+          messages: Number(item?.messages ?? 0),
+          tokens: Number(item?.tokens ?? 0),
+          parsePages: Number(item?.parse_pages ?? 0),
+          tokenCostYen: Number(item?.token_cost_yen ?? 0),
+          parseCostYen: Number(item?.parse_cost_yen ?? 0),
+        })),
+        models: modelsSource.map((item: any) => ({
+          model: String(item?.model ?? "unknown"),
+          calls: Number(item?.calls ?? 0),
+          totalTokens: Number(item?.total_tokens ?? 0),
+          share: Number(item?.share ?? 0),
+        })),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load overview";
+      setAdminOverviewError(message);
+    } finally {
+      setAdminOverviewLoading(false);
+    }
   };
 
   const usageChartData = useMemo(() => {
@@ -292,6 +539,87 @@ const AdminPageContent = () => {
     []
   );
 
+  const overviewSignupData = useMemo(
+    () =>
+      buildLineData(
+        "登録ユーザー",
+        adminOverview?.daily.map((point) => point.signups) ?? [],
+        "#4f46e5",
+        "rgba(79, 70, 229, 0.12)"
+      ),
+    [adminOverview]
+  );
+  const overviewActiveData = useMemo(
+    () =>
+      buildLineData(
+        "アクティブユーザー",
+        adminOverview?.daily.map((point) => point.activeUsers) ?? [],
+        "#0ea5e9",
+        "rgba(14, 165, 233, 0.12)"
+      ),
+    [adminOverview]
+  );
+  const overviewTokenData = useMemo(
+    () =>
+      buildLineData(
+        "トークン使用量",
+        adminOverview?.daily.map((point) => point.tokens) ?? [],
+        "#16a34a",
+        "rgba(22, 163, 74, 0.12)"
+      ),
+    [adminOverview]
+  );
+  const overviewTokenCostData = useMemo(
+    () =>
+      buildLineData(
+        "推定LLM料金(円)",
+        adminOverview?.daily.map((point) => point.tokenCostYen) ?? [],
+        "#65a30d",
+        "rgba(132, 204, 22, 0.12)"
+      ),
+    [adminOverview]
+  );
+  const overviewDocData = useMemo(
+    () =>
+      buildLineData(
+        "PDFアップロード数",
+        adminOverview?.daily.map((point) => point.documents) ?? [],
+        "#d97706",
+        "rgba(245, 158, 11, 0.12)"
+      ),
+    [adminOverview]
+  );
+  const overviewParseData = useMemo(
+    () =>
+      buildLineData(
+        "解析ページ数",
+        adminOverview?.daily.map((point) => point.parsePages) ?? [],
+        "#ea580c",
+        "rgba(249, 115, 22, 0.12)"
+      ),
+    [adminOverview]
+  );
+  const overviewParseCostData = useMemo(
+    () =>
+      buildLineData(
+        "推定解析料金(円)",
+        adminOverview?.daily.map((point) => point.parseCostYen) ?? [],
+        "#dc2626",
+        "rgba(239, 68, 68, 0.12)"
+      ),
+    [adminOverview]
+  );
+  const overviewMessagesData = useMemo(
+    () =>
+      buildLineData(
+        "メッセージ数",
+        adminOverview?.daily.map((point) => point.messages) ?? [],
+        "#2563eb",
+        "rgba(37, 99, 235, 0.12)"
+      ),
+    [adminOverview]
+  );
+
   const sendMessage = async () => {
     if (!adminSelectedUserId || !adminMessageDraft.trim()) return;
     setAdminMessageBusy(true);
@@ -311,7 +639,7 @@ const AdminPageContent = () => {
       });
       if (!response.ok) throw new Error("Failed to send message");
       setAdminMessageDraft("");
-      await loadMessages(adminSelectedUserId);
+      await loadMessages(adminSelectedUserId, detailRequestIdRef.current);
     } finally {
       setAdminMessageBusy(false);
     }
@@ -430,13 +758,21 @@ const AdminPageContent = () => {
     await loadFeedbackUnreadTotal();
   };
 
-  const changeSection = async (section: "users" | "announcements" | "feedback") => {
+  const changeSection = async (section: "overview" | "users" | "announcements" | "feedback") => {
     setAdminSection(section);
     await router.replace(`/admin/${section}`);
   };
 
   const openUserFromFeedback = (userId: string) => {
     if (!userId) return;
+    setAdminUsersOffset(0);
+    setAdminUserQueryInput("");
+    setAdminUserQuery("");
+    setAdminUserTypeFilter("all");
+    setAdminPlanFilter("all");
+    setAdminStripeStatusFilter("all");
+    setAdminUnreadFilter("all");
+    setAdminActiveDaysFilter("all");
     setAdminSelectedUserId(userId);
     void changeSection("users");
   };
@@ -493,25 +829,54 @@ const AdminPageContent = () => {
   }, [initialSection, router]);
 
   useEffect(() => {
-    if (authStatus !== "ok") return;
-    if (adminSection === "users") {
-      void loadUsers();
-    }
-    if (adminSection === "announcements") {
-      void loadAnnouncements();
-    }
-    if (adminSection === "feedback") {
-      void loadFeedback();
-    }
+    if (authStatus !== "ok" || adminSection !== "users") return;
+    void loadUsers();
+    void loadFeedbackUnreadTotal();
+  }, [
+    adminSection,
+    authStatus,
+    adminUsersLimit,
+    adminUsersOffset,
+    adminUserQuery,
+    adminUserTypeFilter,
+    adminPlanFilter,
+    adminStripeStatusFilter,
+    adminUnreadFilter,
+    adminActiveDaysFilter,
+    adminSortBy,
+    adminSortDir,
+  ]);
+
+  useEffect(() => {
+    if (authStatus !== "ok" || adminSection !== "overview") return;
+    void loadOverview();
+    void loadUnreadTotal();
+    void loadFeedbackUnreadTotal();
+  }, [adminSection, authStatus]);
+
+  useEffect(() => {
+    if (authStatus !== "ok" || adminSection !== "announcements") return;
+    void loadAnnouncements();
+    void loadUnreadTotal();
+    void loadFeedbackUnreadTotal();
+  }, [adminSection, authStatus]);
+
+  useEffect(() => {
+    if (authStatus !== "ok" || adminSection !== "feedback") return;
+    void loadFeedback();
     void loadUnreadTotal();
     void loadFeedbackUnreadTotal();
   }, [adminSection, authStatus]);
 
   useEffect(() => {
     if (!adminSelectedUserId) return;
-    void loadUserDetail(adminSelectedUserId);
-    void loadMessages(adminSelectedUserId);
+    void loadSelectedUser(adminSelectedUserId);
   }, [adminSelectedUserId]);
+
+  const usersRangeStart = adminUsersTotal === 0 ? 0 : adminUsersOffset + 1;
+  const usersRangeEnd = adminUsersTotal === 0
+    ? 0
+    : Math.min(adminUsersOffset + adminUsers.length, adminUsersTotal);
 
   return (
     <div className="admin-console">
@@ -530,6 +895,13 @@ const AdminPageContent = () => {
       </header>
       <div className="admin-console__layout">
         <aside className="admin-console__sidebar">
+          <button
+            type="button"
+            className={`admin-console__nav ${adminSection === "overview" ? "is-active" : ""}`}
+            onClick={() => void changeSection("overview")}
+          >
+            <span>概要</span>
+          </button>
           <button
             type="button"
             className={`admin-console__nav ${adminSection === "users" ? "is-active" : ""}`}
@@ -573,16 +945,309 @@ const AdminPageContent = () => {
               <div className="admin-console__empty">{authError}</div>
             </div>
           ) : null}
+          {authStatus === "ok" && adminSection === "overview" ? (
+            <div className="admin-console__grid">
+              <section className="admin-console__panel admin-overview">
+                <h2>概要ダッシュボード</h2>
+                <p className="admin-console__desc">
+                  直近{adminOverview?.windowDays ?? 60}日間の登録・利用・コスト推移
+                </p>
+                {adminOverviewLoading ? (
+                  <div className="admin-console__empty">{t("common.loading")}</div>
+                ) : adminOverviewError ? (
+                  <div className="admin-console__empty">{adminOverviewError}</div>
+                ) : adminOverview ? (
+                  <>
+                    <div className="admin-overview__stats">
+                      <div className="admin-overview__stat">
+                        <div className="admin-overview__label">登録者</div>
+                        <div className="admin-overview__value">
+                          {adminOverview.summary.registeredUsers}
+                        </div>
+                      </div>
+                      <div className="admin-overview__stat">
+                        <div className="admin-overview__label">未ログイン利用者</div>
+                        <div className="admin-overview__value">{adminOverview.summary.guestUsers}</div>
+                      </div>
+                      <div className="admin-overview__stat">
+                        <div className="admin-overview__label">直近アクティブ</div>
+                        <div className="admin-overview__value">
+                          {adminOverview.summary.activeUsersWindow}
+                        </div>
+                      </div>
+                      <div className="admin-overview__stat">
+                        <div className="admin-overview__label">トークン(直近)</div>
+                        <div className="admin-overview__value">
+                          {adminOverview.summary.tokensWindow.toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="admin-overview__stat">
+                        <div className="admin-overview__label">推定LLM料金(直近)</div>
+                        <div className="admin-overview__value">
+                          ¥{adminOverview.summary.tokenCostWindowYen.toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="admin-overview__stat">
+                        <div className="admin-overview__label">PDF総数</div>
+                        <div className="admin-overview__value">
+                          {adminOverview.summary.documentsTotal.toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="admin-overview__stat">
+                        <div className="admin-overview__label">解析ページ(直近)</div>
+                        <div className="admin-overview__value">
+                          {adminOverview.summary.parsePagesWindow.toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="admin-overview__stat">
+                        <div className="admin-overview__label">推定解析料金(直近)</div>
+                        <div className="admin-overview__value">
+                          ¥{adminOverview.summary.parseCostWindowYen.toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="admin-overview__stat">
+                        <div className="admin-overview__label">メッセージ総数</div>
+                        <div className="admin-overview__value">
+                          {adminOverview.summary.messagesTotal.toLocaleString()}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="admin-overview__charts">
+                      <div className="admin-overview__chart">
+                        <div className="admin-detail__messages-title">登録者推移</div>
+                        <div className="admin-usage-chart">
+                          <Line data={overviewSignupData} options={usageChartOptions} />
+                        </div>
+                      </div>
+                      <div className="admin-overview__chart">
+                        <div className="admin-detail__messages-title">アクティブユーザー推移</div>
+                        <div className="admin-usage-chart">
+                          <Line data={overviewActiveData} options={usageChartOptions} />
+                        </div>
+                      </div>
+                      <div className="admin-overview__chart">
+                        <div className="admin-detail__messages-title">トークン使用量</div>
+                        <div className="admin-usage-chart">
+                          <Line data={overviewTokenData} options={usageChartOptions} />
+                        </div>
+                      </div>
+                      <div className="admin-overview__chart">
+                        <div className="admin-detail__messages-title">推定LLM料金</div>
+                        <div className="admin-usage-chart">
+                          <Line data={overviewTokenCostData} options={usageChartOptions} />
+                        </div>
+                      </div>
+                      <div className="admin-overview__chart">
+                        <div className="admin-detail__messages-title">PDFアップロード数</div>
+                        <div className="admin-usage-chart">
+                          <Line data={overviewDocData} options={usageChartOptions} />
+                        </div>
+                      </div>
+                      <div className="admin-overview__chart">
+                        <div className="admin-detail__messages-title">解析ページ数</div>
+                        <div className="admin-usage-chart">
+                          <Line data={overviewParseData} options={usageChartOptions} />
+                        </div>
+                      </div>
+                      <div className="admin-overview__chart">
+                        <div className="admin-detail__messages-title">推定解析料金</div>
+                        <div className="admin-usage-chart">
+                          <Line data={overviewParseCostData} options={usageChartOptions} />
+                        </div>
+                      </div>
+                      <div className="admin-overview__chart">
+                        <div className="admin-detail__messages-title">メッセージ推移</div>
+                        <div className="admin-usage-chart">
+                          <Line data={overviewMessagesData} options={usageChartOptions} />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="admin-overview__models">
+                      <div className="admin-detail__messages-title">モデル別トークン使用量</div>
+                      {adminOverview.models.length === 0 ? (
+                        <div className="admin-console__empty">データがありません</div>
+                      ) : (
+                        <div className="admin-overview__model-table">
+                          <div className="admin-overview__model-row admin-overview__model-head">
+                            <div>モデル</div>
+                            <div>トークン</div>
+                            <div>比率</div>
+                            <div>呼び出し回数</div>
+                          </div>
+                          {adminOverview.models.map((item) => (
+                            <div key={item.model} className="admin-overview__model-row">
+                              <div className="admin-table__cell admin-table__cell--mono">{item.model}</div>
+                              <div>{item.totalTokens.toLocaleString()}</div>
+                              <div>{(item.share * 100).toFixed(1)}%</div>
+                              <div>{item.calls.toLocaleString()}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div className="admin-console__empty">データがありません</div>
+                )}
+              </section>
+            </div>
+          ) : null}
           {authStatus === "ok" && adminSection === "users" ? (
             <div className="admin-console__grid">
               <section className="admin-console__panel">
-                <h2>{t("adminUsersTitle")}</h2>
+                <h2>
+                  {t("adminUsersTitle")} ({adminUsersTotal})
+                </h2>
                 <p className="admin-console__desc">{t("adminUsersDesc")}</p>
+                <div className="admin-filters">
+                  <input
+                    className="settings__input"
+                    type="text"
+                    value={adminUserQueryInput}
+                    onChange={(event) => {
+                      setAdminUsersOffset(0);
+                      setAdminUserQueryInput(event.target.value);
+                    }}
+                    placeholder="検索（ID / メール）"
+                  />
+                  <select
+                    className="settings__select"
+                    value={adminUserTypeFilter}
+                    onChange={(event) => {
+                      setAdminUsersOffset(0);
+                      setAdminUserTypeFilter(
+                        event.target.value as "all" | "registered" | "guest"
+                      );
+                    }}
+                  >
+                    <option value="all">種別: すべて</option>
+                    <option value="registered">種別: 登録済み</option>
+                    <option value="guest">種別: 未ログイン</option>
+                  </select>
+                  <select
+                    className="settings__select"
+                    value={adminPlanFilter}
+                    onChange={(event) => {
+                      setAdminUsersOffset(0);
+                      setAdminPlanFilter(event.target.value as "all" | "free" | "plus" | "guest");
+                    }}
+                  >
+                    <option value="all">プラン: すべて</option>
+                    <option value="guest">guest</option>
+                    <option value="free">free</option>
+                    <option value="plus">plus</option>
+                  </select>
+                  <select
+                    className="settings__select"
+                    value={adminStripeStatusFilter}
+                    onChange={(event) => {
+                      setAdminUsersOffset(0);
+                      setAdminStripeStatusFilter(
+                        event.target.value as
+                          | "all"
+                          | "active"
+                          | "trialing"
+                          | "past_due"
+                          | "canceled"
+                          | "incomplete"
+                      );
+                    }}
+                  >
+                    <option value="all">決済状態: すべて</option>
+                    <option value="active">active</option>
+                    <option value="trialing">trialing</option>
+                    <option value="past_due">past_due</option>
+                    <option value="canceled">canceled</option>
+                    <option value="incomplete">incomplete</option>
+                  </select>
+                  <select
+                    className="settings__select"
+                    value={adminUnreadFilter}
+                    onChange={(event) => {
+                      setAdminUsersOffset(0);
+                      setAdminUnreadFilter(event.target.value as "all" | "only" | "none");
+                    }}
+                  >
+                    <option value="all">未読: すべて</option>
+                    <option value="only">未読あり</option>
+                    <option value="none">未読なし</option>
+                  </select>
+                  <select
+                    className="settings__select"
+                    value={adminActiveDaysFilter}
+                    onChange={(event) => {
+                      setAdminUsersOffset(0);
+                      setAdminActiveDaysFilter(
+                        event.target.value as "all" | "1" | "7" | "30" | "90"
+                      );
+                    }}
+                  >
+                    <option value="all">最終活動: すべて</option>
+                    <option value="1">1日以内</option>
+                    <option value="7">7日以内</option>
+                    <option value="30">30日以内</option>
+                    <option value="90">90日以内</option>
+                  </select>
+                  <select
+                    className="settings__select"
+                    value={adminSortBy}
+                    onChange={(event) => {
+                      setAdminUsersOffset(0);
+                      setAdminSortBy(
+                        event.target.value as
+                          | "created_at"
+                          | "last_sign_in_at"
+                          | "last_activity_at"
+                          | "unread"
+                          | "tokens"
+                          | "documents"
+                          | "messages"
+                          | "id"
+                      );
+                    }}
+                  >
+                    <option value="created_at">並び替え: 作成日</option>
+                    <option value="last_sign_in_at">最終ログイン</option>
+                    <option value="last_activity_at">最終活動</option>
+                    <option value="unread">未読数</option>
+                    <option value="tokens">トークン数</option>
+                    <option value="documents">PDF数</option>
+                    <option value="messages">メッセージ数</option>
+                    <option value="id">ID</option>
+                  </select>
+                  <select
+                    className="settings__select"
+                    value={adminSortDir}
+                    onChange={(event) => {
+                      setAdminUsersOffset(0);
+                      setAdminSortDir(event.target.value as "asc" | "desc");
+                    }}
+                  >
+                    <option value="desc">降順</option>
+                    <option value="asc">昇順</option>
+                  </select>
+                  <select
+                    className="settings__select"
+                    value={String(adminUsersLimit)}
+                    onChange={(event) => {
+                      setAdminUsersOffset(0);
+                      setAdminUsersLimit(Number(event.target.value));
+                    }}
+                  >
+                    <option value="20">20件</option>
+                    <option value="50">50件</option>
+                    <option value="100">100件</option>
+                  </select>
+                </div>
                 <div className="admin-table">
                   <div className="admin-table__row admin-table__head">
                     <div>{t("adminUserId")}</div>
                     <div>{t("adminUserEmail")}</div>
                     <div>{t("adminUserPlan")}</div>
+                    <div>種別</div>
+                    <div>トークン</div>
                     <div>{t("adminUnread")}</div>
                   </div>
                   {adminUsersLoading ? (
@@ -604,6 +1269,8 @@ const AdminPageContent = () => {
                         <div className="admin-table__cell admin-table__cell--mono">{item.id}</div>
                         <div className="admin-table__cell">{item.email ?? "-"}</div>
                         <div className="admin-table__cell">{item.plan ?? "-"}</div>
+                        <div className="admin-table__cell">{item.userType}</div>
+                        <div className="admin-table__cell">{item.totalTokens.toLocaleString()}</div>
                         <div className="admin-table__cell">
                           {item.unreadMessages > 0 ? (
                             <span className="admin-chip admin-chip--danger">
@@ -617,10 +1284,33 @@ const AdminPageContent = () => {
                     ))
                   )}
                 </div>
+                <div className="admin-pagination">
+                  <button
+                    type="button"
+                    className="settings__btn settings__btn--ghost"
+                    onClick={() => setAdminUsersOffset((prev) => Math.max(0, prev - adminUsersLimit))}
+                    disabled={adminUsersOffset === 0}
+                  >
+                    前へ
+                  </button>
+                  <div className="admin-console__desc">
+                    {usersRangeStart}-{usersRangeEnd} / {adminUsersTotal}
+                  </div>
+                  <button
+                    type="button"
+                    className="settings__btn settings__btn--ghost"
+                    onClick={() => setAdminUsersOffset((prev) => prev + adminUsersLimit)}
+                    disabled={adminUsersOffset + adminUsers.length >= adminUsersTotal}
+                  >
+                    次へ
+                  </button>
+                </div>
               </section>
               <section className="admin-console__panel">
                 <h2>{t("adminUserDetailTitle")}</h2>
-                {adminUserDetail ? (
+                {adminUserDetailLoading ? (
+                  <div className="admin-console__empty">{t("common.loading")}...</div>
+                ) : adminUserDetail ? (
                   <div className="admin-detail">
                     <div className="admin-detail__row">
                       <span>{t("adminUserId")}</span>
@@ -636,7 +1326,25 @@ const AdminPageContent = () => {
                     </div>
                     <div className="admin-detail__row">
                       <span>{t("adminUserLastSignIn")}</span>
-                      <span>{formatDateTime(adminUserDetail.lastSignInAt)}</span>
+                      <span>
+                        {formatDateTime(adminUserDetail.lastSignInAt)}
+                        {formatRelativeFromNow(adminUserDetail.lastSignInAt)
+                          ? ` (${formatRelativeFromNow(adminUserDetail.lastSignInAt)})`
+                          : ""}
+                      </span>
+                    </div>
+                    <div className="admin-detail__row">
+                      <span>ユーザー種別</span>
+                      <span>{adminUserDetail.userType}</span>
+                    </div>
+                    <div className="admin-detail__row">
+                      <span>最終活動</span>
+                      <span>
+                        {formatDateTime(adminUserDetail.lastActivityAt)}
+                        {formatRelativeFromNow(adminUserDetail.lastActivityAt)
+                          ? ` (${formatRelativeFromNow(adminUserDetail.lastActivityAt)})`
+                          : ""}
+                      </span>
                     </div>
                     <div className="admin-detail__row">
                       <span>{t("adminUserPlan")}</span>

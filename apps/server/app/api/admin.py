@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -34,15 +35,37 @@ async def list_users(
     request: Request,
     limit: int = 50,
     offset: int = 0,
+    q: str | None = None,
+    user_type: str | None = None,
+    plan: str | None = None,
+    stripe_status: str | None = None,
+    unread: str | None = None,
+    active_days: int | None = None,
+    sort_by: str = "created_at",
+    sort_dir: str = "desc",
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
     _ensure_admin(request, user)
-    rows = await repository.list_users_admin(
+    has_unread: bool | None = None
+    unread_value = (unread or "").strip().lower()
+    if unread_value in {"only", "unread", "true", "1", "yes"}:
+        has_unread = True
+    elif unread_value in {"none", "read", "false", "0", "no"}:
+        has_unread = False
+    rows, total = await repository.list_users_admin(
         request.app.state.db_pool,
         limit=limit,
         offset=offset,
+        query=q,
+        user_type=user_type,
+        plan=plan,
+        stripe_status=stripe_status,
+        has_unread=has_unread,
+        active_days=active_days,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
     )
-    return {"users": rows}
+    return {"users": rows, "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/admin/users/{user_id}")
@@ -61,6 +84,28 @@ async def get_user_detail(
         days=30,
     )
     return {"user": row, "usageDaily": usage_daily}
+
+
+@router.get("/admin/overview")
+async def get_overview(
+    request: Request,
+    days: int = 30,
+    token_cost_per_1k_yen: float | None = None,
+    parse_cost_per_page_yen: float | None = None,
+    user: AuthUser = AuthDependency,
+) -> dict[str, Any]:
+    _ensure_admin(request, user)
+    env_token_rate = float(os.getenv("ADMIN_TOKEN_COST_PER_1K_YEN", "0") or "0")
+    env_parse_rate = float(os.getenv("ADMIN_PARSE_COST_PER_PAGE_YEN", "0") or "0")
+    token_rate = env_token_rate if token_cost_per_1k_yen is None else max(0.0, token_cost_per_1k_yen)
+    parse_rate = env_parse_rate if parse_cost_per_page_yen is None else max(0.0, parse_cost_per_page_yen)
+    payload = await repository.get_admin_overview(
+        request.app.state.db_pool,
+        days=max(1, min(days, 365)),
+        token_cost_per_1k_yen=token_rate,
+        parse_cost_per_page_yen=parse_rate,
+    )
+    return payload
 
 
 @router.get("/admin/announcements")
