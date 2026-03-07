@@ -83,7 +83,20 @@ type OverviewModelPoint = {
   share: number;
 };
 
+type OverviewUserTypePoint = {
+  userType: "guest" | "free" | "plus" | "deleted";
+  users: number;
+  share: number;
+};
+
+type OverviewPeriod = "today" | "yesterday" | "7d" | "30d" | "all";
+
 type AdminOverview = {
+  period: {
+    key: OverviewPeriod;
+    startAt: string | null;
+    endAt: string | null;
+  };
   windowDays: number;
   rates: {
     tokenCostPer1kYen: number;
@@ -109,6 +122,7 @@ type AdminOverview = {
   };
   daily: OverviewDailyPoint[];
   models: OverviewModelPoint[];
+  userTypes: OverviewUserTypePoint[];
 };
 
 type FeedbackItem = {
@@ -186,6 +200,7 @@ const AdminPageContent = () => {
   const [adminOverview, setAdminOverview] = useState<AdminOverview | null>(null);
   const [adminOverviewLoading, setAdminOverviewLoading] = useState(false);
   const [adminOverviewError, setAdminOverviewError] = useState<string | null>(null);
+  const [adminOverviewPeriod, setAdminOverviewPeriod] = useState<OverviewPeriod>("30d");
   const [adminAnnouncementDraft, setAdminAnnouncementDraft] = useState({
     title: "",
     body: "",
@@ -214,6 +229,14 @@ const AdminPageContent = () => {
     const date = typeof value === "string" ? new Date(value) : new Date(value * 1000);
     if (Number.isNaN(date.getTime())) return "-";
     return date.toLocaleString(locale);
+  };
+
+  const getOverviewPeriodLabel = (key: OverviewPeriod) => {
+    if (key === "today") return "今日";
+    if (key === "yesterday") return "昨日";
+    if (key === "7d") return "過去7日間";
+    if (key === "30d") return "30日間";
+    return "全期間";
   };
 
   const formatRelativeFromNow = (value: number | string | null) => {
@@ -442,13 +465,25 @@ const AdminPageContent = () => {
     setAdminOverviewLoading(true);
     setAdminOverviewError(null);
     try {
-      const response = await fetch(`${baseUrl}/admin/overview?days=60`, { headers });
+      const response = await fetch(`${baseUrl}/admin/overview?period=${adminOverviewPeriod}`, {
+        headers,
+      });
       if (!response.ok) throw new Error(`Failed to load overview (${response.status})`);
       const payload = await response.json();
       const summary = payload?.summary ?? {};
       const dailySource = Array.isArray(payload?.daily) ? payload.daily : [];
       const modelsSource = Array.isArray(payload?.models) ? payload.models : [];
+      const userTypesSource = Array.isArray(payload?.userTypes) ? payload.userTypes : [];
+      const periodKey = String(payload?.period?.key ?? adminOverviewPeriod).toLowerCase();
+      const normalizedPeriod: OverviewPeriod = (
+        ["today", "yesterday", "7d", "30d", "all"].includes(periodKey) ? periodKey : "30d"
+      ) as OverviewPeriod;
       setAdminOverview({
+        period: {
+          key: normalizedPeriod,
+          startAt: payload?.period?.startAt ?? null,
+          endAt: payload?.period?.endAt ?? null,
+        },
         windowDays: Number(payload?.windowDays ?? 60),
         rates: {
           tokenCostPer1kYen: Number(payload?.rates?.tokenCostPer1kYen ?? 0),
@@ -487,6 +522,15 @@ const AdminPageContent = () => {
           model: String(item?.model ?? "unknown"),
           calls: Number(item?.calls ?? 0),
           totalTokens: Number(item?.total_tokens ?? 0),
+          share: Number(item?.share ?? 0),
+        })),
+        userTypes: userTypesSource.map((item: any) => ({
+          userType: (String(item?.user_type ?? "guest").toLowerCase() as
+            | "guest"
+            | "free"
+            | "plus"
+            | "deleted"),
+          users: Number(item?.users ?? 0),
           share: Number(item?.share ?? 0),
         })),
       });
@@ -852,7 +896,7 @@ const AdminPageContent = () => {
     void loadOverview();
     void loadUnreadTotal();
     void loadFeedbackUnreadTotal();
-  }, [adminSection, authStatus]);
+  }, [adminSection, authStatus, adminOverviewPeriod]);
 
   useEffect(() => {
     if (authStatus !== "ok" || adminSection !== "announcements") return;
@@ -949,8 +993,30 @@ const AdminPageContent = () => {
             <div className="admin-console__grid">
               <section className="admin-console__panel admin-overview">
                 <h2>概要ダッシュボード</h2>
+                <div className="admin-overview__toolbar">
+                  <select
+                    className="settings__select admin-overview__period-select"
+                    value={adminOverviewPeriod}
+                    onChange={(event) =>
+                      setAdminOverviewPeriod(event.target.value as OverviewPeriod)
+                    }
+                  >
+                    <option value="today">今日</option>
+                    <option value="yesterday">昨日</option>
+                    <option value="7d">過去7日間</option>
+                    <option value="30d">30日間</option>
+                    <option value="all">全期間</option>
+                  </select>
+                  {adminOverview?.period?.startAt && adminOverview?.period?.endAt ? (
+                    <div className="admin-overview__period-range">
+                      {formatDate(adminOverview.period.startAt)}〜{formatDate(adminOverview.period.endAt)}
+                    </div>
+                  ) : null}
+                </div>
                 <p className="admin-console__desc">
-                  直近{adminOverview?.windowDays ?? 60}日間の登録・利用・コスト推移
+                  {adminOverview
+                    ? `${getOverviewPeriodLabel(adminOverview.period.key)}の登録・利用・コスト推移`
+                    : "30日間の登録・利用・コスト推移"}
                 </p>
                 {adminOverviewLoading ? (
                   <div className="admin-console__empty">{t("common.loading")}</div>
@@ -1082,6 +1148,29 @@ const AdminPageContent = () => {
                               <div>{item.totalTokens.toLocaleString()}</div>
                               <div>{(item.share * 100).toFixed(1)}%</div>
                               <div>{item.calls.toLocaleString()}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="admin-overview__user-types">
+                      <div className="admin-detail__messages-title">ユーザー種別</div>
+                      {adminOverview.userTypes.length === 0 ? (
+                        <div className="admin-console__empty">データがありません</div>
+                      ) : (
+                        <div className="admin-overview__user-table">
+                          <div className="admin-overview__user-row admin-overview__model-head">
+                            <div>種別</div>
+                            <div>人数</div>
+                            <div>比率</div>
+                          </div>
+                          {adminOverview.userTypes.map((item) => (
+                            <div key={item.userType} className="admin-overview__user-row">
+                              <div className="admin-table__cell admin-table__cell--mono">
+                                {item.userType}
+                              </div>
+                              <div>{item.users.toLocaleString()}</div>
+                              <div>{(item.share * 100).toFixed(1)}%</div>
                             </div>
                           ))}
                         </div>

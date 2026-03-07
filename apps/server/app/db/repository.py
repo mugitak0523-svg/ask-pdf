@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import asyncpg
@@ -18,10 +18,14 @@ def _normalize_whitespace_for_search(value: str) -> str:
 _MODEL_PRICING_USD_PER_1M: dict[str, dict[str, float]] = {
     # https://openai.com/api/pricing/
     "gpt-5-mini": {"input": 0.25, "output": 2.0},
+    "gpt-5-nano": {"input": 0.05, "output": 0.4},
+    "gpt-4.1-nano": {"input": 0.1, "output": 0.4},
+    "gpt-3.5-turbo": {"input": 0.5, "output": 1.5},
     # Internal rule from user request
     "gpt-oss-120b": {"input": 0.0, "output": 0.0},
     # https://ai.google.dev/gemini-api/docs/pricing
     "gemini-3-flash-preview": {"input": 0.5, "output": 3.0},
+    "gemini-2.5-flash": {"input": 0.3, "output": 2.5},
     # Embeddings: https://openai.com/api/pricing/
     "text-embedding-3-small": {"embed_input": 0.02},
     "text-embedding-3-large": {"embed_input": 0.13},
@@ -2079,11 +2083,46 @@ async def list_usage_daily_admin(
 async def get_admin_overview(
     pool,
     *,
-    days: int = 30,
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+    period_key: str = "30d",
     parse_cost_per_page_usd: float = 0.01,
 ) -> dict[str, Any]:
-    safe_days = max(1, min(int(days), 365))
+    end_ts = end_at or datetime.now(timezone.utc)
+    if start_at is not None and start_at > end_ts:
+        start_at = end_ts
     async with pool.acquire() as conn:
+        if start_at is None:
+            range_row = await conn.fetchrow(
+                """
+                with points as (
+                    select min(created_at) as min_at, max(created_at) as max_at from usage_logs
+                    union all
+                    select min(created_at) as min_at, max(created_at) as max_at from documents
+                    union all
+                    select min(created_at) as min_at, max(created_at) as max_at from document_chat_messages
+                    union all
+                    select min(created_at) as min_at, max(created_at) as max_at from auth.users
+                    union all
+                    select min(deleted_at) as min_at, max(deleted_at) as max_at from account_deletion_logs
+                )
+                select
+                    min(min_at) as min_at,
+                    max(max_at) as max_at
+                from points
+                """
+            )
+            range_data = dict(range_row) if range_row else {}
+            start_ts = range_data.get("min_at") if range_data.get("min_at") is not None else end_ts
+            if range_data.get("max_at") is not None:
+                end_ts = max(end_ts, range_data.get("max_at"))
+        else:
+            start_ts = start_at
+
+        if start_ts > end_ts:
+            start_ts = end_ts
+
+        window_days = max(1, (end_ts.date() - start_ts.date()).days + 1)
         summary_row = await conn.fetchrow(
             """
             with guest_users as (
@@ -2107,19 +2146,22 @@ async def get_admin_overview(
                 (
                     select count(distinct ul.user_id::text)
                     from usage_logs ul
-                    where ul.created_at >= (now() - make_interval(days => $1::int))
+                    where ul.created_at >= $1::timestamptz
+                      and ul.created_at < $2::timestamptz
                 ) as active_users_window,
                 (select count(*) from documents) as documents_total,
                 (
                     select count(*)
                     from documents d
-                    where d.created_at >= (now() - make_interval(days => $1::int))
+                    where d.created_at >= $1::timestamptz
+                      and d.created_at < $2::timestamptz
                 ) as documents_window,
                 (select count(*) from document_chat_messages) as messages_total,
                 (
                     select count(*)
                     from document_chat_messages m
-                    where m.created_at >= (now() - make_interval(days => $1::int))
+                    where m.created_at >= $1::timestamptz
+                      and m.created_at < $2::timestamptz
                 ) as messages_window,
                 (
                     select coalesce(sum(total_tokens), 0)
@@ -2128,7 +2170,8 @@ async def get_admin_overview(
                 (
                     select coalesce(sum(total_tokens), 0)
                     from usage_logs ul
-                    where ul.created_at >= (now() - make_interval(days => $1::int))
+                    where ul.created_at >= $1::timestamptz
+                      and ul.created_at < $2::timestamptz
                 ) as tokens_window,
                 (
                     select coalesce(sum(pages), 0)
@@ -2139,7 +2182,8 @@ async def get_admin_overview(
                     select coalesce(sum(pages), 0)
                     from usage_logs ul
                     where ul.operation = 'parse'
-                      and ul.created_at >= (now() - make_interval(days => $1::int))
+                      and ul.created_at >= $1::timestamptz
+                      and ul.created_at < $2::timestamptz
                 ) as parse_pages_window,
                 (
                     select count(*)
@@ -2158,7 +2202,8 @@ async def get_admin_overview(
                     where f.read_at is null
                 ) as unread_feedback
             """,
-            safe_days,
+            start_ts,
+            end_ts,
         )
         usage_rows = await conn.fetch(
             """
@@ -2171,55 +2216,63 @@ async def get_admin_overview(
                 total_tokens,
                 pages
             from usage_logs
-            where created_at >= (now() - make_interval(days => $1::int))
+            where created_at >= $1::timestamptz
+              and created_at < $2::timestamptz
             order by created_at
             """,
-            safe_days,
+            start_ts,
+            end_ts,
         )
         daily_rows = await conn.fetch(
             """
             with days as (
                 select generate_series(
-                    date_trunc('day', now()) - make_interval(days => ($1::int - 1)),
-                    date_trunc('day', now()),
+                    date_trunc('day', $1::timestamptz),
+                    date_trunc('day', $2::timestamptz - interval '1 second'),
                     interval '1 day'
                 ) as day
             ),
             signups as (
                 select date_trunc('day', created_at) as day, count(*) as count
                 from auth.users
-                where created_at >= (now() - make_interval(days => $1::int))
+                where created_at >= $1::timestamptz
+                  and created_at < $2::timestamptz
                 group by 1
             ),
             active as (
                 select date_trunc('day', created_at) as day, count(distinct user_id::text) as count
                 from usage_logs
-                where created_at >= (now() - make_interval(days => $1::int))
+                where created_at >= $1::timestamptz
+                  and created_at < $2::timestamptz
                 group by 1
             ),
             docs as (
                 select date_trunc('day', created_at) as day, count(*) as count
                 from documents
-                where created_at >= (now() - make_interval(days => $1::int))
+                where created_at >= $1::timestamptz
+                  and created_at < $2::timestamptz
                 group by 1
             ),
             messages as (
                 select date_trunc('day', created_at) as day, count(*) as count
                 from document_chat_messages
-                where created_at >= (now() - make_interval(days => $1::int))
+                where created_at >= $1::timestamptz
+                  and created_at < $2::timestamptz
                 group by 1
             ),
             tokens as (
                 select date_trunc('day', created_at) as day, coalesce(sum(total_tokens), 0) as total_tokens
                 from usage_logs
-                where created_at >= (now() - make_interval(days => $1::int))
+                where created_at >= $1::timestamptz
+                  and created_at < $2::timestamptz
                 group by 1
             ),
             parse_pages as (
                 select date_trunc('day', created_at) as day, coalesce(sum(pages), 0) as pages
                 from usage_logs
                 where operation = 'parse'
-                  and created_at >= (now() - make_interval(days => $1::int))
+                  and created_at >= $1::timestamptz
+                  and created_at < $2::timestamptz
                 group by 1
             )
             select
@@ -2239,7 +2292,8 @@ async def get_admin_overview(
             left join parse_pages p on p.day = d.day
             order by d.day
             """,
-            safe_days,
+            start_ts,
+            end_ts,
         )
         model_rows = await conn.fetch(
             """
@@ -2250,13 +2304,68 @@ async def get_admin_overview(
                 coalesce(sum(input_tokens), 0) as input_tokens,
                 coalesce(sum(output_tokens), 0) as output_tokens
             from usage_logs
-            where created_at >= (now() - make_interval(days => $1::int))
+            where created_at >= $1::timestamptz
+              and created_at < $2::timestamptz
             group by 1
             order by total_tokens desc, calls desc, model asc
             limit 12
             """,
-            safe_days,
+            start_ts,
+            end_ts,
         )
+        try:
+            user_type_rows = await conn.fetch(
+                """
+            with window_usage as (
+                select distinct ul.user_id::text as user_id
+                from usage_logs ul
+                where ul.created_at >= $1::timestamptz
+                  and ul.created_at < $2::timestamptz
+            ),
+            classified as (
+                select
+                    wu.user_id,
+                    case
+                        when not exists (
+                            select 1 from auth.users u where u.id::text = wu.user_id
+                        ) then 'guest'
+                        when exists (
+                            select 1
+                            from user_plans p
+                            where p.user_id::text = wu.user_id
+                              and p.plan = 'plus'
+                        ) then 'plus'
+                        else 'free'
+                    end as user_type
+                from window_usage wu
+            ),
+            counts as (
+                select user_type, count(*)::bigint as users
+                from classified
+                group by 1
+                union all
+                select 'deleted'::text as user_type, count(distinct ad.user_id::text)::bigint as users
+                from account_deletion_logs ad
+                where ad.deleted_at >= $1::timestamptz
+                  and ad.deleted_at < $2::timestamptz
+            )
+            select
+                user_type,
+                users
+            from counts
+            order by case user_type
+                when 'guest' then 1
+                when 'free' then 2
+                when 'plus' then 3
+                when 'deleted' then 4
+                else 100
+            end
+            """,
+                start_ts,
+                end_ts,
+            )
+        except asyncpg.UndefinedTableError:
+            user_type_rows = []
 
     summary = dict(summary_row) if summary_row else {}
     window_tokens = int(summary.get("tokens_window") or 0)
@@ -2328,8 +2437,43 @@ async def get_admin_overview(
         item["share"] = (tokens / model_total_tokens) if model_total_tokens > 0 else 0.0
         model_total_cost += est_cost
 
+    user_type_counts: dict[str, int] = {"guest": 0, "free": 0, "plus": 0, "deleted": 0}
+    for row in user_type_rows:
+        item = dict(row)
+        user_type = str(item.get("user_type") or "").strip().lower()
+        if user_type in user_type_counts:
+            user_type_counts[user_type] = int(item.get("users") or 0)
+    user_type_total = sum(user_type_counts.values())
+    user_types = [
+        {
+            "user_type": "guest",
+            "users": user_type_counts["guest"],
+            "share": (user_type_counts["guest"] / user_type_total) if user_type_total > 0 else 0.0,
+        },
+        {
+            "user_type": "free",
+            "users": user_type_counts["free"],
+            "share": (user_type_counts["free"] / user_type_total) if user_type_total > 0 else 0.0,
+        },
+        {
+            "user_type": "plus",
+            "users": user_type_counts["plus"],
+            "share": (user_type_counts["plus"] / user_type_total) if user_type_total > 0 else 0.0,
+        },
+        {
+            "user_type": "deleted",
+            "users": user_type_counts["deleted"],
+            "share": (user_type_counts["deleted"] / user_type_total) if user_type_total > 0 else 0.0,
+        },
+    ]
+
     return {
-        "windowDays": safe_days,
+        "windowDays": window_days,
+        "period": {
+            "key": period_key,
+            "startAt": start_ts.isoformat(),
+            "endAt": end_ts.isoformat(),
+        },
         "rates": {
             "tokenCostPer1kYen": 0.0,
             "parseCostPerPageYen": float(parse_cost_per_page_usd),
@@ -2359,6 +2503,7 @@ async def get_admin_overview(
         },
         "daily": daily,
         "models": model_breakdown,
+        "userTypes": user_types,
     }
 
 

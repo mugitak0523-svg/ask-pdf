@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -88,13 +88,41 @@ async def get_user_detail(
 @router.get("/admin/overview")
 async def get_overview(
     request: Request,
-    days: int = 30,
+    period: str | None = None,
+    days: int | None = None,
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
     _ensure_admin(request, user)
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    key = (period or "").strip().lower()
+    if not key:
+        key = "custom_days" if days is not None else "30d"
+
+    start_at: datetime | None
+    end_at: datetime = now
+    if key == "today":
+        start_at = today_start
+    elif key == "yesterday":
+        start_at = today_start - timedelta(days=1)
+        end_at = today_start
+    elif key == "7d":
+        start_at = today_start - timedelta(days=6)
+    elif key == "30d":
+        start_at = today_start - timedelta(days=29)
+    elif key == "all":
+        start_at = None
+    elif key == "custom_days":
+        safe_days = max(1, min(int(days or 30), 365))
+        start_at = today_start - timedelta(days=safe_days - 1)
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid period")
+
     payload = await repository.get_admin_overview(
         request.app.state.db_pool,
-        days=max(1, min(days, 365)),
+        start_at=start_at,
+        end_at=end_at,
+        period_key=key,
         parse_cost_per_page_usd=10.0 / 1000.0,
     )
     return payload
