@@ -40,7 +40,25 @@ def _normalize_model_name(value: Any) -> str:
     name = str(value).strip()
     if not name:
         return "unknown"
-    return name.lower()
+    normalized = name.lower()
+    if normalized.startswith("models/"):
+        normalized = normalized.split("/", 1)[1]
+    # Keep price-table lookup stable for dated/preview suffix variants.
+    aliases = (
+        "gpt-5-mini",
+        "gpt-5-nano",
+        "gpt-4.1-nano",
+        "gpt-3.5-turbo",
+        "gemini-3-flash-preview",
+        "gemini-2.5-flash",
+        "gpt-oss-120b",
+        "text-embedding-3-small",
+        "text-embedding-3-large",
+    )
+    for alias in aliases:
+        if normalized == alias or normalized.startswith(f"{alias}-"):
+            return alias
+    return normalized
 
 
 def _estimate_usage_cost_usd(
@@ -50,12 +68,14 @@ def _estimate_usage_cost_usd(
     input_tokens: int | None,
     output_tokens: int | None,
     pages: int | None,
+    total_tokens: int | None,
     parse_cost_per_page_usd: float,
 ) -> float:
     op = (operation or "").strip().lower()
     model_key = _normalize_model_name(model)
     in_tokens = max(0, int(input_tokens or 0))
     out_tokens = max(0, int(output_tokens or 0))
+    total = max(0, int(total_tokens or 0))
     page_count = max(0, int(pages or 0))
 
     if op == "parse":
@@ -64,13 +84,16 @@ def _estimate_usage_cost_usd(
     if op == "embed":
         embedding_model = model_key if model_key in _MODEL_PRICING_USD_PER_1M else _DEFAULT_EMBED_MODEL
         rate = _MODEL_PRICING_USD_PER_1M.get(embedding_model, {}).get("embed_input", 0.0)
-        return (in_tokens / 1_000_000.0) * float(rate)
+        embed_tokens = in_tokens if in_tokens > 0 else total
+        return (embed_tokens / 1_000_000.0) * float(rate)
 
     rate_table = _MODEL_PRICING_USD_PER_1M.get(model_key)
     if not rate_table:
         return 0.0
     in_rate = float(rate_table.get("input", 0.0))
     out_rate = float(rate_table.get("output", 0.0))
+    if in_tokens == 0 and out_tokens == 0 and total > 0:
+        in_tokens = total
     return (in_tokens / 1_000_000.0) * in_rate + (out_tokens / 1_000_000.0) * out_rate
 
 
@@ -2390,6 +2413,7 @@ async def get_admin_overview(
             input_tokens=data.get("input_tokens"),
             output_tokens=data.get("output_tokens"),
             pages=data.get("pages"),
+            total_tokens=data.get("total_tokens"),
             parse_cost_per_page_usd=parse_cost_per_page_usd,
         )
         created_at = data.get("created_at")
@@ -2431,6 +2455,7 @@ async def get_admin_overview(
             input_tokens=item.get("input_tokens"),
             output_tokens=item.get("output_tokens"),
             pages=None,
+            total_tokens=item.get("total_tokens"),
             parse_cost_per_page_usd=parse_cost_per_page_usd,
         )
         item["estimated_cost_usd"] = round(est_cost, 6)

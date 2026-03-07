@@ -3285,12 +3285,12 @@ body.tooltip-portal-enabled [data-tooltip]::after {
 .admin-table {
   display: grid;
   gap: 4px;
-  overflow-x: auto;
+  overflow: hidden;
 }
 
 .admin-table__row {
   display: grid;
-  grid-template-columns: minmax(200px, 1.5fr) minmax(180px, 1.2fr) 80px 90px 110px 70px;
+  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1.2fr) minmax(0, 0.7fr) minmax(0, 0.7fr) minmax(0, 0.9fr) minmax(0, 0.5fr);
   gap: 8px;
   padding: 8px 10px;
   border-radius: 8px;
@@ -3298,6 +3298,13 @@ body.tooltip-portal-enabled [data-tooltip]::after {
   background: #ffffff;
   font-size: 12px;
   align-items: center;
+}
+
+.admin-table__cell {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .admin-table__head {
