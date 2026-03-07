@@ -25,6 +25,20 @@ class EmbeddingRequest(BaseModel):
     document_id: str | None = None
 
 
+def _extract_model_name(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    model = payload.get("model")
+    if isinstance(model, str) and model.strip():
+        return model.strip()
+    meta = payload.get("metadata")
+    if isinstance(meta, dict):
+        nested = meta.get("model")
+        if isinstance(nested, str) and nested.strip():
+            return nested.strip()
+    return None
+
+
 @router.post("/search")
 async def search(
     request: Request,
@@ -33,6 +47,7 @@ async def search(
 ) -> dict[str, Any]:
     parser = request.app.state.parser_client
     embed_payload = await parser.embed_text(payload.query)
+    embed_model = _extract_model_name(embed_payload)
     input_tokens, output_tokens, total_tokens, raw_usage = extract_usage(embed_payload)
     embedding = embed_payload.get("embedding") or embed_payload.get("data")
     if isinstance(embedding, dict):
@@ -48,6 +63,7 @@ async def search(
                 user_id=user.user_id,
                 operation="embed",
                 document_id=payload.document_id,
+                model=embed_model,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 total_tokens=total_tokens,
@@ -79,6 +95,7 @@ async def embeddings(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="text is required")
     parser = request.app.state.parser_client
     embed_payload = await parser.embed_text(text)
+    embed_model = _extract_model_name(embed_payload)
     input_tokens, output_tokens, total_tokens, raw_usage = extract_usage(embed_payload)
     embedding = embed_payload.get("embedding") or embed_payload.get("data")
     if isinstance(embedding, dict):
@@ -93,6 +110,7 @@ async def embeddings(
                 user_id=user.user_id,
                 operation="embed",
                 document_id=payload.document_id,
+                model=embed_model,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 total_tokens=total_tokens,

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -90,20 +89,13 @@ async def get_user_detail(
 async def get_overview(
     request: Request,
     days: int = 30,
-    token_cost_per_1k_yen: float | None = None,
-    parse_cost_per_page_yen: float | None = None,
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
     _ensure_admin(request, user)
-    env_token_rate = float(os.getenv("ADMIN_TOKEN_COST_PER_1K_YEN", "0") or "0")
-    env_parse_rate = float(os.getenv("ADMIN_PARSE_COST_PER_PAGE_YEN", "0") or "0")
-    token_rate = env_token_rate if token_cost_per_1k_yen is None else max(0.0, token_cost_per_1k_yen)
-    parse_rate = env_parse_rate if parse_cost_per_page_yen is None else max(0.0, parse_cost_per_page_yen)
     payload = await repository.get_admin_overview(
         request.app.state.db_pool,
         days=max(1, min(days, 365)),
-        token_cost_per_1k_yen=token_rate,
-        parse_cost_per_page_yen=parse_rate,
+        parse_cost_per_page_usd=10.0 / 1000.0,
     )
     return payload
 

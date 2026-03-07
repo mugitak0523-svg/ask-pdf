@@ -572,7 +572,7 @@ const AdminPageContent = () => {
   const overviewTokenCostData = useMemo(
     () =>
       buildLineData(
-        "推定LLM料金(円)",
+        "推定LLM料金(USD)",
         adminOverview?.daily.map((point) => point.tokenCostYen) ?? [],
         "#65a30d",
         "rgba(132, 204, 22, 0.12)"
@@ -602,7 +602,7 @@ const AdminPageContent = () => {
   const overviewParseCostData = useMemo(
     () =>
       buildLineData(
-        "推定解析料金(円)",
+        "推定解析料金(USD)",
         adminOverview?.daily.map((point) => point.parseCostYen) ?? [],
         "#dc2626",
         "rgba(239, 68, 68, 0.12)"
@@ -982,9 +982,9 @@ const AdminPageContent = () => {
                         </div>
                       </div>
                       <div className="admin-overview__stat">
-                        <div className="admin-overview__label">推定LLM料金(直近)</div>
+                        <div className="admin-overview__label">推定LLM料金(直近, USD)</div>
                         <div className="admin-overview__value">
-                          ¥{adminOverview.summary.tokenCostWindowYen.toLocaleString()}
+                          ${adminOverview.summary.tokenCostWindowYen.toLocaleString()}
                         </div>
                       </div>
                       <div className="admin-overview__stat">
@@ -1000,9 +1000,9 @@ const AdminPageContent = () => {
                         </div>
                       </div>
                       <div className="admin-overview__stat">
-                        <div className="admin-overview__label">推定解析料金(直近)</div>
+                        <div className="admin-overview__label">推定解析料金(直近, USD)</div>
                         <div className="admin-overview__value">
-                          ¥{adminOverview.summary.parseCostWindowYen.toLocaleString()}
+                          ${adminOverview.summary.parseCostWindowYen.toLocaleString()}
                         </div>
                       </div>
                       <div className="admin-overview__stat">

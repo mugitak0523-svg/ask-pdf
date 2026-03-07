@@ -74,6 +74,20 @@ def _extract_embedding(payload: dict[str, Any]) -> list[float] | None:
     return None
 
 
+def _extract_model_name(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    model = payload.get("model")
+    if isinstance(model, str) and model.strip():
+        return model.strip()
+    meta = payload.get("metadata")
+    if isinstance(meta, dict):
+        nested = meta.get("model")
+        if isinstance(nested, str) and nested.strip():
+            return nested.strip()
+    return None
+
+
 def _parse_vector(value: Any) -> list[float] | None:
     if isinstance(value, list):
         return [float(item) for item in value]
@@ -1186,6 +1200,7 @@ async def create_document_chat_assistant_message(
                 payload=embed_payload if isinstance(embed_payload, dict) else None,
                 document_id=document_id,
                 chat_id=chat_id,
+                model=_extract_model_name(embed_payload),
             )
             matches = await repository.match_documents_conn(
                 conn,
@@ -1453,6 +1468,7 @@ async def stream_document_chat_assistant_message(
             payload=embed_payload if isinstance(embed_payload, dict) else None,
             document_id=document_id,
             chat_id=chat_id,
+            model=_extract_model_name(embed_payload),
         )
         embedding = _extract_embedding(embed_payload)
         if not isinstance(embedding, list):

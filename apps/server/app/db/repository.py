@@ -15,6 +15,61 @@ def _normalize_whitespace_for_search(value: str) -> str:
     return re.sub(r"[\s\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000\uFEFF]+", "", value).strip()
 
 
+_MODEL_PRICING_USD_PER_1M: dict[str, dict[str, float]] = {
+    # https://openai.com/api/pricing/
+    "gpt-5-mini": {"input": 0.25, "output": 2.0},
+    # Internal rule from user request
+    "gpt-oss-120b": {"input": 0.0, "output": 0.0},
+    # https://ai.google.dev/gemini-api/docs/pricing
+    "gemini-3-flash-preview": {"input": 0.5, "output": 3.0},
+    # Embeddings: https://openai.com/api/pricing/
+    "text-embedding-3-small": {"embed_input": 0.02},
+    "text-embedding-3-large": {"embed_input": 0.13},
+}
+
+_DEFAULT_EMBED_MODEL = "text-embedding-3-small"
+
+
+def _normalize_model_name(value: Any) -> str:
+    if not value:
+        return "unknown"
+    name = str(value).strip()
+    if not name:
+        return "unknown"
+    return name.lower()
+
+
+def _estimate_usage_cost_usd(
+    *,
+    operation: str | None,
+    model: str | None,
+    input_tokens: int | None,
+    output_tokens: int | None,
+    pages: int | None,
+    parse_cost_per_page_usd: float,
+) -> float:
+    op = (operation or "").strip().lower()
+    model_key = _normalize_model_name(model)
+    in_tokens = max(0, int(input_tokens or 0))
+    out_tokens = max(0, int(output_tokens or 0))
+    page_count = max(0, int(pages or 0))
+
+    if op == "parse":
+        return float(page_count) * float(parse_cost_per_page_usd)
+
+    if op == "embed":
+        embedding_model = model_key if model_key in _MODEL_PRICING_USD_PER_1M else _DEFAULT_EMBED_MODEL
+        rate = _MODEL_PRICING_USD_PER_1M.get(embedding_model, {}).get("embed_input", 0.0)
+        return (in_tokens / 1_000_000.0) * float(rate)
+
+    rate_table = _MODEL_PRICING_USD_PER_1M.get(model_key)
+    if not rate_table:
+        return 0.0
+    in_rate = float(rate_table.get("input", 0.0))
+    out_rate = float(rate_table.get("output", 0.0))
+    return (in_tokens / 1_000_000.0) * in_rate + (out_tokens / 1_000_000.0) * out_rate
+
+
 async def insert_document(
     pool: asyncpg.Pool,
     title: str,
@@ -2025,8 +2080,7 @@ async def get_admin_overview(
     pool,
     *,
     days: int = 30,
-    token_cost_per_1k_yen: float = 0.0,
-    parse_cost_per_page_yen: float = 0.0,
+    parse_cost_per_page_usd: float = 0.01,
 ) -> dict[str, Any]:
     safe_days = max(1, min(int(days), 365))
     async with pool.acquire() as conn:
@@ -2106,6 +2160,22 @@ async def get_admin_overview(
             """,
             safe_days,
         )
+        usage_rows = await conn.fetch(
+            """
+            select
+                created_at,
+                operation,
+                model,
+                input_tokens,
+                output_tokens,
+                total_tokens,
+                pages
+            from usage_logs
+            where created_at >= (now() - make_interval(days => $1::int))
+            order by created_at
+            """,
+            safe_days,
+        )
         daily_rows = await conn.fetch(
             """
             with days as (
@@ -2176,7 +2246,9 @@ async def get_admin_overview(
             select
                 coalesce(nullif(model, ''), 'unknown') as model,
                 count(*) as calls,
-                coalesce(sum(total_tokens), 0) as total_tokens
+                coalesce(sum(total_tokens), 0) as total_tokens,
+                coalesce(sum(input_tokens), 0) as input_tokens,
+                coalesce(sum(output_tokens), 0) as output_tokens
             from usage_logs
             where created_at >= (now() - make_interval(days => $1::int))
             group by 1
@@ -2189,27 +2261,80 @@ async def get_admin_overview(
     summary = dict(summary_row) if summary_row else {}
     window_tokens = int(summary.get("tokens_window") or 0)
     window_parse_pages = int(summary.get("parse_pages_window") or 0)
-    token_cost_window = round((window_tokens / 1000.0) * float(token_cost_per_1k_yen), 3)
-    parse_cost_window = round(window_parse_pages * float(parse_cost_per_page_yen), 3)
+    daily_by_day: dict[str, dict[str, float]] = {}
+    for row in daily_rows:
+        item = dict(row)
+        day = item.get("day")
+        day_key = day.isoformat() if day is not None else ""
+        daily_by_day[day_key] = {
+            "token_cost_usd": 0.0,
+            "parse_cost_usd": 0.0,
+        }
+
+    token_cost_window = 0.0
+    parse_cost_window = 0.0
+    for row in usage_rows:
+        data = dict(row)
+        cost = _estimate_usage_cost_usd(
+            operation=data.get("operation"),
+            model=data.get("model"),
+            input_tokens=data.get("input_tokens"),
+            output_tokens=data.get("output_tokens"),
+            pages=data.get("pages"),
+            parse_cost_per_page_usd=parse_cost_per_page_usd,
+        )
+        created_at = data.get("created_at")
+        day_key = ""
+        if created_at is not None:
+            day_key = created_at.date().isoformat()
+        if day_key in daily_by_day:
+            if str(data.get("operation") or "").lower() == "parse":
+                daily_by_day[day_key]["parse_cost_usd"] += cost
+                parse_cost_window += cost
+            else:
+                daily_by_day[day_key]["token_cost_usd"] += cost
+                token_cost_window += cost
+
     daily = []
     for row in daily_rows:
         item = dict(row)
         day_tokens = int(item.get("tokens") or 0)
         day_pages = int(item.get("parse_pages") or 0)
-        item["token_cost_yen"] = round((day_tokens / 1000.0) * float(token_cost_per_1k_yen), 3)
-        item["parse_cost_yen"] = round(day_pages * float(parse_cost_per_page_yen), 3)
+        day = item.get("day")
+        day_key = day.isoformat() if day is not None else ""
+        costs = daily_by_day.get(day_key, {"token_cost_usd": 0.0, "parse_cost_usd": 0.0})
+        item["token_cost_usd"] = round(float(costs.get("token_cost_usd") or 0.0), 6)
+        item["parse_cost_usd"] = round(float(costs.get("parse_cost_usd") or 0.0), 6)
+        # Backward-compatible keys for existing frontend
+        item["token_cost_yen"] = item["token_cost_usd"]
+        item["parse_cost_yen"] = item["parse_cost_usd"]
+        item["tokens"] = day_tokens
+        item["parse_pages"] = day_pages
         daily.append(item)
     model_breakdown = [dict(row) for row in model_rows]
     model_total_tokens = sum(int(item.get("total_tokens") or 0) for item in model_breakdown)
+    model_total_cost = 0.0
     for item in model_breakdown:
         tokens = int(item.get("total_tokens") or 0)
+        est_cost = _estimate_usage_cost_usd(
+            operation="answer",
+            model=item.get("model"),
+            input_tokens=item.get("input_tokens"),
+            output_tokens=item.get("output_tokens"),
+            pages=None,
+            parse_cost_per_page_usd=parse_cost_per_page_usd,
+        )
+        item["estimated_cost_usd"] = round(est_cost, 6)
         item["share"] = (tokens / model_total_tokens) if model_total_tokens > 0 else 0.0
+        model_total_cost += est_cost
 
     return {
         "windowDays": safe_days,
         "rates": {
-            "tokenCostPer1kYen": float(token_cost_per_1k_yen),
-            "parseCostPerPageYen": float(parse_cost_per_page_yen),
+            "tokenCostPer1kYen": 0.0,
+            "parseCostPerPageYen": float(parse_cost_per_page_usd),
+            "tokenCostPer1kUsd": 0.0,
+            "parseCostPerPageUsd": float(parse_cost_per_page_usd),
         },
         "summary": {
             "registeredUsers": int(summary.get("registered_users") or 0),
@@ -2224,10 +2349,13 @@ async def get_admin_overview(
             "tokensWindow": window_tokens,
             "parsePagesTotal": int(summary.get("parse_pages_total") or 0),
             "parsePagesWindow": window_parse_pages,
-            "tokenCostWindowYen": token_cost_window,
-            "parseCostWindowYen": parse_cost_window,
+            "tokenCostWindowYen": round(token_cost_window, 6),
+            "parseCostWindowYen": round(parse_cost_window, 6),
+            "tokenCostWindowUsd": round(token_cost_window, 6),
+            "parseCostWindowUsd": round(parse_cost_window, 6),
             "unreadMessages": int(summary.get("unread_messages") or 0),
             "unreadFeedback": int(summary.get("unread_feedback") or 0),
+            "modelCostWindowUsd": round(model_total_cost, 6),
         },
         "daily": daily,
         "models": model_breakdown,
