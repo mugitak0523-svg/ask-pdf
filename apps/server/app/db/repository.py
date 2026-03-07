@@ -1720,24 +1720,78 @@ async def list_users_admin(pool, *, limit: int = 50, offset: int = 0) -> list[di
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            select
-                u.id,
-                u.email,
-                u.created_at,
-                u.last_sign_in_at,
-                p.plan,
-                p.stripe_status,
-                p.current_period_end,
-                coalesce(unread.unread_count, 0) as unread_message_count
-            from auth.users u
-            left join user_plans p on p.user_id = u.id
-            left join (
-                select user_id, count(*) as unread_count
+            with unread as (
+                select user_id::text as user_id, count(*) as unread_count
                 from admin_user_messages
                 where direction = 'user' and read_at is null
-                group by user_id
-            ) as unread on unread.user_id = u.id
-            order by u.created_at desc
+                group by user_id::text
+            ),
+            activity as (
+                select
+                    user_id::text as user_id,
+                    min(created_at) as first_seen,
+                    max(created_at) as last_seen
+                from (
+                    select user_id, created_at from documents
+                    union all
+                    select user_id, created_at from document_chat_threads
+                    union all
+                    select user_id, created_at from document_chat_messages
+                    union all
+                    select user_id, created_at from usage_logs
+                    union all
+                    select user_id, created_at from admin_user_messages
+                    union all
+                    select user_id, created_at from user_feedback
+                ) as events
+                group by user_id::text
+            ),
+            registered as (
+                select
+                    u.id::text as id,
+                    u.email,
+                    u.created_at,
+                    u.last_sign_in_at,
+                    p.plan,
+                    p.stripe_status,
+                    p.current_period_end,
+                    coalesce(unread.unread_count, 0) as unread_message_count
+                from auth.users u
+                left join user_plans p on p.user_id = u.id
+                left join unread on unread.user_id = u.id::text
+            ),
+            guests as (
+                select
+                    a.user_id as id,
+                    null::text as email,
+                    a.first_seen as created_at,
+                    a.last_seen as last_sign_in_at,
+                    p.plan,
+                    p.stripe_status,
+                    p.current_period_end,
+                    coalesce(unread.unread_count, 0) as unread_message_count
+                from activity a
+                left join user_plans p on p.user_id::text = a.user_id
+                left join unread on unread.user_id = a.user_id
+                where not exists (
+                    select 1 from auth.users u where u.id::text = a.user_id
+                )
+            )
+            select
+                merged.id,
+                merged.email,
+                merged.created_at,
+                merged.last_sign_in_at,
+                merged.plan,
+                merged.stripe_status,
+                merged.current_period_end,
+                merged.unread_message_count
+            from (
+                select * from registered
+                union all
+                select * from guests
+            ) as merged
+            order by merged.unread_message_count desc, merged.created_at desc nulls last, merged.id asc
             limit $1 offset $2
             """,
             limit,
@@ -1750,38 +1804,98 @@ async def get_user_detail_admin(pool, *, user_id: str) -> dict[str, Any] | None:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
+            with unread as (
+                select count(*) as unread_count
+                from admin_user_messages
+                where direction = 'user'
+                  and read_at is null
+                  and user_id::text = $1
+            ),
+            activity as (
+                select
+                    min(created_at) as first_seen,
+                    max(created_at) as last_seen
+                from (
+                    select created_at from documents where user_id::text = $1
+                    union all
+                    select created_at from document_chat_threads where user_id::text = $1
+                    union all
+                    select created_at from document_chat_messages where user_id::text = $1
+                    union all
+                    select created_at from usage_logs where user_id::text = $1
+                    union all
+                    select created_at from admin_user_messages where user_id::text = $1
+                    union all
+                    select created_at from user_feedback where user_id::text = $1
+                ) as events
+            ),
+            registered as (
+                select
+                    u.id::text as id,
+                    u.email,
+                    u.created_at,
+                    u.last_sign_in_at,
+                    p.plan,
+                    p.stripe_status,
+                    p.stripe_price_id,
+                    p.current_period_end,
+                    p.stripe_customer_id
+                from auth.users u
+                left join user_plans p on p.user_id = u.id
+                where u.id::text = $1
+            ),
+            guest as (
+                select
+                    $1::text as id,
+                    null::text as email,
+                    a.first_seen as created_at,
+                    a.last_seen as last_sign_in_at,
+                    p.plan,
+                    p.stripe_status,
+                    p.stripe_price_id,
+                    p.current_period_end,
+                    p.stripe_customer_id
+                from activity a
+                left join user_plans p on p.user_id::text = $1
+                where a.first_seen is not null
+                  and not exists (select 1 from auth.users u where u.id::text = $1)
+            )
             select
-                u.id,
-                u.email,
-                u.created_at,
-                u.last_sign_in_at,
-                p.plan,
-                p.stripe_status,
-                p.stripe_price_id,
-                p.current_period_end,
-                p.stripe_customer_id
-            from auth.users u
-            left join user_plans p on p.user_id = u.id
-            where u.id = $1
+                base.id,
+                base.email,
+                base.created_at,
+                base.last_sign_in_at,
+                base.plan,
+                base.stripe_status,
+                base.stripe_price_id,
+                base.current_period_end,
+                base.stripe_customer_id,
+                coalesce((select unread_count from unread), 0) as unread_message_count
+            from (
+                select * from registered
+                union all
+                select * from guest
+            ) as base
+            limit 1
             """,
             user_id,
         )
         if not row:
             return None
         document_count = await conn.fetchval(
-            "select count(*) from documents where user_id = $1",
+            "select count(*) from documents where user_id::text = $1",
             user_id,
         )
         chat_count = await conn.fetchval(
-            "select count(*) from document_chat_threads where user_id = $1",
+            "select count(*) from document_chat_threads where user_id::text = $1",
             user_id,
         )
         message_count = await conn.fetchval(
-            "select count(*) from document_chat_messages where user_id = $1",
+            "select count(*) from document_chat_messages where user_id::text = $1",
             user_id,
         )
         total_tokens = await conn.fetchval(
-            "select coalesce(sum(total_tokens), 0) from usage_logs where user_id = $1",
+            "select coalesce(sum(total_tokens), 0) from usage_logs where user_id::text = $1",
             user_id,
         )
     result = dict(row)
@@ -1805,7 +1919,7 @@ async def list_usage_daily_admin(
                 date_trunc('day', created_at) as day,
                 coalesce(sum(total_tokens), 0) as total_tokens
             from usage_logs
-            where user_id = $1
+            where user_id::text = $1
               and created_at >= (now() - make_interval(days => $2::int))
             group by 1
             order by 1
