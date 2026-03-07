@@ -3640,13 +3640,35 @@ body.tooltip-portal-enabled [data-tooltip]::after {
   gap: 10px;
 }
 
+.admin-overview__toolbar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .admin-overview__period-select {
   min-width: 180px;
+}
+
+.admin-overview__currency-select {
+  min-width: 100px;
 }
 
 .admin-overview__period-range {
   font-size: 12px;
   color: #667085;
+}
+
+.admin-overview__period-range-wrap {
+  display: grid;
+  gap: 2px;
+  justify-items: end;
+}
+
+.admin-overview__fx-meta {
+  font-size: 11px;
+  color: #98a2b3;
 }
 
 .admin-overview__stats {
@@ -3702,7 +3724,7 @@ body.tooltip-portal-enabled [data-tooltip]::after {
 
 .admin-overview__model-row {
   display: grid;
-  grid-template-columns: minmax(160px, 1.5fr) minmax(100px, 0.8fr) 80px 90px;
+  grid-template-columns: minmax(150px, 1.4fr) minmax(90px, 0.8fr) 70px 90px minmax(100px, 0.9fr);
   gap: 8px;
   align-items: center;
   border: 1px solid #e4e7ec;

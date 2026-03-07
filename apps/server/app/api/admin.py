@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request, status
 
 from app.db import repository
@@ -10,6 +11,41 @@ from app.services.auth import AuthDependency, AuthUser
 
 
 router = APIRouter()
+_USD_JPY_FALLBACK_RATE = 150.0
+
+
+async def _fetch_usd_to_jpy_rate() -> dict[str, Any]:
+    # Fetch a fresh rate for each overview request; fallback keeps dashboard usable.
+    url = "https://open.er-api.com/v6/latest/USD"
+    now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(url)
+        response.raise_for_status()
+        payload = response.json()
+        rates = payload.get("rates") if isinstance(payload, dict) else None
+        jpy = rates.get("JPY") if isinstance(rates, dict) else None
+        rate = float(jpy)
+        if rate <= 0:
+            raise ValueError("invalid JPY rate")
+        fetched_at = payload.get("time_last_update_utc") if isinstance(payload, dict) else None
+        if isinstance(fetched_at, str) and fetched_at.strip():
+            fetched_at_str = fetched_at
+        else:
+            fetched_at_str = now_iso
+        return {
+            "rate": rate,
+            "fetchedAt": fetched_at_str,
+            "source": url,
+            "fallback": False,
+        }
+    except Exception:
+        return {
+            "rate": _USD_JPY_FALLBACK_RATE,
+            "fetchedAt": now_iso,
+            "source": f"{url} (fallback)",
+            "fallback": True,
+        }
 
 
 def _ensure_admin(request: Request, user: AuthUser) -> None:
@@ -118,12 +154,17 @@ async def get_overview(
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid period")
 
+    fx = await _fetch_usd_to_jpy_rate()
     payload = await repository.get_admin_overview(
         request.app.state.db_pool,
         start_at=start_at,
         end_at=end_at,
         period_key=key,
         parse_cost_per_page_usd=10.0 / 1000.0,
+        usd_to_jpy_rate=float(fx.get("rate") or _USD_JPY_FALLBACK_RATE),
+        usd_to_jpy_source=str(fx.get("source") or ""),
+        usd_to_jpy_fetched_at=str(fx.get("fetchedAt") or now.isoformat()),
+        usd_to_jpy_is_fallback=bool(fx.get("fallback")),
     )
     return payload
 

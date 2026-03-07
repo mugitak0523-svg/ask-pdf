@@ -81,6 +81,7 @@ type OverviewModelPoint = {
   calls: number;
   totalTokens: number;
   share: number;
+  estimatedCostUsd: number;
 };
 
 type OverviewUserTypePoint = {
@@ -90,6 +91,7 @@ type OverviewUserTypePoint = {
 };
 
 type OverviewPeriod = "today" | "yesterday" | "7d" | "30d" | "all";
+type OverviewCurrency = "USD" | "JPY";
 
 type AdminOverview = {
   period: {
@@ -101,6 +103,10 @@ type AdminOverview = {
   rates: {
     tokenCostPer1kYen: number;
     parseCostPerPageYen: number;
+    usdToJpy: number;
+    usdToJpySource: string;
+    usdToJpyFetchedAt: string;
+    usdToJpyFallback: boolean;
   };
   summary: {
     registeredUsers: number;
@@ -201,6 +207,7 @@ const AdminPageContent = () => {
   const [adminOverviewLoading, setAdminOverviewLoading] = useState(false);
   const [adminOverviewError, setAdminOverviewError] = useState<string | null>(null);
   const [adminOverviewPeriod, setAdminOverviewPeriod] = useState<OverviewPeriod>("30d");
+  const [adminOverviewCurrency, setAdminOverviewCurrency] = useState<OverviewCurrency>("USD");
   const [adminAnnouncementDraft, setAdminAnnouncementDraft] = useState({
     title: "",
     body: "",
@@ -231,17 +238,22 @@ const AdminPageContent = () => {
     return date.toLocaleString(locale);
   };
 
-  const formatUsd = (value: number) => {
-    if (!Number.isFinite(value)) return "$0";
-    if (value === 0) return "$0";
-    if (Math.abs(value) < 0.0001) return "< $0.0001";
+  const usdToJpyRate = adminOverview?.rates?.usdToJpy ?? 150;
+
+  const formatMoney = (valueUsd: number) => {
+    const value =
+      adminOverviewCurrency === "JPY" ? Number(valueUsd || 0) * usdToJpyRate : Number(valueUsd || 0);
+    const symbol = adminOverviewCurrency === "JPY" ? "¥" : "$";
+    if (!Number.isFinite(value)) return `${symbol}0`;
+    if (value === 0) return `${symbol}0`;
+    if (Math.abs(value) < 0.0001) return `< ${symbol}0.0001`;
     if (Math.abs(value) < 1) {
-      return `$${value.toLocaleString(locale, {
+      return `${symbol}${value.toLocaleString(locale, {
         minimumFractionDigits: 4,
         maximumFractionDigits: 6,
       })}`;
     }
-    return `$${value.toLocaleString(locale, { maximumFractionDigits: 2 })}`;
+    return `${symbol}${value.toLocaleString(locale, { maximumFractionDigits: 2 })}`;
   };
 
   const getOverviewPeriodLabel = (key: OverviewPeriod) => {
@@ -501,6 +513,10 @@ const AdminPageContent = () => {
         rates: {
           tokenCostPer1kYen: Number(payload?.rates?.tokenCostPer1kYen ?? 0),
           parseCostPerPageYen: Number(payload?.rates?.parseCostPerPageYen ?? 0),
+          usdToJpy: Number(payload?.rates?.usdToJpy ?? 150),
+          usdToJpySource: String(payload?.rates?.usdToJpySource ?? ""),
+          usdToJpyFetchedAt: String(payload?.rates?.usdToJpyFetchedAt ?? ""),
+          usdToJpyFallback: Boolean(payload?.rates?.usdToJpyFallback ?? false),
         },
         summary: {
           registeredUsers: Number(summary?.registeredUsers ?? 0),
@@ -536,6 +552,7 @@ const AdminPageContent = () => {
           calls: Number(item?.calls ?? 0),
           totalTokens: Number(item?.total_tokens ?? 0),
           share: Number(item?.share ?? 0),
+          estimatedCostUsd: Number(item?.estimated_cost_usd ?? 0),
         })),
         userTypes: userTypesSource.map((item: any) => ({
           userType: (String(item?.user_type ?? "guest").toLowerCase() as
@@ -1007,22 +1024,45 @@ const AdminPageContent = () => {
               <section className="admin-console__panel admin-overview">
                 <h2>概要ダッシュボード</h2>
                 <div className="admin-overview__toolbar">
-                  <select
-                    className="settings__select admin-overview__period-select"
-                    value={adminOverviewPeriod}
-                    onChange={(event) =>
-                      setAdminOverviewPeriod(event.target.value as OverviewPeriod)
-                    }
-                  >
-                    <option value="today">今日</option>
-                    <option value="yesterday">昨日</option>
-                    <option value="7d">過去7日間</option>
-                    <option value="30d">30日間</option>
-                    <option value="all">全期間</option>
-                  </select>
+                  <div className="admin-overview__toolbar-controls">
+                    <select
+                      className="settings__select admin-overview__period-select"
+                      value={adminOverviewPeriod}
+                      onChange={(event) =>
+                        setAdminOverviewPeriod(event.target.value as OverviewPeriod)
+                      }
+                    >
+                      <option value="today">今日</option>
+                      <option value="yesterday">昨日</option>
+                      <option value="7d">過去7日間</option>
+                      <option value="30d">30日間</option>
+                      <option value="all">全期間</option>
+                    </select>
+                    <select
+                      className="settings__select admin-overview__currency-select"
+                      value={adminOverviewCurrency}
+                      onChange={(event) =>
+                        setAdminOverviewCurrency(event.target.value as OverviewCurrency)
+                      }
+                    >
+                      <option value="USD">USD</option>
+                      <option value="JPY">JPY</option>
+                    </select>
+                  </div>
                   {adminOverview?.period?.startAt && adminOverview?.period?.endAt ? (
-                    <div className="admin-overview__period-range">
-                      {formatDate(adminOverview.period.startAt)}〜{formatDate(adminOverview.period.endAt)}
+                    <div className="admin-overview__period-range-wrap">
+                      <div className="admin-overview__period-range">
+                        {formatDate(adminOverview.period.startAt)}〜{formatDate(adminOverview.period.endAt)}
+                      </div>
+                      <div
+                        className="admin-overview__fx-meta"
+                        title={adminOverview.rates.usdToJpySource || undefined}
+                      >
+                        USD/JPY: {adminOverview.rates.usdToJpy.toLocaleString(locale, { maximumFractionDigits: 4 })}
+                        {" · "}
+                        取得: {formatDateTime(adminOverview.rates.usdToJpyFetchedAt)}
+                        {adminOverview.rates.usdToJpyFallback ? " · fallback" : ""}
+                      </div>
                     </div>
                   ) : null}
                 </div>
@@ -1061,13 +1101,15 @@ const AdminPageContent = () => {
                         </div>
                       </div>
                       <div className="admin-overview__stat">
-                        <div className="admin-overview__label">推定LLM料金(直近, USD)</div>
+                        <div className="admin-overview__label">
+                          推定LLM料金(直近, {adminOverviewCurrency})
+                        </div>
                         <div className="admin-overview__value">
-                          {formatUsd(adminOverview.summary.tokenCostWindowYen)}
+                          {formatMoney(adminOverview.summary.tokenCostWindowYen)}
                         </div>
                       </div>
                       <div className="admin-overview__stat">
-                        <div className="admin-overview__label">PDF総数</div>
+                        <div className="admin-overview__label">PDF数(直近)</div>
                         <div className="admin-overview__value">
                           {adminOverview.summary.documentsTotal.toLocaleString()}
                         </div>
@@ -1079,13 +1121,15 @@ const AdminPageContent = () => {
                         </div>
                       </div>
                       <div className="admin-overview__stat">
-                        <div className="admin-overview__label">推定解析料金(直近, USD)</div>
+                        <div className="admin-overview__label">
+                          推定解析料金(直近, {adminOverviewCurrency})
+                        </div>
                         <div className="admin-overview__value">
-                          {formatUsd(adminOverview.summary.parseCostWindowYen)}
+                          {formatMoney(adminOverview.summary.parseCostWindowYen)}
                         </div>
                       </div>
                       <div className="admin-overview__stat">
-                        <div className="admin-overview__label">メッセージ総数</div>
+                        <div className="admin-overview__label">メッセージ数(直近)</div>
                         <div className="admin-overview__value">
                           {adminOverview.summary.messagesTotal.toLocaleString()}
                         </div>
@@ -1154,6 +1198,7 @@ const AdminPageContent = () => {
                             <div>トークン</div>
                             <div>比率</div>
                             <div>呼び出し回数</div>
+                            <div>料金({adminOverviewCurrency})</div>
                           </div>
                           {adminOverview.models.map((item) => (
                             <div key={item.model} className="admin-overview__model-row">
@@ -1161,6 +1206,7 @@ const AdminPageContent = () => {
                               <div>{item.totalTokens.toLocaleString()}</div>
                               <div>{(item.share * 100).toFixed(1)}%</div>
                               <div>{item.calls.toLocaleString()}</div>
+                              <div>{formatMoney(item.estimatedCostUsd)}</div>
                             </div>
                           ))}
                         </div>

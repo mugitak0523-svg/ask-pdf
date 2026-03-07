@@ -2110,6 +2110,10 @@ async def get_admin_overview(
     end_at: datetime | None = None,
     period_key: str = "30d",
     parse_cost_per_page_usd: float = 0.01,
+    usd_to_jpy_rate: float = 150.0,
+    usd_to_jpy_source: str = "",
+    usd_to_jpy_fetched_at: str = "",
+    usd_to_jpy_is_fallback: bool = False,
 ) -> dict[str, Any]:
     end_ts = end_at or datetime.now(timezone.utc)
     if start_at is not None and start_at > end_ts:
@@ -2148,7 +2152,7 @@ async def get_admin_overview(
         window_days = max(1, (end_ts.date() - start_ts.date()).days + 1)
         summary_row = await conn.fetchrow(
             """
-            with guest_users as (
+            with guest_users_all as (
                 select distinct ul.user_id::text as user_id
                 from usage_logs ul
                 where not exists (
@@ -2157,29 +2161,48 @@ async def get_admin_overview(
                     where u.id::text = ul.user_id::text
                 )
             ),
+            guest_users_window as (
+                select distinct ul.user_id::text as user_id
+                from usage_logs ul
+                where ul.created_at >= $1::timestamptz
+                  and ul.created_at < $2::timestamptz
+                  and not exists (
+                      select 1
+                      from auth.users u
+                      where u.id::text = ul.user_id::text
+                  )
+            ),
             eligible_users as (
                 select u.id::text as user_id from auth.users u
                 union
-                select gu.user_id from guest_users gu
+                select gu.user_id from guest_users_all gu
             )
             select
-                (select count(*) from auth.users) as registered_users,
-                (select count(*) from guest_users) as guest_users,
-                (select count(*) from auth.users) + (select count(*) from guest_users) as users_total,
+                (
+                    select count(*)
+                    from auth.users u
+                    where u.created_at >= $1::timestamptz
+                      and u.created_at < $2::timestamptz
+                ) as registered_users_window,
+                (select count(*) from guest_users_window) as guest_users_window,
+                (
+                    select count(*)
+                    from auth.users u
+                    where u.created_at >= $1::timestamptz
+                      and u.created_at < $2::timestamptz
+                ) + (select count(*) from guest_users_window) as users_total_window,
                 (
                     select count(distinct ul.user_id::text)
                     from usage_logs ul
                     where ul.created_at >= $1::timestamptz
                       and ul.created_at < $2::timestamptz
                 ) as active_users_window,
-                (select count(*) from documents) as documents_total,
                 (
                     select count(*)
                     from documents d
                     where d.created_at >= $1::timestamptz
                       and d.created_at < $2::timestamptz
                 ) as documents_window,
-                (select count(*) from document_chat_messages) as messages_total,
                 (
                     select count(*)
                     from document_chat_messages m
@@ -2189,18 +2212,9 @@ async def get_admin_overview(
                 (
                     select coalesce(sum(total_tokens), 0)
                     from usage_logs ul
-                ) as tokens_total,
-                (
-                    select coalesce(sum(total_tokens), 0)
-                    from usage_logs ul
                     where ul.created_at >= $1::timestamptz
                       and ul.created_at < $2::timestamptz
                 ) as tokens_window,
-                (
-                    select coalesce(sum(pages), 0)
-                    from usage_logs ul
-                    where ul.operation = 'parse'
-                ) as parse_pages_total,
                 (
                     select coalesce(sum(pages), 0)
                     from usage_logs ul
@@ -2513,19 +2527,23 @@ async def get_admin_overview(
             "parseCostPerPageYen": float(parse_cost_per_page_usd),
             "tokenCostPer1kUsd": 0.0,
             "parseCostPerPageUsd": float(parse_cost_per_page_usd),
+            "usdToJpy": float(usd_to_jpy_rate),
+            "usdToJpySource": usd_to_jpy_source,
+            "usdToJpyFetchedAt": usd_to_jpy_fetched_at,
+            "usdToJpyFallback": bool(usd_to_jpy_is_fallback),
         },
         "summary": {
-            "registeredUsers": int(summary.get("registered_users") or 0),
-            "guestUsers": int(summary.get("guest_users") or 0),
-            "usersTotal": int(summary.get("users_total") or 0),
+            "registeredUsers": int(summary.get("registered_users_window") or 0),
+            "guestUsers": int(summary.get("guest_users_window") or 0),
+            "usersTotal": int(summary.get("users_total_window") or 0),
             "activeUsersWindow": int(summary.get("active_users_window") or 0),
-            "documentsTotal": int(summary.get("documents_total") or 0),
+            "documentsTotal": int(summary.get("documents_window") or 0),
             "documentsWindow": int(summary.get("documents_window") or 0),
-            "messagesTotal": int(summary.get("messages_total") or 0),
+            "messagesTotal": int(summary.get("messages_window") or 0),
             "messagesWindow": int(summary.get("messages_window") or 0),
-            "tokensTotal": int(summary.get("tokens_total") or 0),
+            "tokensTotal": int(summary.get("tokens_window") or 0),
             "tokensWindow": window_tokens,
-            "parsePagesTotal": int(summary.get("parse_pages_total") or 0),
+            "parsePagesTotal": int(summary.get("parse_pages_window") or 0),
             "parsePagesWindow": window_parse_pages,
             "tokenCostWindowYen": round(token_cost_window, 6),
             "parseCostWindowYen": round(parse_cost_window, 6),
