@@ -4,7 +4,6 @@ import { routing } from "@/i18n/routing";
 
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
-const lpRoutes = ["/lp", "/lp/general"] as const;
 const legalRoutes = ["/terms", "/privacy-policy", "/tokushoho"] as const;
 
 export default function sitemap(): MetadataRoute.Sitemap {
@@ -17,15 +16,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: 0.9,
   }));
 
-  const localizedLp = routing.locales.flatMap((locale) =>
-    lpRoutes.map((path) => ({
-      url: `${appUrl}/${locale}${path}`,
-      lastModified: now,
-      changeFrequency: "weekly" as const,
-      priority: path === "/lp/general" ? 1 : 0.8,
-    }))
-  );
-
   const localizedLegal = routing.locales.flatMap((locale) =>
     legalRoutes.map((path) => ({
       url: `${appUrl}/${locale}${path}`,
@@ -35,5 +25,5 @@ export default function sitemap(): MetadataRoute.Sitemap {
     }))
   );
 
-  return [...localizedHome, ...localizedLp, ...localizedLegal];
+  return [...localizedHome, ...localizedLegal];
 }

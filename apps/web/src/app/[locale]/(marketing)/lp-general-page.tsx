@@ -4,9 +4,9 @@ import { getLpGeneralContent } from "@/content/lp/general";
 import { Link } from "@/i18n/navigation";
 import { routing } from "@/i18n/routing";
 
-import { LpSignupCta, LpViewTracker } from "./lp-events";
-import { LpHeroVideo } from "./lp-hero-video";
-import styles from "./page.module.css";
+import { LpSignupCta, LpViewTracker } from "./lp/general/lp-events";
+import { LpHeroVideo } from "./lp/general/lp-hero-video";
+import styles from "./lp/general/page.module.css";
 
 type LpPageProps = {
   params: {
@@ -61,11 +61,11 @@ export async function generateMetadata({ params }: LpPageProps): Promise<Metadat
   const content = getLpGeneralContent(locale);
   const title = content.meta.title;
   const description = content.meta.description;
-  const canonical = `${appUrl}/${locale}/lp/general`;
+  const canonical = `${appUrl}/${locale}`;
   const languageAlternates: Record<string, string> = Object.fromEntries(
-    routing.locales.map((item) => [item, `${appUrl}/${item}/lp/general`])
+    routing.locales.map((item) => [item, `${appUrl}/${item}`])
   );
-  languageAlternates["x-default"] = `${appUrl}/${routing.defaultLocale}/lp/general`;
+  languageAlternates["x-default"] = `${appUrl}/${routing.defaultLocale}`;
   const openGraphLocale = ogLocaleMap[locale] ?? ogLocaleMap.en;
   const openGraphAlternateLocales = routing.locales
     .filter((item) => item !== locale)
@@ -307,7 +307,7 @@ export default function LpGeneralPage({ params }: LpPageProps) {
   const locale = routing.locales.includes(requestedLocale as (typeof routing.locales)[number])
     ? requestedLocale
     : routing.defaultLocale;
-  const canonicalUrl = `${appUrl}/${locale}/lp/general`;
+  const canonicalUrl = `${appUrl}/${locale}`;
   const content = getLpGeneralContent(locale);
   const faqPageLd = {
     "@context": "https://schema.org",
@@ -342,13 +342,7 @@ export default function LpGeneralPage({ params }: LpPageProps) {
       {
         "@type": "ListItem",
         position: 1,
-        name: "LP",
-        item: `${appUrl}/${locale}/lp`,
-      },
-      {
-        "@type": "ListItem",
-        position: 2,
-        name: "General",
+        name: "AskPDF",
         item: canonicalUrl,
       },
     ],
@@ -431,7 +425,7 @@ export default function LpGeneralPage({ params }: LpPageProps) {
                     {routing.locales.map((item) => (
                       <Link
                         key={item}
-                        href="/lp/general"
+                        href="/"
                         locale={item}
                         className={`${styles.navLocaleMenuItem} ${
                           locale === item ? styles.navLocaleMenuItemActive : ""

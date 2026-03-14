@@ -1,0 +1,7791 @@
+"use client";
+
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useLocale, useTranslations } from "next-intl";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
+import { Link, usePathname, useRouter } from "@/i18n/navigation";
+import { PdfViewer } from "@/components/pdf-viewer/pdf-viewer";
+import { supabase } from "@/lib/supabase";
+import { privacyMd, termsMd, tokushoMd } from "@/content/legal";
+
+type ChatRef = {
+  label: string;
+  id: string;
+  documentId?: string;
+  aboveThreshold?: boolean;
+};
+
+type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  refs?: ChatRef[];
+  createdAt: string;
+  status?: "loading" | "error" | "stopped";
+};
+
+type DocumentItem = {
+  id: string;
+  title: string;
+  status?: string | null;
+};
+
+type OpenDocument = {
+  id: string;
+  title: string;
+};
+
+type UsageBucket = {
+  periodStart: string | null;
+  periodEnd: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  pages: number;
+  answerTokens: number;
+  embedTokens: number;
+  parsePages: number;
+  answerCount: number;
+  embedCount: number;
+  parseCount: number;
+  costYen: number | null;
+  costNote?: string | null;
+};
+
+type UsageSummary = {
+  current: UsageBucket;
+  allTime: UsageBucket;
+};
+
+type ReferenceRequest = {
+  pages: Record<number, number[]>;
+};
+
+type AdminAnnouncement = {
+  id: string;
+  title: string;
+  body: string;
+  status: string;
+  createdAt: string | null;
+  publishedAt: string | null;
+};
+
+type SupportMessage = {
+  id: string;
+  direction: "user" | "admin";
+  content: string;
+  createdAt: string | null;
+};
+
+type ThemeMode = "system" | "light" | "dark";
+type PlanName = "guest" | "free" | "plus";
+
+type PlanLimits = {
+  maxFiles: number | null;
+  maxFileMb: number | null;
+  maxMessagesPerThread: number | null;
+  maxThreadsPerDocument: number | null;
+};
+
+type ClientChunk = {
+  id: string;
+  documentId: string;
+  content: string;
+  metadata: any;
+  embedding: Float32Array;
+  norm: number;
+};
+
+type ChunkCache = {
+  loadedAt: number;
+  chunks: ClientChunk[];
+};
+
+const DEFAULT_PLAN_LIMITS: Record<PlanName, PlanLimits> = {
+  guest: { maxFiles: 1, maxFileMb: 10, maxMessagesPerThread: 8, maxThreadsPerDocument: null },
+  free: { maxFiles: 5, maxFileMb: 20, maxMessagesPerThread: 20, maxThreadsPerDocument: null },
+  plus: { maxFiles: 50, maxFileMb: 50, maxMessagesPerThread: 120, maxThreadsPerDocument: null },
+};
+
+const normalizePlanLimits = (
+  raw: any,
+  fallback: PlanLimits
+): PlanLimits => ({
+  maxFiles: typeof raw?.maxFiles === "number" ? raw.maxFiles : fallback.maxFiles,
+  maxFileMb: typeof raw?.maxFileMb === "number" ? raw.maxFileMb : fallback.maxFileMb,
+  maxMessagesPerThread:
+    typeof raw?.maxMessagesPerThread === "number"
+      ? raw.maxMessagesPerThread
+      : fallback.maxMessagesPerThread,
+  maxThreadsPerDocument:
+    typeof raw?.maxThreadsPerDocument === "number"
+      ? raw.maxThreadsPerDocument
+      : fallback.maxThreadsPerDocument,
+});
+
+const PLAN_PRICES: Record<Exclude<PlanName, "guest">, string> = {
+  free: "¥0",
+  plus: "¥1,980",
+};
+
+const STORAGE_KEY = "askpdf.ui.v1";
+const DOCUMENTS_SEEN_KEY = "askpdf.docs.seen.v1";
+const GUEST_TOKEN_KEY = "askpdf.guest.token.v1";
+const CLIENT_MATCH_MAX = 20;
+const RAG_SEARCH_MODE = (process.env.NEXT_PUBLIC_RAG_SEARCH_MODE ?? "client").toLowerCase();
+const USE_CLIENT_RAG = RAG_SEARCH_MODE === "client";
+
+type AuthParams = {
+  token: string;
+  tokenType: "supabase" | "guest";
+  headers: Record<string, string>;
+};
+
+const isValidUuid = (value: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value
+  );
+
+const getOrCreateGuestToken = () => {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = window.localStorage.getItem(GUEST_TOKEN_KEY);
+    if (stored && isValidUuid(stored)) return stored;
+    const next = crypto.randomUUID();
+    window.localStorage.setItem(GUEST_TOKEN_KEY, next);
+    return next;
+  } catch {
+    return null;
+  }
+};
+
+const getAuthParams = async (): Promise<AuthParams | null> => {
+  const session = await supabase.auth.getSession();
+  const accessToken = session.data.session?.access_token;
+  if (accessToken) {
+    return {
+      token: accessToken,
+      tokenType: "supabase",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    };
+  }
+  const guestToken = getOrCreateGuestToken();
+  if (!guestToken) return null;
+  return {
+    token: guestToken,
+    tokenType: "guest",
+    headers: {
+      "X-Guest-Token": guestToken,
+    },
+  };
+};
+
+const normalizeRefs = (value: unknown): ChatRef[] | undefined => {
+  let source: unknown = value;
+  if (typeof source === "string") {
+    try {
+      source = JSON.parse(source);
+    } catch {
+      return undefined;
+    }
+  }
+  if (source && typeof source === "object" && !Array.isArray(source)) {
+    const nested = (source as Record<string, unknown>).refs;
+    if (Array.isArray(nested)) source = nested;
+  }
+  if (!Array.isArray(source)) return undefined;
+
+  const refs: ChatRef[] = [];
+  for (const item of source) {
+    if (!item || typeof item !== "object") continue;
+    const raw = item as Record<string, unknown>;
+    const id = raw.id;
+    const label = raw.label;
+    if (typeof id !== "string" || !id.trim()) continue;
+    if (typeof label !== "string" || !label.trim()) continue;
+    const aboveThreshold =
+      typeof raw.aboveThreshold === "boolean"
+        ? raw.aboveThreshold
+        : typeof raw.above_threshold === "boolean"
+          ? raw.above_threshold
+          : undefined;
+    refs.push({
+      id: id.trim(),
+      label: label.trim(),
+      documentId:
+        typeof raw.documentId === "string"
+          ? raw.documentId
+          : typeof raw.document_id === "string"
+            ? raw.document_id
+            : undefined,
+      aboveThreshold,
+    });
+  }
+  return refs.length > 0 ? refs : undefined;
+};
+
+const SEARCH_SPACE_CHAR_REGEX = /[\s\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000\uFEFF]/u;
+const normalizeSearchText = (value: string) =>
+  value.replace(/\u3000/g, " ").replace(/\s+/g, "").trim().toLowerCase();
+
+const buildSearchIndex = (value: string) => {
+  const normalizedChars: string[] = [];
+  const sourceIndexMap: number[] = [];
+  for (let i = 0; i < value.length; i += 1) {
+    const ch = value[i];
+    if (SEARCH_SPACE_CHAR_REGEX.test(ch)) continue;
+    normalizedChars.push(ch.toLowerCase());
+    sourceIndexMap.push(i);
+  }
+  return {
+    normalized: normalizedChars.join(""),
+    sourceIndexMap,
+  };
+};
+
+const REF_TAG_REGEX =
+  /[\[\{(【「]?\s*(?:@|at|参照)\s*:\s*(?:chunk|チャンク|ref)\s*-\s*([A-Za-z0-9-]+)\s*[\]\})】」]?/gi;
+const normalizeRefHyphens = (text: string) => text.replace(/[‑–—]/g, "-");
+const normalizeRefTagSpacing = (text: string) =>
+  text.replace(REF_TAG_REGEX, (match, id, offset, full) => {
+    const next = (full as string).slice(offset + match.length);
+    if (REF_TAG_REGEX.test(next)) {
+      return `${match} `;
+    }
+    return match;
+  });
+
+const replaceRefTags = (text: string, refs?: ChatRef[]) => {
+  if (!text) return text;
+  text = normalizeRefHyphens(text);
+  text = normalizeRefTagSpacing(text);
+  if (!refs || refs.length === 0) {
+    return text.replace(REF_TAG_REGEX, "");
+  }
+  const lookup = new Map<string, ChatRef>();
+  for (const ref of refs) {
+    if (ref.aboveThreshold === false) continue;
+    if (ref.id && !lookup.has(ref.id)) lookup.set(ref.id, ref);
+  }
+  return text.replace(REF_TAG_REGEX, (_, rawId) => {
+    const trimmed = String(rawId).trim();
+    const key = `chunk-${trimmed}`;
+    let ref = lookup.get(key);
+    if (!ref && /^\d+$/.test(trimmed)) {
+      const visibleRefs = refs.filter((item) => item.aboveThreshold !== false);
+      const index = Number(trimmed) - 1;
+      if (index >= 0 && index < visibleRefs.length) ref = visibleRefs[index];
+    }
+    if (!ref) return "";
+    return normalizeRefLabel(ref.label, ref.id);
+  });
+};
+
+const buildRefLinkedText = (text: string, refs?: ChatRef[]) => {
+  if (!text) return text;
+  text = normalizeRefHyphens(text);
+  text = normalizeRefTagSpacing(text);
+  if (!refs || refs.length === 0) {
+    return text.replace(REF_TAG_REGEX, "");
+  }
+  const lookup = new Map<string, ChatRef>();
+  for (const ref of refs) {
+    if (ref.aboveThreshold === false) continue;
+    if (ref.id && !lookup.has(ref.id)) lookup.set(ref.id, ref);
+  }
+  return text.replace(REF_TAG_REGEX, (_, rawId) => {
+    const trimmed = String(rawId).trim();
+    const key = `chunk-${trimmed}`;
+    let ref = lookup.get(key);
+    if (!ref && /^\d+$/.test(trimmed)) {
+      const visibleRefs = refs.filter((item) => item.aboveThreshold !== false);
+      const index = Number(trimmed) - 1;
+      if (index >= 0 && index < visibleRefs.length) ref = visibleRefs[index];
+    }
+    if (!ref) return "";
+    const label = normalizeRefLabel(ref.label, ref.id);
+    const doc = ref.documentId ? `?doc=${ref.documentId}` : "";
+    return `[${label}](ref:${ref.id}${doc})`;
+  });
+};
+
+const parseRefHref = (href?: string | null) => {
+  if (!href || !href.startsWith("ref:")) return null;
+  const raw = href.slice(4);
+  const [refId, query] = raw.split("?");
+  if (!refId) return null;
+  const params = new URLSearchParams(query || "");
+  const documentId = params.get("doc") ?? undefined;
+  return { refId, documentId };
+};
+
+const normalizeRefLabel = (label?: string, fallback?: string) =>
+  (label ?? fallback ?? "").replace(/\s*#\d+$/, "");
+
+const isRefVisible = (ref: ChatRef) => ref.aboveThreshold !== false;
+
+const buildRefLabelLookup = (refs?: ChatRef[]) => {
+  if (!refs || refs.length === 0) return new Map<string, ChatRef>();
+  const lookup = new Map<string, ChatRef>();
+  for (const ref of refs) {
+    if (!isRefVisible(ref)) continue;
+    const label = normalizeRefLabel(ref.label, ref.id);
+    if (!label) continue;
+    if (!lookup.has(label)) lookup.set(label, ref);
+  }
+  return lookup;
+};
+
+const buildRefIdLookup = (refs?: ChatRef[]) => {
+  if (!refs || refs.length === 0) return new Map<string, ChatRef>();
+  const lookup = new Map<string, ChatRef>();
+  for (const ref of refs) {
+    if (!isRefVisible(ref)) continue;
+    if (ref.id && !lookup.has(ref.id)) lookup.set(ref.id, ref);
+  }
+  return lookup;
+};
+
+const getNodeText = (node: React.ReactNode): string => {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(getNodeText).join("");
+  if (React.isValidElement<{ children?: React.ReactNode }>(node)) return getNodeText(node.props.children);
+  return "";
+};
+
+export default function Home() {
+  const t = useTranslations("app");
+  const locale = useLocale();
+  const router = useRouter();
+  const pathname = usePathname();
+  const containerRef = useRef<HTMLElement | null>(null);
+  const tabsRef = useRef<HTMLDivElement | null>(null);
+  const tabsWrapRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const [chatWidth, setChatWidth] = useState(360);
+  const [chatInput, setChatInput] = useState("");
+  const [chatMode, setChatMode] = useState<"fast" | "standard">("standard");
+  const [accountDeleting, setAccountDeleting] = useState(false);
+  const [deleteAccountModalOpen, setDeleteAccountModalOpen] = useState(false);
+  const [deleteAccountReason, setDeleteAccountReason] = useState("");
+  const [deleteAccountReasonError, setDeleteAccountReasonError] = useState<string | null>(null);
+  const [chatOpen, setChatOpen] = useState(true);
+  const [sidebarListCollapsed, setSidebarListCollapsed] = useState(false);
+  const [sidebarSettingsCollapsed, setSidebarSettingsCollapsed] = useState(true);
+  const chatMessagesRef = useRef<HTMLDivElement | null>(null);
+  const [showChatJump, setShowChatJump] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [loadingMoreMessages, setLoadingMoreMessages] = useState(false);
+  const [refPreviewMap, setRefPreviewMap] = useState<
+    Record<string, { text: string; metadata?: Record<string, unknown>; documentTitle?: string }>
+  >({});
+  const refPreviewInFlight = useRef<Set<string>>(new Set());
+  const [refTooltip, setRefTooltip] = useState<{
+    visible: boolean;
+    x: number;
+    y: number;
+    title: string;
+    pageLabel: string | null;
+    text: string;
+    anchor: DOMRect | null;
+    refId: string | null;
+    documentId: string | null;
+  }>({
+    visible: false,
+    x: 0,
+    y: 0,
+    title: "",
+    pageLabel: null,
+    text: "",
+    anchor: null,
+    refId: null,
+    documentId: null,
+  });
+  const refTooltipBodyRef = useRef<HTMLDivElement | null>(null);
+  const [tooltipContainer, setTooltipContainer] = useState<HTMLElement | null>(null);
+
+  const getRefPreviewKey = (refId: string, documentId?: string) =>
+    `${refId}::${documentId ?? ""}`;
+
+  const getChunkIdFromRef = (refId: string) =>
+    refId.startsWith("chunk-") ? refId.slice("chunk-".length) : refId;
+
+  const getRefPreviewTitle = (refId: string, documentId: string | undefined, fallback: string) => {
+    const key = getRefPreviewKey(refId, documentId);
+    return refPreviewMap[key]?.text ?? fallback;
+  };
+
+  const getRefPreviewData = (refId: string, documentId?: string) => {
+    const key = getRefPreviewKey(refId, documentId);
+    return refPreviewMap[key];
+  };
+
+  const getRefPageLabel = (metadata?: Record<string, unknown>) => {
+    if (!metadata) return null;
+    const raw =
+      metadata.page ?? metadata.pages ?? metadata.page_number ?? metadata.pageNumber ?? null;
+    if (Array.isArray(raw)) {
+      const values = raw.filter((item) => Number.isFinite(item)).map((item) => String(item));
+      return values.length ? `p ${values.join(", ")}` : null;
+    }
+    if (Number.isFinite(raw)) return `p ${raw}`;
+    return null;
+  };
+
+  const getRefPageLabelFromLabel = (label: string | undefined) => {
+    if (!label) return null;
+    const match = label.match(/p\.?\s*([\d,\s]+)/i);
+    if (match?.[1]) {
+      const cleaned = match[1].replace(/\s+/g, " ").trim();
+      return cleaned ? `p ${cleaned}` : null;
+    }
+    if (/^\d+(,\s*\d+)*$/.test(label.trim())) {
+      return `p ${label.trim()}`;
+    }
+    return null;
+  };
+
+  const REF_TOOLTIP_WIDTH = 360;
+  const REF_TOOLTIP_HEIGHT = 220;
+  const REF_TOOLTIP_PADDING = 8;
+
+  const computeRefTooltipPosition = (rect: DOMRect) => {
+    const gap = 2;
+    const padding = REF_TOOLTIP_PADDING;
+    let x = rect.left;
+    let y = rect.bottom + gap;
+    const maxX = window.innerWidth - padding - REF_TOOLTIP_WIDTH;
+    const maxY = window.innerHeight - padding - REF_TOOLTIP_HEIGHT;
+    if (x > maxX) x = maxX;
+    if (x < padding) x = padding;
+    if (y > maxY) {
+      y = rect.top - REF_TOOLTIP_HEIGHT - gap;
+    }
+    if (y < padding) y = padding;
+    return { x, y };
+  };
+  const isTouchDevice = () =>
+    typeof window !== "undefined" &&
+    window.matchMedia("(hover: none), (pointer: coarse)").matches;
+
+  const showRefTooltip = (
+    event: React.MouseEvent<HTMLElement>,
+    refId: string,
+    documentId: string | undefined,
+    fallbackTitle: string
+  ) => {
+    if (isTouchDevice()) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const { x, y } = computeRefTooltipPosition(rect);
+    const preview = getRefPreviewData(refId, documentId);
+    const title = preview?.documentTitle || fallbackTitle;
+    const pageLabel = getRefPageLabel(preview?.metadata) ?? getRefPageLabelFromLabel(fallbackTitle);
+    const text = preview?.text || "Loading...";
+    setRefTooltip({
+      visible: true,
+      x,
+      y,
+      title,
+      pageLabel,
+      text,
+      anchor: rect,
+      refId,
+      documentId: documentId ?? null,
+    });
+    requestAnimationFrame(() => {
+      if (refTooltipBodyRef.current) {
+        refTooltipBodyRef.current.scrollTop = 0;
+      }
+    });
+  };
+
+  const moveRefTooltip = (event: React.MouseEvent<HTMLElement>) => {
+    if (isTouchDevice()) return;
+    if (!refTooltip.visible) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const { x, y } = computeRefTooltipPosition(rect);
+    setRefTooltip((prev) => ({ ...prev, x, y, anchor: rect }));
+  };
+
+  const hideRefTooltip = () => {
+    setRefTooltip((prev) => ({ ...prev, visible: false }));
+  };
+
+  const handleRefButtonLeave = (event: React.MouseEvent<HTMLElement>) => {
+    const next = event.relatedTarget as HTMLElement | null;
+    if (next?.closest?.(".ref-tooltip")) return;
+    hideRefTooltip();
+  };
+
+  useEffect(() => {
+    if (isTouchDevice()) return;
+    const handleGlobalPointer = (event: MouseEvent) => {
+      if (!refTooltip.visible) return;
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest?.(".ref-tooltip")) return;
+      if (target.closest?.(".ref")) return;
+      hideRefTooltip();
+    };
+    window.addEventListener("mousemove", handleGlobalPointer, { passive: true });
+    return () => {
+      window.removeEventListener("mousemove", handleGlobalPointer);
+    };
+  }, [refTooltip.visible]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    setTooltipContainer(document.body);
+  }, []);
+
+  const ensureRefPreview = async (refId: string, documentId?: string) => {
+    const key = getRefPreviewKey(refId, documentId);
+    if (refPreviewMap[key] || refPreviewInFlight.current.has(key)) return;
+    refPreviewInFlight.current.add(key);
+    try {
+      const auth = await getAuthParams();
+      if (!auth) return;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const chunkId = getChunkIdFromRef(refId);
+      const url = new URL(`${baseUrl}/document-chunks/${chunkId}`);
+      if (documentId) url.searchParams.set("document_id", documentId);
+      const response = await fetch(url.toString(), {
+        headers: auth.headers,
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      const text = typeof data?.chunk?.text === "string" ? data.chunk.text : "";
+      if (!text) return;
+      const metadata =
+        data?.chunk?.metadata && typeof data.chunk.metadata === "object"
+          ? data.chunk.metadata
+          : undefined;
+      const documentTitle =
+        typeof data?.chunk?.documentTitle === "string" ? data.chunk.documentTitle : undefined;
+      setRefPreviewMap((prev) => ({
+        ...prev,
+        [key]: { text, metadata, documentTitle },
+      }));
+    } finally {
+      refPreviewInFlight.current.delete(key);
+    }
+  };
+
+  useEffect(() => {
+    const measure = document.createElement("span");
+    measure.style.position = "fixed";
+    measure.style.top = "-9999px";
+    measure.style.left = "-9999px";
+    measure.style.padding = "4px 8px";
+    measure.style.fontSize = "11px";
+    measure.style.lineHeight = "1.2";
+    measure.style.letterSpacing = "0.01em";
+    measure.style.whiteSpace = "nowrap";
+    measure.style.fontFamily = "inherit";
+    document.body.appendChild(measure);
+    let portal: HTMLDivElement | null = null;
+    document.body.classList.add("tooltip-portal-enabled");
+    const ensurePortal = () => {
+      if (portal) return portal;
+      const node = document.createElement("div");
+      node.className = "app-tooltip";
+      node.style.position = "fixed";
+      node.style.top = "0";
+      node.style.left = "0";
+      node.style.transform = "translate(-9999px, -9999px)";
+      node.style.pointerEvents = "none";
+      node.style.zIndex = "9999";
+      document.body.appendChild(node);
+      portal = node;
+      return node;
+    };
+
+    const hidePortal = () => {
+      if (!portal) return;
+      portal.style.opacity = "0";
+      portal.style.transform = "translate(-9999px, -9999px)";
+    };
+
+    const positionTooltip = (target: HTMLElement, text: string) => {
+      const node = ensurePortal();
+      node.textContent = text;
+      node.style.opacity = "1";
+      node.style.transform = "none";
+
+      const rect = target.getBoundingClientRect();
+      const tooltipRect = node.getBoundingClientRect();
+      const padding = 8;
+      const offset = 8;
+      const topSpace = rect.top - padding;
+      const bottomSpace = window.innerHeight - rect.bottom - padding;
+      const leftSpace = rect.left - padding;
+      const rightSpace = window.innerWidth - rect.right - padding;
+
+      let placement: "top" | "bottom" | "right" | "left" = "top";
+      if (topSpace >= tooltipRect.height + offset) {
+        placement = "top";
+      } else if (bottomSpace >= tooltipRect.height + offset) {
+        placement = "bottom";
+      } else if (rightSpace >= tooltipRect.width + offset) {
+        placement = "right";
+      } else if (leftSpace >= tooltipRect.width + offset) {
+        placement = "left";
+      } else {
+        placement = bottomSpace >= topSpace ? "bottom" : "top";
+      }
+
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      let left = centerX - tooltipRect.width / 2;
+      let top = rect.top - tooltipRect.height - offset;
+
+      if (placement === "bottom") {
+        top = rect.bottom + offset;
+      } else if (placement === "right") {
+        left = rect.right + offset;
+        top = centerY - tooltipRect.height / 2;
+      } else if (placement === "left") {
+        left = rect.left - tooltipRect.width - offset;
+        top = centerY - tooltipRect.height / 2;
+      }
+
+      const maxLeft = window.innerWidth - padding - tooltipRect.width;
+      const maxTop = window.innerHeight - padding - tooltipRect.height;
+      left = Math.min(Math.max(left, padding), Math.max(padding, maxLeft));
+      top = Math.min(Math.max(top, padding), Math.max(padding, maxTop));
+
+      node.style.left = `${left}px`;
+      node.style.top = `${top}px`;
+      node.setAttribute("data-placement", placement);
+    };
+
+    let lastX = 0;
+    let lastY = 0;
+    let hideTimer: number | null = null;
+
+    const clearHideTimer = () => {
+      if (hideTimer !== null) {
+        window.clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+    };
+
+    const getTooltipTargetFromPoint = () => {
+      const el = document.elementFromPoint(lastX, lastY) as HTMLElement | null;
+      return (el?.closest?.("[data-tooltip]") as HTMLElement | null) ?? null;
+    };
+
+    const handleOver = (event: PointerEvent) => {
+      const target = (event.target as HTMLElement | null)?.closest?.(
+        "[data-tooltip]"
+      ) as HTMLElement | null;
+      if (!target) return;
+      const text = target.getAttribute("data-tooltip") ?? "";
+      if (!text) return;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      clearHideTimer();
+      positionTooltip(target, text);
+    };
+    const handleMove = (event: PointerEvent) => {
+      const target = (event.target as HTMLElement | null)?.closest?.(
+        "[data-tooltip]"
+      ) as HTMLElement | null;
+      if (!target) return;
+      const text = target.getAttribute("data-tooltip") ?? "";
+      if (!text) return;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      clearHideTimer();
+      positionTooltip(target, text);
+    };
+    const handleOut = (event: PointerEvent) => {
+      const target = (event.target as HTMLElement | null)?.closest?.(
+        "[data-tooltip]"
+      ) as HTMLElement | null;
+      if (!target) return;
+      const related = event.relatedTarget as Node | null;
+      if (related && target.contains(related)) return;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      clearHideTimer();
+      hideTimer = window.setTimeout(() => {
+        const nextTarget = getTooltipTargetFromPoint();
+        if (nextTarget) {
+          const text = nextTarget.getAttribute("data-tooltip") ?? "";
+          if (text) {
+            positionTooltip(nextTarget, text);
+            return;
+          }
+        }
+        hidePortal();
+      }, 16);
+    };
+    document.addEventListener("pointerover", handleOver, true);
+    document.addEventListener("pointermove", handleMove, true);
+    document.addEventListener("pointerout", handleOut, true);
+    return () => {
+      document.removeEventListener("pointerover", handleOver, true);
+      document.removeEventListener("pointermove", handleMove, true);
+      document.removeEventListener("pointerout", handleOut, true);
+      measure.remove();
+      document.body.classList.remove("tooltip-portal-enabled");
+      if (portal) {
+        portal.remove();
+        portal = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      restoreRef.current = parsed;
+      if (parsed.theme === "system" || parsed.theme === "light" || parsed.theme === "dark") {
+        setTheme(parsed.theme);
+      }
+      if (parsed.chatMode === "fast" || parsed.chatMode === "standard") {
+        setChatMode(parsed.chatMode);
+      }
+      if (Number.isFinite(parsed.chatWidth)) {
+        setChatWidth(parsed.chatWidth);
+      }
+      if (typeof parsed.chatOpen === "boolean") {
+        setChatOpen(parsed.chatOpen);
+      }
+      if (typeof parsed.sidebarOpen === "boolean") {
+        setSidebarOpen(parsed.sidebarOpen);
+      }
+      if (typeof parsed.sidebarListCollapsed === "boolean") {
+        setSidebarListCollapsed(parsed.sidebarListCollapsed);
+      }
+      if (typeof parsed.sidebarSettingsCollapsed === "boolean") {
+        setSidebarSettingsCollapsed(parsed.sidebarSettingsCollapsed);
+      }
+      if (
+        parsed.settingsSection === "general" ||
+        parsed.settingsSection === "account" ||
+        parsed.settingsSection === "usage" ||
+        parsed.settingsSection === "messages" ||
+        parsed.settingsSection === "manual" ||
+        parsed.settingsSection === "service" ||
+        parsed.settingsSection === "faq"
+      ) {
+        setSettingsSection(parsed.settingsSection);
+      }
+      if (typeof parsed.showThreadList === "boolean") {
+        setShowThreadList(parsed.showThreadList);
+      }
+    } catch {
+      restoreRef.current = null;
+    } finally {
+      setIsHydrated(true);
+    }
+  }, []);
+
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [chatSending, setChatSending] = useState(false);
+  const chatSendingRef = useRef(false);
+  const chatSocketRef = useRef<WebSocket | null>(null);
+  const streamingMessageIdRef = useRef<string | null>(null);
+  const isNearBottomRef = useRef(true);
+  const refAbortRef = useRef<AbortController | null>(null);
+  const chatMessagesAbortRef = useRef<AbortController | null>(null);
+  const chatsAbortRef = useRef<AbortController | null>(null);
+  const allChatsAbortRef = useRef<AbortController | null>(null);
+  const documentsAbortRef = useRef<AbortController | null>(null);
+  const signedUrlAbortRef = useRef<AbortController | null>(null);
+  const seenDocsCacheRef = useRef(false);
+  const documentChunkCacheRef = useRef<Map<string, ChunkCache>>(new Map());
+  const documentChunkLoadRef = useRef<Map<string, Promise<ChunkCache | null>>>(new Map());
+
+  const scrollChatToBottom = (behavior: ScrollBehavior = "auto") => {
+    const target = chatMessagesRef.current;
+    if (!target) return;
+    const bottom = Math.max(0, target.scrollHeight - target.clientHeight);
+    target.scrollTo({ top: bottom, behavior });
+  };
+  const setChatSendingState = (value: boolean) => {
+    chatSendingRef.current = value;
+    setChatSending(value);
+  };
+  const [chatThreads, setChatThreads] = useState<
+    { id: string; title: string | null; updatedAt: string | null; lastMessage?: string | null }[]
+  >([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [showThreadList, setShowThreadList] = useState(false);
+  const [showAllChatList, setShowAllChatList] = useState(false);
+  const [editingChatTitle, setEditingChatTitle] = useState(false);
+  const [chatTitleDraft, setChatTitleDraft] = useState("");
+  const [openChatMenuId, setOpenChatMenuId] = useState<string | null>(null);
+  const [pendingRenameChatId, setPendingRenameChatId] = useState<string | null>(null);
+  const [editingChatListId, setEditingChatListId] = useState<string | null>(null);
+  const [chatListTitleDraft, setChatListTitleDraft] = useState("");
+  const [allChatThreads, setAllChatThreads] = useState<
+    {
+      id: string;
+      title: string | null;
+      documentId: string;
+      documentTitle: string | null;
+      lastMessage?: string | null;
+      updatedAt: string | null;
+    }[]
+  >([]);
+  const [activeHighlightId, setActiveHighlightId] = useState<string | null>(
+    "h-12-1"
+  );
+  const [isAuthed, setIsAuthed] = useState(false);
+  const [guestToken, setGuestToken] = useState<string | null>(null);
+  const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [docsLoading, setDocsLoading] = useState(false);
+  const [docsError, setDocsError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [seenDocumentIds, setSeenDocumentIds] = useState<Set<string>>(new Set());
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarSearch, setSidebarSearch] = useState("");
+  const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false);
+  const [sidebarSearchMode, setSidebarSearchMode] = useState<"title" | "content">(
+    "title"
+  );
+  const sidebarSearchRef = useRef<HTMLInputElement | null>(null);
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
+  const [selectedDocumentUrl, setSelectedDocumentUrl] = useState<string | null>(null);
+  const [selectedDocumentTitle, setSelectedDocumentTitle] = useState<string | null>(null);
+  const [selectedDocumentResult, setSelectedDocumentResult] = useState<any | null>(null);
+  const [selectedDocumentAnnotations, setSelectedDocumentAnnotations] = useState<
+    Record<number, Record<number, any[]>> | null
+  >(null);
+  const bundleCacheRef = useRef<
+    Map<
+      string,
+      {
+        signedUrl: string;
+        expiresAt: number;
+        result: any | null;
+        annotations: Record<number, Record<number, any[]>>;
+      }
+    >
+  >(new Map());
+  const [selectedDocumentToken, setSelectedDocumentToken] = useState<string | null>(null);
+  const [viewerLoading, setViewerLoading] = useState(false);
+  const [viewerError, setViewerError] = useState<string | null>(null);
+  const [openDocuments, setOpenDocuments] = useState<OpenDocument[]>([]);
+  const [selectedTabId, setSelectedTabId] = useState<string | null>(null);
+  const [tabsOverflow, setTabsOverflow] = useState(false);
+  const [editingDocumentId, setEditingDocumentId] = useState<string | null>(null);
+  const [documentTitleDraft, setDocumentTitleDraft] = useState("");
+  const documentStatusLabel = (status?: string | null) => {
+    if (!status || status === "ready" || status === "done") return null;
+    if (status === "uploading") return t("status.uploading");
+    if (status === "uploaded") return t("status.uploaded");
+    if (status === "processing") return t("status.processing");
+    if (status === "failed") return t("status.failed");
+    return status;
+  };
+  const [openDocMenuId, setOpenDocMenuId] = useState<string | null>(null);
+  const [referenceRequest, setReferenceRequest] = useState<ReferenceRequest | null>(null);
+  const [activeRefId, setActiveRefId] = useState<string | null>(null);
+  const [settingsSection, setSettingsSection] = useState<
+    "general" | "account" | "usage" | "messages" | "manual" | "service" | "faq"
+  >("general");
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageError, setUsageError] = useState<string | null>(null);
+  const [theme, setTheme] = useState<ThemeMode>("system");
+  const [plan, setPlan] = useState<PlanName>("guest");
+  const [planCatalog, setPlanCatalog] =
+    useState<Record<PlanName, PlanLimits>>(DEFAULT_PLAN_LIMITS);
+  const [planLimits, setPlanLimits] = useState<PlanLimits>(DEFAULT_PLAN_LIMITS.guest);
+  const [limitModalOpen, setLimitModalOpen] = useState(false);
+  const [limitModalMessage, setLimitModalMessage] = useState<string | null>(null);
+  const [planUpdating, setPlanUpdating] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<Exclude<PlanName, "guest">>("plus");
+  const [billingBusy, setBillingBusy] = useState(false);
+  const [billingError, setBillingError] = useState<string | null>(null);
+  const [checkoutNotice, setCheckoutNotice] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+  const [billingSummary, setBillingSummary] = useState<{
+    plan: PlanName | null;
+    status: string | null;
+    currentPeriodEnd: string | null;
+    cancelAtPeriodEnd?: boolean | null;
+    nextPlan: PlanName | null;
+    nextPlanAt: number | null;
+    upcomingInvoice: {
+      amountDue: number | null;
+      currency: string | null;
+      nextPaymentAt: number | null;
+    } | null;
+    invoices: {
+      id: string;
+      status: string | null;
+      amountPaid: number | null;
+      currency: string | null;
+      created: number | null;
+      hostedInvoiceUrl: string | null;
+      lines?: {
+        id?: string | null;
+        description?: string | null;
+        amount?: number | null;
+        currency?: string | null;
+        proration?: boolean | null;
+      }[];
+    }[];
+  } | null>(null);
+  const [billingLoading, setBillingLoading] = useState(false);
+  const [billingFetchError, setBillingFetchError] = useState<string | null>(null);
+  const [announcements, setAnnouncements] = useState<AdminAnnouncement[]>([]);
+  const [supportMessages, setSupportMessages] = useState<SupportMessage[]>([]);
+  const [supportDraft, setSupportDraft] = useState("");
+  const [supportBusy, setSupportBusy] = useState(false);
+  const [feedbackCategory, setFeedbackCategory] = useState("bug");
+  const [feedbackMessage, setFeedbackMessage] = useState("");
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
+  const [feedbackNotice, setFeedbackNotice] = useState<string | null>(null);
+  const [uploadLimitModalOpen, setUploadLimitModalOpen] = useState(false);
+  const [uploadLimitMessage, setUploadLimitMessage] = useState<string | null>(null);
+  const [dailyMessageUsage, setDailyMessageUsage] = useState<{
+    used: number;
+    limit: number | null;
+    periodStart: string | null;
+  } | null>(null);
+  const [shareMenuOpen, setShareMenuOpen] = useState(false);
+  const [shareNotice, setShareNotice] = useState<string | null>(null);
+  const shareMenuRef = useRef<HTMLDivElement | null>(null);
+  const sidebarShareMenuRef = useRef<HTMLDivElement | null>(null);
+  const [sidebarSharePopoverStyle, setSidebarSharePopoverStyle] =
+    useState<React.CSSProperties | null>(null);
+  const [isMobileLayout, setIsMobileLayout] = useState(false);
+  const [chatDrawerHeight, setChatDrawerHeight] = useState<number | null>(null);
+  const [chatInputVisible, setChatInputVisible] = useState(true);
+  const chatHeaderRef = useRef<HTMLDivElement | null>(null);
+  const chatInputFormRef = useRef<HTMLFormElement | null>(null);
+  const chatDragRef = useRef<{ startY: number; startHeight: number; dragging: boolean }>({
+    startY: 0,
+    startHeight: 0,
+    dragging: false,
+  });
+  const chatDragMovedRef = useRef(false);
+  const chatLastExpandedHeightRef = useRef<number | null>(null);
+  const restoreRef = useRef<any | null>(null);
+  const restoreDoneRef = useRef(false);
+  const [isHydrated, setIsHydrated] = useState(false);
+  const resumeProcessingStartedRef = useRef(false);
+  const documentsRefreshTimerRef = useRef<number | null>(null);
+  const documentsRefreshRunningRef = useRef(false);
+  const documentsRef = useRef<DocumentItem[]>([]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!isHydrated) return;
+    const restored = restoreRef.current;
+    const hasStoredSidebar = typeof restored?.sidebarOpen === "boolean";
+    if (hasStoredSidebar) return;
+    if (window.innerWidth <= 820) {
+      setSidebarOpen(false);
+      setSidebarSearchOpen(false);
+    }
+  }, [isHydrated]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const media = window.matchMedia("(max-width: 820px)");
+    const apply = () => setIsMobileLayout(media.matches);
+    apply();
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", apply);
+      return () => media.removeEventListener("change", apply);
+    }
+    media.addListener(apply);
+    return () => media.removeListener(apply);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileLayout) {
+      setChatDrawerHeight(null);
+      setChatInputVisible(true);
+      return;
+    }
+    const headerHeight = chatHeaderRef.current?.offsetHeight ?? 56;
+    setChatDrawerHeight(headerHeight);
+  }, [isMobileLayout]);
+
+  useEffect(() => {
+    if (!isMobileLayout) {
+      setChatInputVisible(true);
+      return;
+    }
+    if (!chatDrawerHeight) {
+      setChatInputVisible(false);
+      return;
+    }
+    const raf = window.requestAnimationFrame(() => {
+      const headerHeight = chatHeaderRef.current?.offsetHeight ?? 56;
+      const inputHeight = chatInputFormRef.current?.offsetHeight ?? 0;
+      const needed = headerHeight + inputHeight + 8;
+      setChatInputVisible(chatDrawerHeight >= needed);
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [isMobileLayout, chatDrawerHeight]);
+  useEffect(() => {
+    if (!isHydrated) return;
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(DOCUMENTS_SEEN_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        seenDocsCacheRef.current = true;
+        setSeenDocumentIds(new Set(parsed.map((id) => String(id))));
+      }
+    } catch {
+      // Ignore malformed cache
+    }
+  }, [isHydrated]);
+
+  useEffect(() => {
+    if (!isHydrated || typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const checkout = params.get("checkout");
+    if (checkout === "cancel") {
+      setCheckoutNotice({ type: "error", message: t("billingCheckoutFailed") });
+      params.delete("checkout");
+      const next = `${window.location.pathname}${
+        params.toString() ? `?${params}` : ""
+      }`;
+      window.history.replaceState({}, "", next);
+    } else if (checkout === "success") {
+      setCheckoutNotice({ type: "success", message: t("billingCheckoutSuccess") });
+      params.delete("checkout");
+      const next = `${window.location.pathname}${
+        params.toString() ? `?${params}` : ""
+      }`;
+      window.history.replaceState({}, "", next);
+    }
+  }, [isHydrated, t]);
+
+
+  useEffect(() => {
+    if (!isHydrated) return;
+    const token = getOrCreateGuestToken();
+    setGuestToken(token);
+  }, [isHydrated]);
+
+  const normalizeUsageBucket = (bucket: any): UsageBucket => ({
+    periodStart: bucket?.periodStart ?? null,
+    periodEnd: bucket?.periodEnd ?? null,
+    inputTokens: Number(bucket?.input_tokens ?? bucket?.inputTokens ?? 0),
+    outputTokens: Number(bucket?.output_tokens ?? bucket?.outputTokens ?? 0),
+    totalTokens: Number(bucket?.total_tokens ?? bucket?.totalTokens ?? 0),
+    pages: Number(bucket?.pages ?? 0),
+    answerTokens: Number(bucket?.answer_tokens ?? bucket?.answerTokens ?? 0),
+    embedTokens: Number(bucket?.embed_tokens ?? bucket?.embedTokens ?? 0),
+    parsePages: Number(bucket?.parse_pages ?? bucket?.parsePages ?? 0),
+    answerCount: Number(bucket?.answer_count ?? bucket?.answerCount ?? 0),
+    embedCount: Number(bucket?.embed_count ?? bucket?.embedCount ?? 0),
+    parseCount: Number(bucket?.parse_count ?? bucket?.parseCount ?? 0),
+    costYen: bucket?.costYen ?? bucket?.cost_yen ?? null,
+    costNote: bucket?.costNote ?? bucket?.cost_note ?? null,
+  });
+
+  const formatNumber = (value: number) =>
+    Number.isFinite(value) ? value.toLocaleString(locale) : "0";
+
+  const formatMiddleEllipsis = (value: string, maxLength = 24) => {
+    if (value.length <= maxLength) return value;
+    const keep = Math.max(4, Math.floor((maxLength - 3) / 2));
+    const head = value.slice(0, keep);
+    const tail = value.slice(-keep);
+    return `${head}...${tail}`;
+  };
+
+  const ZERO_DECIMAL_CURRENCIES = new Set([
+    "BIF",
+    "CLP",
+    "DJF",
+    "GNF",
+    "JPY",
+    "KMF",
+    "KRW",
+    "MGA",
+    "PYG",
+    "RWF",
+    "UGX",
+    "VND",
+    "VUV",
+    "XAF",
+    "XOF",
+    "XPF",
+  ]);
+
+  const formatCurrency = (amount: number | null, currency: string | null) => {
+    if (amount === null || !currency) return "-";
+    const upper = currency.toUpperCase();
+    const divisor = ZERO_DECIMAL_CURRENCIES.has(upper) ? 1 : 100;
+    const value = amount / divisor;
+    try {
+      return new Intl.NumberFormat(locale, {
+        style: "currency",
+        currency: upper,
+      }).format(value);
+    } catch {
+      return `${value} ${upper}`;
+    }
+  };
+
+  const formatSignedCurrency = (amount: number | null, currency: string | null) => {
+    if (amount === null || !currency) return "-";
+    const absAmount = Math.abs(amount);
+    const formatted = formatCurrency(absAmount, currency);
+    if (amount < 0) return `-${formatted}`;
+    return `+${formatted}`;
+  };
+
+  const handleShare = async () => {
+    if (typeof window === "undefined") return;
+    const url = window.location.href;
+    const title = selectedDocumentTitle ?? t("viewer.noDocument");
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, url });
+        return;
+      }
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      }
+    } catch {
+      // Ignore share failures
+    }
+  };
+
+  const getShareContext = () => {
+    if (typeof window === "undefined") {
+      return { url: "", title: "" };
+    }
+    const url = `${window.location.origin}${window.location.pathname}`;
+    const title = t("appTitle") || "AskPDF";
+    return { url, title };
+  };
+
+  const openShareUrl = (url: string) => {
+    if (typeof window === "undefined") return;
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const handleCopyShare = async () => {
+    const { url } = getShareContext();
+    if (!url) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = url;
+        textarea.style.position = "fixed";
+        textarea.style.top = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        textarea.remove();
+      }
+      setShareNotice(t("share.copied"));
+      setTimeout(() => setShareNotice(null), 2000);
+    } catch {
+      // Ignore copy failures
+    }
+  };
+
+  const handleCopyMessage = async (text: string) => {
+    if (!text) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.position = "fixed";
+        textarea.style.top = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        textarea.remove();
+      }
+    } catch {
+      // Ignore copy failures
+    }
+  };
+
+  const getCopyMessageText = (message: ChatMessage) => {
+    if (!message.text) return "";
+    if (message.role !== "assistant") return message.text;
+    return replaceRefTags(message.text, message.refs);
+  };
+
+  const handleShareNative = async () => {
+    const { url, title } = getShareContext();
+    if (!url) return;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, url });
+      } else {
+        await handleCopyShare();
+      }
+    } catch {
+      // Ignore share failures
+    }
+  };
+
+  const handleShareX = () => {
+    const { url, title } = getShareContext();
+    if (!url) return;
+    const shareUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(
+      title
+    )}&url=${encodeURIComponent(url)}`;
+    openShareUrl(shareUrl);
+  };
+
+  const handleShareLine = () => {
+    const { url } = getShareContext();
+    if (!url) return;
+    const shareUrl = `https://social-plugins.line.me/lineit/share?url=${encodeURIComponent(
+      url
+    )}`;
+    openShareUrl(shareUrl);
+  };
+
+  useEffect(() => {
+    if (!shareMenuOpen) return;
+    const onClick = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      const shareMenuNodes = [shareMenuRef.current, sidebarShareMenuRef.current].filter(
+        Boolean
+      );
+      if (target && shareMenuNodes.some((node) => node?.contains(target))) {
+        return;
+      }
+      setShareMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [shareMenuOpen]);
+
+  useEffect(() => {
+    if (!shareMenuOpen || !isMobileLayout) {
+      setSidebarSharePopoverStyle(null);
+      return;
+    }
+    const raf = window.requestAnimationFrame(() => {
+      const wrap = sidebarShareMenuRef.current;
+      const button = wrap?.querySelector("button");
+      if (!button) return;
+      const rect = button.getBoundingClientRect();
+      const popoverWidth = 200;
+      const maxLeft = Math.max(12, window.innerWidth - popoverWidth - 12);
+      const left = Math.min(rect.left, maxLeft);
+      setSidebarSharePopoverStyle({
+        position: "fixed",
+        top: rect.bottom + 8,
+        left,
+        zIndex: 9999,
+      });
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [shareMenuOpen, isMobileLayout]);
+
+  const getChatDrawerMin = () => chatHeaderRef.current?.offsetHeight ?? 56;
+  const getChatDrawerMax = () =>
+    typeof window !== "undefined" ? Math.round(window.innerHeight * 0.8) : 0;
+  const clampChatHeight = (value: number) => {
+    const min = getChatDrawerMin();
+    const max = Math.max(min, getChatDrawerMax());
+    return Math.min(max, Math.max(min, value));
+  };
+
+  const formatDateTime = (value: number | string | null) => {
+    if (!value) return "-";
+    const date =
+      typeof value === "string" ? new Date(value) : new Date(value * 1000);
+    if (Number.isNaN(date.getTime())) return "-";
+    return date.toLocaleString(locale);
+  };
+
+  const formatDate = (value: number | string | null) => {
+    if (!value) return "-";
+    const date =
+      typeof value === "string" ? new Date(value) : new Date(value * 1000);
+    if (Number.isNaN(date.getTime())) return "-";
+    return date.toLocaleDateString(locale);
+  };
+
+  const SETTINGS_TAB_ID = "__settings__";
+  const canUseApi = isAuthed || Boolean(guestToken);
+  const filteredDocuments = useMemo(() => {
+    const query = normalizeSearchText(sidebarSearch);
+    if (!query) return documents;
+    return documents.filter((doc) => normalizeSearchText(doc.title || "").includes(query));
+  }, [documents, sidebarSearch]);
+  const [contentSearchHits, setContentSearchHits] = useState<
+    {
+      documentId: string;
+      title: string | null;
+      snippet: string;
+      hitCount: number;
+    }[]
+  >([]);
+  const [contentSearchLoading, setContentSearchLoading] = useState(false);
+  const [contentSearchError, setContentSearchError] = useState<string | null>(null);
+  const contentSearchAbortRef = useRef<AbortController | null>(null);
+
+  const searchResults = useMemo<{ doc: DocumentItem; snippet: string | null; extraHits: number }[]>(
+    () => {
+    if (!normalizeSearchText(sidebarSearch)) {
+      return documents.map((doc) => ({ doc, snippet: null, extraHits: 0 }));
+    }
+    if (sidebarSearchMode === "title") {
+      return filteredDocuments.map((doc) => ({ doc, snippet: null, extraHits: 0 }));
+    }
+    return contentSearchHits.map((hit) => ({
+      doc: { id: hit.documentId, title: hit.title || t("common.untitled"), status: null },
+      snippet: hit.snippet,
+      extraHits: Math.max(0, hit.hitCount - 1),
+    }));
+    },
+    [sidebarSearch, sidebarSearchMode, documents, filteredDocuments, contentSearchHits, t]
+  );
+
+  const sidebarDocumentCount = normalizeSearchText(sidebarSearch)
+    ? searchResults.length
+    : documents.length;
+  const openLimitModal = (message?: string | null) => {
+    setLimitModalMessage(message ?? null);
+    setLimitModalOpen(true);
+    if (isAuthed) {
+      setBillingLoading(true);
+      setBillingFetchError(null);
+      loadBillingSummary()
+        .catch((error) => {
+          const msg = error instanceof Error ? error.message : "Failed to load billing";
+          setBillingFetchError(msg);
+        })
+        .finally(() => {
+          setBillingLoading(false);
+        });
+    }
+  };
+
+  useEffect(() => {
+    if (!isHydrated || typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("open") !== "upgrade") return;
+
+    const plan = params.get("plan");
+    if (plan === "free" || plan === "plus") {
+      setSelectedPlan(plan);
+    } else {
+      setSelectedPlan("plus");
+    }
+    openLimitModal();
+
+    params.delete("open");
+    params.delete("plan");
+    const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
+    window.history.replaceState({}, "", next);
+  }, [isHydrated]);
+
+  useEffect(() => {
+    if (!canUseApi) return;
+    void loadDailyMessageUsage();
+  }, [canUseApi, planLimits.maxMessagesPerThread]);
+
+  useEffect(() => {
+    const query = normalizeSearchText(sidebarSearch);
+    if (!canUseApi || !query || sidebarSearchMode !== "content") {
+      setContentSearchHits([]);
+      setContentSearchError(null);
+      setContentSearchLoading(false);
+      if (contentSearchAbortRef.current) {
+        contentSearchAbortRef.current.abort();
+        contentSearchAbortRef.current = null;
+      }
+      return;
+    }
+    const controller = new AbortController();
+    if (contentSearchAbortRef.current) {
+      contentSearchAbortRef.current.abort();
+    }
+    contentSearchAbortRef.current = controller;
+    setContentSearchLoading(true);
+    setContentSearchError(null);
+    const timer = window.setTimeout(() => {
+      (async () => {
+        try {
+          const auth = await getAuthParams();
+          if (!auth) return;
+          const baseUrl =
+            process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+          const url = new URL(`${baseUrl}/documents/search`);
+          url.searchParams.set("query", query);
+          url.searchParams.set("limit", "30");
+          const response = await fetch(url.toString(), {
+            headers: auth.headers,
+            signal: controller.signal,
+          });
+          if (!response.ok) {
+            throw new Error("Search failed");
+          }
+          const data = await response.json();
+          const items = Array.isArray(data?.items) ? data.items : [];
+          setContentSearchHits(items);
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") return;
+          setContentSearchError("Search failed");
+        } finally {
+          setContentSearchLoading(false);
+        }
+      })();
+    }, 500);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [canUseApi, sidebarSearch, sidebarSearchMode]);
+
+  const mainStyle = useMemo(() => {
+    if (isMobileLayout) {
+      return {
+        gridTemplateColumns: "1fr",
+        ["--main-columns" as any]: "1fr",
+      };
+    }
+    return {
+      gridTemplateColumns: chatOpen
+        ? `minmax(0, 1fr) 6px ${chatWidth}px`
+        : "minmax(0, 1fr) 0px 0px",
+      ["--main-columns" as any]: chatOpen
+        ? `minmax(0, 1fr) 6px ${chatWidth}px`
+        : "minmax(0, 1fr) 0px 0px",
+    };
+  }, [chatOpen, chatWidth, isMobileLayout]);
+  const chatHeaderHeight = chatHeaderRef.current?.offsetHeight ?? 56;
+  const isChatExpanded =
+    isMobileLayout &&
+    chatOpen &&
+    (chatDrawerHeight ?? chatHeaderHeight) > chatHeaderHeight + 24;
+
+  const renderSearchSnippet = (snippet: string, query: string) => {
+    const needle = normalizeSearchText(query);
+    if (!needle) return <span>{snippet}</span>;
+    const indexed = buildSearchIndex(snippet);
+    const idx = indexed.normalized.indexOf(needle);
+    if (idx < 0) return <span>{snippet}</span>;
+    const start = indexed.sourceIndexMap[idx] ?? 0;
+    const endIndex = idx + needle.length - 1;
+    const end =
+      (indexed.sourceIndexMap[Math.min(endIndex, indexed.sourceIndexMap.length - 1)] ?? start) + 1;
+    const before = snippet.slice(0, start);
+    const match = snippet.slice(start, end);
+    const after = snippet.slice(end);
+    return (
+      <>
+        <span>{before}</span>
+        <span className="history-item__snippet-hit">{match}</span>
+        <span>{after}</span>
+      </>
+    );
+  };
+
+  const handleResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {
+    const target = event.currentTarget;
+    target.setPointerCapture(event.pointerId);
+    const onMove = (moveEvent: PointerEvent) => {
+      const container = containerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const nextWidth = rect.right - moveEvent.clientX;
+      const maxWidth = rect.width * 0.8;
+      const clamped = Math.min(Math.max(nextWidth, 280), maxWidth);
+      setChatWidth(clamped);
+    };
+    const onUp = (upEvent: PointerEvent) => {
+      target.releasePointerCapture(upEvent.pointerId);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const persistSeenDocuments = (next: Set<string>) => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(DOCUMENTS_SEEN_KEY, JSON.stringify(Array.from(next)));
+    } catch {
+      // Ignore storage failures
+    }
+  };
+
+  const markDocumentSeen = (docId: string) => {
+    setSeenDocumentIds((prev) => {
+      if (prev.has(docId)) return prev;
+      const next = new Set(prev);
+      next.add(docId);
+      persistSeenDocuments(next);
+      return next;
+    });
+  };
+
+  const resizeChatInput = () => {
+    const el = chatInputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const styles = window.getComputedStyle(el);
+    const lineHeight = Number.parseFloat(styles.lineHeight || "0");
+    const paddingTop = Number.parseFloat(styles.paddingTop || "0");
+    const paddingBottom = Number.parseFloat(styles.paddingBottom || "0");
+    const maxHeight = lineHeight * 3 + paddingTop + paddingBottom;
+    const nextHeight = Math.min(el.scrollHeight, maxHeight);
+    el.style.height = `${nextHeight}px`;
+    el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
+  };
+
+  const resetSignedOutState = () => {
+    setUserEmail(null);
+    setUserId(null);
+    setPlan("guest");
+    setPlanLimits(planCatalog.guest);
+    setAnnouncements([]);
+    setSupportMessages([]);
+    setDocuments([]);
+    setOpenDocuments([]);
+    setSelectedDocumentId(null);
+    setSelectedTabId(null);
+    setSelectedDocumentTitle(null);
+    setSelectedDocumentUrl(null);
+    setSelectedDocumentToken(null);
+    setSelectedDocumentResult(null);
+    setSelectedDocumentAnnotations([]);
+    setViewerLoading(false);
+    setViewerError(null);
+    setBillingSummary(null);
+    setBillingLoading(false);
+    setBillingFetchError(null);
+    setBillingError(null);
+    setChatMessages([]);
+    setChatError(null);
+    setChatThreads([]);
+    setActiveChatId(null);
+    setAllChatThreads([]);
+    setShowThreadList(true);
+    setShowAllChatList(false);
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(STORAGE_KEY);
+    }
+  };
+
+  useEffect(() => {
+    void loadPlanCatalog();
+    supabase.auth.getSession().then(({ data }) => {
+      setIsAuthed(Boolean(data.session));
+      if (data.session) {
+        setUserEmail(data.session.user?.email ?? null);
+        setUserId(data.session.user?.id ?? null);
+        void loadDocuments();
+        void loadPlan();
+      } else {
+        resetSignedOutState();
+        void loadDocuments();
+        void loadAllChats();
+      }
+    });
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      setIsAuthed(Boolean(session));
+      if (session) {
+        setUserEmail(session.user?.email ?? null);
+        setUserId(session.user?.id ?? null);
+        void loadDocuments();
+        void loadPlan();
+        if (selectedDocumentId) {
+          void loadChats(selectedDocumentId);
+        } else {
+          void loadAllChats();
+        }
+      } else {
+        resetSignedOutState();
+      }
+    });
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const getFallbackPlanLimits = (targetPlan: PlanName) =>
+    planCatalog[targetPlan] ?? DEFAULT_PLAN_LIMITS[targetPlan];
+
+  const loadPlanCatalog = async () => {
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/plans/limits`);
+      if (!response.ok) return;
+      const payload = await response.json();
+      const plans = payload?.plans ?? {};
+      setPlanCatalog({
+        guest: normalizePlanLimits(plans?.guest, DEFAULT_PLAN_LIMITS.guest),
+        free: normalizePlanLimits(plans?.free, DEFAULT_PLAN_LIMITS.free),
+        plus: normalizePlanLimits(plans?.plus, DEFAULT_PLAN_LIMITS.plus),
+      });
+    } catch {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    resizeChatInput();
+  }, [chatInput]);
+
+  useEffect(() => {
+    documentsRef.current = documents;
+  }, [documents]);
+
+  useEffect(() => {
+    if (!isHydrated || !canUseApi) return;
+    const targets = documentsRef.current.filter((doc) =>
+      ["uploading", "uploaded", "processing"].includes(String(doc.status ?? ""))
+    );
+    if (targets.length === 0) {
+      if (documentsRefreshTimerRef.current !== null) {
+        window.clearInterval(documentsRefreshTimerRef.current);
+        documentsRefreshTimerRef.current = null;
+      }
+      return;
+    }
+    if (documentsRefreshTimerRef.current !== null) return;
+    documentsRefreshTimerRef.current = window.setInterval(() => {
+      if (documentsRefreshRunningRef.current) return;
+      documentsRefreshRunningRef.current = true;
+      const run = async () => {
+        try {
+          const auth = await getAuthParams();
+          if (!auth) return;
+          const baseUrl =
+            process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+          const currentTargets = documentsRef.current.filter((doc) =>
+            ["uploading", "uploaded", "processing"].includes(String(doc.status ?? ""))
+          );
+          if (currentTargets.length === 0) return;
+          const updates = await Promise.all(
+            currentTargets.map(async (doc) => {
+              const response = await fetch(`${baseUrl}/documents/${doc.id}`, {
+                headers: auth.headers,
+              });
+              if (!response.ok) return null;
+              const payload = await response.json();
+              return {
+                id: String(payload.id ?? doc.id),
+                status:
+                  typeof payload.status === "string" ? payload.status : null,
+              };
+            })
+          );
+          const next = updates.filter(Boolean) as { id: string; status: string | null }[];
+          if (next.length === 0) return;
+          setDocuments((prev) =>
+            prev.map((item) => {
+              const hit = next.find((u) => u.id === item.id);
+              if (!hit) return item;
+              return { ...item, status: hit.status };
+            })
+          );
+        } catch {
+          // Ignore polling errors
+        } finally {
+          documentsRefreshRunningRef.current = false;
+        }
+      };
+      void run();
+    }, 5000);
+    return () => {
+      if (documentsRefreshTimerRef.current !== null) {
+        window.clearInterval(documentsRefreshTimerRef.current);
+        documentsRefreshTimerRef.current = null;
+      }
+    };
+  }, [documents, isHydrated, canUseApi]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new Event("askpdf:layout"));
+  }, [chatOpen]);
+
+  useEffect(() => {
+    if (!isMobileLayout) return;
+    if (!chatOpen) return;
+    requestAnimationFrame(() => {
+      chatInputRef.current?.focus();
+    });
+  }, [chatOpen, isMobileLayout]);
+
+  useEffect(() => {
+    if (!isMobileLayout) return;
+    if (!selectedDocumentId) return;
+    setSidebarOpen(false);
+  }, [isMobileLayout, selectedDocumentId]);
+
+  useEffect(() => {
+    if (!isAuthed || settingsSection !== "account") return;
+    let active = true;
+    const load = async () => {
+      setBillingLoading(true);
+      setBillingFetchError(null);
+      try {
+        await loadBillingSummary();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to load billing";
+        if (active) setBillingFetchError(message);
+      } finally {
+        if (active) setBillingLoading(false);
+      }
+    };
+    void load();
+    return () => {
+      active = false;
+    };
+  }, [isAuthed, settingsSection]);
+
+  useEffect(() => {
+    if (!isAuthed || settingsSection !== "messages") return;
+    void loadAnnouncements();
+    void loadSupportMessages();
+  }, [isAuthed, settingsSection]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raf = requestAnimationFrame(() => {
+      window.dispatchEvent(new Event("askpdf:layout"));
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [chatWidth]);
+
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (!event.metaKey || !event.shiftKey || event.key.toLowerCase() !== "b") return;
+      event.preventDefault();
+      setChatOpen((prev) => !prev);
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
+
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (!event.shiftKey || event.key.toLowerCase() !== "b") return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, [contenteditable='true']")) return;
+      event.preventDefault();
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
+
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      const isModifier = event.metaKey || event.ctrlKey;
+      if (!isModifier || event.key.toLowerCase() !== "k") return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, [contenteditable='true']")) return;
+      event.preventDefault();
+      setChatOpen(true);
+      requestAnimationFrame(() => {
+        chatInputRef.current?.focus();
+      });
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
+
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, [contenteditable='true']")) return;
+      event.preventDefault();
+      setSidebarOpen(true);
+      setSidebarSearchOpen(true);
+      requestAnimationFrame(() => {
+        sidebarSearchRef.current?.focus();
+        sidebarSearchRef.current?.select();
+      });
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === "system") {
+      root.removeAttribute("data-theme");
+      return;
+    }
+    root.setAttribute("data-theme", theme);
+  }, [theme]);
+
+  useEffect(() => {
+    setOpenDocuments((prev) =>
+      prev.map((item) =>
+        item.id === SETTINGS_TAB_ID ? { ...item, title: t("settingsTitle") } : item
+      )
+    );
+    if (selectedTabId === SETTINGS_TAB_ID) {
+      setSelectedDocumentTitle(t("settingsTitle"));
+    }
+  }, [locale, selectedTabId]);
+
+  useEffect(() => {
+    if (!isHydrated) return;
+    if (typeof window === "undefined") return;
+    const payload = {
+      theme,
+      chatMode,
+      chatWidth,
+      chatOpen,
+      sidebarOpen,
+      sidebarListCollapsed,
+      sidebarSettingsCollapsed,
+      settingsSection,
+      showThreadList,
+      openDocuments,
+      selectedTabId,
+      selectedDocumentId,
+      activeChatId,
+    };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  }, [
+    isHydrated,
+    theme,
+    chatMode,
+    chatWidth,
+    chatOpen,
+    sidebarOpen,
+    sidebarListCollapsed,
+    sidebarSettingsCollapsed,
+    settingsSection,
+    showThreadList,
+    openDocuments,
+    selectedTabId,
+    selectedDocumentId,
+    activeChatId,
+  ]);
+
+  useEffect(() => {
+    if (restoreDoneRef.current) return;
+    if (!restoreRef.current) return;
+    if (!isHydrated) return;
+    if (!canUseApi) return;
+    if (docsLoading) return;
+    const restore = restoreRef.current;
+    const docMap = new Map(documents.map((doc) => [doc.id, doc.title]));
+    const rawOpenDocs = Array.isArray(restore.openDocuments) ? restore.openDocuments : [];
+    const restoreSelectedTabId =
+      typeof restore.selectedTabId === "string" ? restore.selectedTabId : null;
+    const restoreSelectedDocumentId =
+      typeof restore.selectedDocumentId === "string" ? restore.selectedDocumentId : null;
+    const targetDocId = restoreSelectedDocumentId ?? restoreSelectedTabId;
+    const wantsDocRestore = rawOpenDocs.some(
+      (item: any) => item && typeof item.id === "string" && item.id !== SETTINGS_TAB_ID
+    );
+
+    // Wait for documents to load if a doc-based tab is expected.
+    if ((targetDocId || wantsDocRestore) && documents.length === 0) {
+      return;
+    }
+
+    const normalizedOpenDocs = rawOpenDocs
+      .filter((item: any) => item && typeof item.id === "string")
+      .filter((item: any) => item.id === SETTINGS_TAB_ID || docMap.has(item.id))
+      .map((item: any) => {
+        if (item.id === SETTINGS_TAB_ID) {
+          return { id: SETTINGS_TAB_ID, title: t("settingsTitle") };
+        }
+        return {
+          id: item.id,
+          title: docMap.get(item.id) ?? String(item.title ?? t("common.untitled")),
+        };
+      });
+    if (normalizedOpenDocs.length > 0) {
+      setOpenDocuments(normalizedOpenDocs);
+    }
+
+    const restoreSettingsSection =
+      restore.settingsSection === "general" ||
+      restore.settingsSection === "ai" ||
+      restore.settingsSection === "account" ||
+      restore.settingsSection === "usage" ||
+      restore.settingsSection === "messages" ||
+      restore.settingsSection === "manual" ||
+      restore.settingsSection === "service" ||
+      restore.settingsSection === "faq"
+        ? restore.settingsSection
+        : "general";
+    const restoreActiveChatId =
+      typeof restore.activeChatId === "string" ? restore.activeChatId : null;
+
+    if (restoreSelectedTabId === SETTINGS_TAB_ID) {
+      setSettingsSection(restoreSettingsSection);
+      handleSelectTab(SETTINGS_TAB_ID);
+      restoreDoneRef.current = true;
+      return;
+    }
+
+    if (targetDocId && docMap.has(targetDocId)) {
+      const doc = { id: targetDocId, title: docMap.get(targetDocId) ?? t("common.untitled") };
+      void handleSelectDocument(doc, {
+        restoreChatId: restoreActiveChatId ?? null,
+        autoOpenChat: !restoreActiveChatId,
+      });
+      restoreDoneRef.current = true;
+      return;
+    }
+
+    restoreDoneRef.current = true;
+  }, [documents, docsLoading, canUseApi, isHydrated, locale]);
+
+  useEffect(() => {
+    if (!canUseApi || (settingsSection !== "account" && settingsSection !== "usage")) {
+      return;
+    }
+    let active = true;
+    const loadUsage = async () => {
+      setUsageLoading(true);
+      setUsageError(null);
+      try {
+        const auth = await getAuthParams();
+        if (!auth) throw new Error("Not authenticated");
+        const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+        const response = await fetch(`${baseUrl}/usage/summary`, {
+          headers: auth.headers,
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to load usage (${response.status})`);
+        }
+        const payload = (await response.json()) as any;
+        if (active) {
+          setUsageSummary({
+            current: normalizeUsageBucket(payload?.current),
+            allTime: normalizeUsageBucket(payload?.allTime),
+          });
+        }
+      } catch (error) {
+        if (active) {
+          const message = error instanceof Error ? error.message : "Failed to load usage";
+          setUsageError(message);
+        }
+      } finally {
+        if (active) {
+          setUsageLoading(false);
+        }
+      }
+    };
+    void loadUsage();
+    return () => {
+      active = false;
+    };
+  }, [canUseApi, settingsSection]);
+
+  useEffect(() => {
+    const target = chatMessagesRef.current;
+    if (!target) return;
+    let loadingOlder = false;
+    const onScroll = () => {
+      const threshold = 16;
+      const distance =
+        target.scrollHeight - target.scrollTop - target.clientHeight;
+      setShowChatJump(distance > threshold);
+      isNearBottomRef.current = distance <= 120;
+      if (
+        target.scrollTop <= 24 &&
+        hasMoreMessages &&
+        !loadingMoreMessages &&
+        !loadingOlder &&
+        selectedDocumentId &&
+        activeChatId &&
+        canUseApi
+      ) {
+        loadingOlder = true;
+        const before = chatMessages[0]?.createdAt;
+        void loadChatMessages(
+          selectedDocumentId,
+          activeChatId,
+          { before, append: true }
+        ).finally(() => {
+          loadingOlder = false;
+        });
+      }
+    };
+    onScroll();
+    target.addEventListener("scroll", onScroll);
+    return () => {
+      target.removeEventListener("scroll", onScroll);
+    };
+  }, [
+    hasMoreMessages,
+    loadingMoreMessages,
+    selectedDocumentId,
+    activeChatId,
+    canUseApi,
+    chatMessages,
+  ]);
+
+  useEffect(() => {
+    if (showThreadList || showAllChatList || !selectedDocumentId || chatMessages.length === 0) {
+      setShowChatJump(false);
+    }
+  }, [showThreadList, showAllChatList, selectedDocumentId, chatMessages.length]);
+
+  useEffect(() => {
+    if (showThreadList || showAllChatList || chatMessages.length === 0) return;
+    if (loadingMoreMessages) return;
+    if (!isNearBottomRef.current) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        scrollChatToBottom("auto");
+        isNearBottomRef.current = true;
+      });
+    });
+  }, [showThreadList, showAllChatList, chatMessages.length, loadingMoreMessages]);
+
+  const loadChatMessages = async (
+    documentId: string,
+    chatId: string,
+    options: { before?: string; append?: boolean; limit?: number } = {}
+  ) => {
+    const { before, append = false, limit = 6 } = options;
+    if (append) {
+      setLoadingMoreMessages(true);
+    } else {
+      setChatLoading(true);
+    }
+    setChatError(null);
+    try {
+      chatMessagesAbortRef.current?.abort();
+      const controller = new AbortController();
+      chatMessagesAbortRef.current = controller;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const url = new URL(
+        `${baseUrl}/documents/${documentId}/chats/${chatId}/messages`
+      );
+      url.searchParams.set("limit", String(limit));
+      if (before) {
+        url.searchParams.set("before", before);
+      }
+      const auth = await getAuthParams();
+      if (!auth) {
+        throw new Error("Not authenticated");
+      }
+      const response = await fetch(url.toString(), {
+        headers: auth.headers,
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load chat messages (${response.status})`);
+      }
+      const payload = await response.json();
+      const items = Array.isArray(payload.messages) ? payload.messages : [];
+      const messages = items.map((item: ChatMessage) => ({
+        id: String(item.id),
+        role: item.role === "assistant" ? "assistant" : "user",
+        text:
+          item.status === "error" && !item.text
+            ? t("chat.answerFailed")
+            : String(item.text ?? ""),
+        status:
+          item.status === "error"
+            ? "error"
+            : item.status === "stopped"
+              ? "stopped"
+              : undefined,
+        refs: normalizeRefs(item.refs),
+        createdAt: String(item.createdAt ?? new Date().toISOString()),
+      }));
+      setHasMoreMessages(Boolean(payload?.has_more));
+      if (append) {
+        const scrollRoot = chatMessagesRef.current;
+        const prevHeight = scrollRoot?.scrollHeight ?? 0;
+        const prevTop = scrollRoot?.scrollTop ?? 0;
+        setChatMessages((prev) => [...messages, ...prev]);
+        requestAnimationFrame(() => {
+          if (!scrollRoot) return;
+          const nextHeight = scrollRoot.scrollHeight;
+          scrollRoot.scrollTop = nextHeight - prevHeight + prevTop;
+        });
+      } else {
+        setChatMessages(messages);
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            scrollChatToBottom("auto");
+            isNearBottomRef.current = true;
+          });
+        });
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
+      const message =
+        error instanceof Error ? error.message : "Failed to load chat messages";
+      setChatError(message);
+    } finally {
+      if (chatMessagesAbortRef.current) {
+        chatMessagesAbortRef.current = null;
+      }
+      setChatLoading(false);
+      setLoadingMoreMessages(false);
+    }
+  };
+
+  const loadChats = async (
+    documentId: string,
+    options: { autoOpen?: boolean } = {}
+  ): Promise<
+    { id: string; title: string | null; updatedAt: string | null; lastMessage?: string | null }[]
+  > => {
+    const { autoOpen = true } = options;
+    setChatError(null);
+    try {
+      chatsAbortRef.current?.abort();
+      const controller = new AbortController();
+      chatsAbortRef.current = controller;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const auth = await getAuthParams();
+      if (!auth) {
+        throw new Error("Not authenticated");
+      }
+      const response = await fetch(`${baseUrl}/documents/${documentId}/chats`, {
+        headers: auth.headers,
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load chats (${response.status})`);
+      }
+      const payload = await response.json();
+      const items = Array.isArray(payload.chats) ? payload.chats : [];
+      const threads = items.map(
+        (item: {
+          id: string;
+          title?: string | null;
+          updated_at?: string | null;
+          last_message?: string | null;
+        }) => ({
+          id: String(item.id),
+          title: item.title ?? null,
+          updatedAt: item.updated_at ?? null,
+          lastMessage: item.last_message ?? null,
+        })
+      );
+      if (threads.length === 0) {
+        setChatThreads([]);
+        setActiveChatId(null);
+        setChatMessages([]);
+        setHasMoreMessages(false);
+        setShowThreadList(true);
+        return [];
+      } else {
+        setChatThreads(threads);
+        if (autoOpen) {
+          const nextChatId = threads[0].id;
+          setActiveChatId(nextChatId);
+          setShowThreadList(false);
+          await loadChatMessages(documentId, nextChatId);
+        } else {
+          setShowThreadList(true);
+        }
+        return threads;
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return [];
+      }
+      const message = error instanceof Error ? error.message : "Failed to load chats";
+      setChatError(message);
+      setChatThreads([]);
+      setActiveChatId(null);
+      setChatMessages([]);
+      setHasMoreMessages(false);
+      return [];
+    } finally {
+      if (chatsAbortRef.current) {
+        chatsAbortRef.current = null;
+      }
+    }
+  };
+
+  const loadLatestChat = async (
+    documentId: string
+  ): Promise<{ id: string; title: string | null; updatedAt: string | null } | null> => {
+    setChatError(null);
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const auth = await getAuthParams();
+      if (!auth) {
+        throw new Error("Not authenticated");
+      }
+      const response = await fetch(`${baseUrl}/documents/${documentId}/chats/latest`, {
+        headers: auth.headers,
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load latest chat (${response.status})`);
+      }
+      const payload = await response.json();
+      const chat = payload?.chat;
+      if (!chat) {
+        setChatThreads([]);
+        setActiveChatId(null);
+        setChatMessages([]);
+        setHasMoreMessages(false);
+        setShowThreadList(false);
+        return null;
+      }
+      const normalized = {
+        id: String(chat.id),
+        title: chat.title ?? null,
+        updatedAt: chat.updated_at ?? null,
+      };
+      setChatThreads([normalized]);
+      setActiveChatId(normalized.id);
+      setShowThreadList(false);
+      await loadChatMessages(documentId, normalized.id);
+      return normalized;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load latest chat";
+      setChatError(message);
+      setChatThreads([]);
+      setActiveChatId(null);
+      setChatMessages([]);
+      setHasMoreMessages(false);
+      setShowThreadList(false);
+      return null;
+    }
+  };
+
+  const loadAllChats = async () => {
+    setChatError(null);
+    try {
+      allChatsAbortRef.current?.abort();
+      const controller = new AbortController();
+      allChatsAbortRef.current = controller;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const auth = await getAuthParams();
+      if (!auth) {
+        throw new Error("Not authenticated");
+      }
+      const response = await fetch(`${baseUrl}/chats`, {
+        headers: auth.headers,
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load chats (${response.status})`);
+      }
+      const payload = await response.json();
+      const items = Array.isArray(payload.chats) ? payload.chats : [];
+      setAllChatThreads(
+        items.map(
+          (item: {
+            id: string;
+            title?: string | null;
+            documentId: string;
+            documentTitle?: string | null;
+            lastMessage?: string | null;
+            updatedAt?: string | null;
+          }) => ({
+            id: String(item.id),
+            title: item.title ?? null,
+            documentId: String(item.documentId),
+            documentTitle: item.documentTitle ?? null,
+            lastMessage: item.lastMessage ?? null,
+            updatedAt: item.updatedAt ?? null,
+          })
+        )
+      );
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
+      const message = error instanceof Error ? error.message : "Failed to load chats";
+      setChatError(message);
+      setAllChatThreads([]);
+    } finally {
+      if (allChatsAbortRef.current) {
+        allChatsAbortRef.current = null;
+      }
+    }
+  };
+
+  const createChat = async (
+    documentId: string,
+    title: string
+  ) => {
+    const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+    const auth = await getAuthParams();
+    if (!auth) return null;
+    const response = await fetch(`${baseUrl}/documents/${documentId}/chats`, {
+      method: "POST",
+      headers: {
+        ...auth.headers,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        title,
+      }),
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const payload = await response.json();
+    const chatId = String(payload.chat_id ?? "");
+    if (!chatId) return null;
+    return { id: chatId, title, updatedAt: new Date().toISOString() };
+  };
+
+  const loadDocuments = async () => {
+    setDocsLoading(true);
+    setDocsError(null);
+    try {
+      documentsAbortRef.current?.abort();
+      const controller = new AbortController();
+      documentsAbortRef.current = controller;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const auth = await getAuthParams();
+      if (!auth) {
+        throw new Error("Not authenticated");
+      }
+      const response = await fetch(`${baseUrl}/documents`, {
+        headers: auth.headers,
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load documents (${response.status})`);
+      }
+      if (!resumeProcessingStartedRef.current) {
+        resumeProcessingStartedRef.current = true;
+        fetch(`${baseUrl}/documents/processing/resume`, {
+          method: "POST",
+          headers: auth.headers,
+        }).catch(() => {});
+      }
+      const payload = await response.json();
+      const items = Array.isArray(payload.documents) ? payload.documents : [];
+      const normalized: { id: string; title: string; status: string | null }[] = items.map(
+        (item: { id: string; title?: string | null; status?: unknown }) => ({
+          id: String(item.id),
+          title: String(item.title ?? t("common.untitled")),
+          status: typeof item.status === "string" ? item.status : null,
+        })
+      );
+      setDocuments(normalized);
+      if (!seenDocsCacheRef.current && normalized.length > 0) {
+        const seed = new Set(normalized.map((doc) => doc.id));
+        seenDocsCacheRef.current = true;
+        setSeenDocumentIds(seed);
+        persistSeenDocuments(seed);
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
+      const message = error instanceof Error ? error.message : "Failed to load documents";
+      setDocsError(message);
+    } finally {
+      if (documentsAbortRef.current) {
+        documentsAbortRef.current = null;
+      }
+      setDocsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(".history-item__menu") || target?.closest(".history-item__menu-trigger")) {
+        return;
+      }
+      setOpenDocMenuId(null);
+    };
+    document.addEventListener("click", handleClick);
+    return () => document.removeEventListener("click", handleClick);
+  }, []);
+
+  useEffect(() => {
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(".chat__thread-menu") || target?.closest(".chat__thread-menu-trigger")) {
+        return;
+      }
+      setOpenChatMenuId(null);
+    };
+    document.addEventListener("click", handleClick);
+    return () => document.removeEventListener("click", handleClick);
+  }, []);
+
+  const handleDownloadDocument = async (documentId: string) => {
+    try {
+      const auth = await getAuthParams();
+      if (!auth) return;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/documents/${documentId}/download`, {
+        headers: auth.headers,
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to download PDF (${response.status})`);
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = "document.pdf";
+      link.rel = "noopener";
+      link.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to download PDF";
+      setDocsError(message);
+    }
+  };
+
+  const handleDeleteDocument = async (documentId: string) => {
+    if (!documentId) return;
+    try {
+      const auth = await getAuthParams();
+      if (!auth) return;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/documents/${documentId}`, {
+        method: "DELETE",
+        headers: auth.headers,
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to delete document (${response.status})`);
+      }
+      documentChunkCacheRef.current.delete(documentId);
+      documentChunkLoadRef.current.delete(documentId);
+      setDocuments((prev) => prev.filter((doc) => doc.id !== documentId));
+      setOpenDocuments((prev) => prev.filter((doc) => doc.id !== documentId));
+      if (selectedDocumentId === documentId) {
+        setChatThreads([]);
+      }
+      setAllChatThreads((prev) => prev.filter((thread) => thread.documentId !== documentId));
+      if (selectedDocumentId === documentId) {
+        handleCloseTab(documentId);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to delete document";
+      setDocsError(message);
+    }
+  };
+
+  const handleDeleteChatThread = async (documentId: string, chatId: string) => {
+    if (!documentId || !chatId) return;
+    try {
+      const auth = await getAuthParams();
+      if (!auth) return;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(
+        `${baseUrl}/documents/${documentId}/chats/${chatId}`,
+        {
+          method: "DELETE",
+          headers: auth.headers,
+        }
+      );
+      if (!response.ok) {
+        throw new Error(`Failed to delete chat (${response.status})`);
+      }
+      setChatThreads((prev) => prev.filter((thread) => thread.id !== chatId));
+      setAllChatThreads((prev) => prev.filter((thread) => thread.id !== chatId));
+      if (activeChatId === chatId) {
+        setActiveChatId(null);
+        setChatMessages([]);
+        setShowThreadList(true);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to delete chat";
+      setChatError(message);
+    }
+  };
+
+  const handleReloadDocuments = async () => {
+    try {
+      await loadDocuments();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to reload documents";
+      setDocsError(message);
+    }
+  };
+
+  const handleReloadChatsList = async () => {
+    try {
+      if (showAllChatList || !selectedDocumentId) {
+        await loadAllChats();
+        return;
+      }
+      await loadChats(selectedDocumentId, { autoOpen: false });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to reload chats";
+      setChatError(message);
+    }
+  };
+
+  const startEditChatFromList = (threadId: string, title: string | null) => {
+    setEditingChatListId(threadId);
+    setChatListTitleDraft(title?.trim() || t("chat.newChat"));
+  };
+
+  const cancelEditChatFromList = () => {
+    setEditingChatListId(null);
+    setChatListTitleDraft("");
+  };
+
+  const saveChatTitleFromList = async (documentId: string, threadId: string) => {
+    const nextTitle = chatListTitleDraft.trim();
+    if (!nextTitle) {
+      cancelEditChatFromList();
+      return;
+    }
+    try {
+      const auth = await getAuthParams();
+      if (!auth) throw new Error("Not authenticated");
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(
+        `${baseUrl}/documents/${documentId}/chats/${threadId}`,
+        {
+          method: "PATCH",
+          headers: {
+            ...auth.headers,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ title: nextTitle }),
+        }
+      );
+      if (!response.ok) {
+        throw new Error(`Failed to update chat title (${response.status})`);
+      }
+      setChatThreads((prev) =>
+        prev.map((thread) =>
+          thread.id === threadId ? { ...thread, title: nextTitle } : thread
+        )
+      );
+      setAllChatThreads((prev) =>
+        prev.map((thread) =>
+          thread.id === threadId ? { ...thread, title: nextTitle } : thread
+        )
+      );
+      if (activeChatId === threadId) {
+        setChatTitleDraft(nextTitle);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to update chat title";
+      setChatError(message);
+    } finally {
+      cancelEditChatFromList();
+    }
+  };
+
+  const handleRenameChatFromList = async (
+    threadId: string,
+    documentId?: string | null
+  ) => {
+    if (!threadId) return;
+    startEditChatFromList(threadId, null);
+  };
+
+  useEffect(() => {
+    if (!pendingRenameChatId) return;
+    setPendingRenameChatId(null);
+  }, [pendingRenameChatId]);
+
+  const loadPlan = async () => {
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const auth = await getAuthParams();
+      if (!auth) {
+        throw new Error("Not authenticated");
+      }
+      const response = await fetch(`${baseUrl}/plans/me`, {
+        headers: auth.headers,
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load plan (${response.status})`);
+      }
+      const payload = await response.json();
+      const nextPlan: PlanName =
+        payload?.plan === "guest" || payload?.plan === "free" || payload?.plan === "plus"
+          ? payload.plan
+          : "free";
+      const fallbackLimits = getFallbackPlanLimits(nextPlan);
+      setPlan(nextPlan);
+      setSelectedPlan(nextPlan === "guest" ? "plus" : nextPlan);
+      setPlanLimits(normalizePlanLimits(payload?.limits ?? {}, fallbackLimits));
+      return nextPlan as PlanName;
+    } catch {
+      const fallback = isAuthed ? "free" : "guest";
+      setPlan(fallback);
+      setPlanLimits(getFallbackPlanLimits(fallback));
+      return fallback as PlanName;
+    }
+  };
+
+  const loadBillingSummary = async () => {
+    const auth = await getAuthParams();
+    if (!auth || auth.tokenType !== "supabase") return null;
+    const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+    const response = await fetch(`${baseUrl}/billing/me`, {
+      headers: auth.headers,
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to load billing (${response.status})`);
+    }
+    const payload = await response.json();
+    setBillingSummary({
+      plan: payload?.plan ?? null,
+      status: payload?.status ?? null,
+      currentPeriodEnd: payload?.currentPeriodEnd ?? null,
+      cancelAtPeriodEnd: payload?.cancelAtPeriodEnd ?? null,
+      nextPlan: payload?.nextPlan ?? null,
+      nextPlanAt: payload?.nextPlanAt ?? null,
+      upcomingInvoice: payload?.upcomingInvoice ?? null,
+      invoices: Array.isArray(payload?.invoices) ? payload.invoices : [],
+    });
+    return payload;
+  };
+
+  const loadAnnouncements = async () => {
+    const auth = await getAuthParams();
+    if (!auth) return;
+    const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+    const response = await fetch(`${baseUrl}/messages/announcements?limit=30`, {
+      headers: auth.headers,
+    });
+    if (!response.ok) return;
+    const payload = await response.json();
+    const items = Array.isArray(payload?.announcements) ? payload.announcements : [];
+    setAnnouncements(
+      items.map((item: any) => ({
+        id: String(item?.id ?? ""),
+        title: String(item?.title ?? ""),
+        body: String(item?.body ?? ""),
+        status: String(item?.status ?? "published"),
+        createdAt: item?.created_at ?? null,
+        publishedAt: item?.published_at ?? null,
+      }))
+    );
+  };
+
+  const loadSupportMessages = async () => {
+    const auth = await getAuthParams();
+    if (!auth) return;
+    const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+    const response = await fetch(`${baseUrl}/messages/support`, {
+      headers: auth.headers,
+    });
+    if (!response.ok) return;
+    const payload = await response.json();
+    const items = Array.isArray(payload?.messages) ? payload.messages : [];
+    setSupportMessages(
+      items.map((item: any) => ({
+        id: String(item?.id ?? ""),
+        direction: item?.direction === "admin" ? "admin" : "user",
+        content: String(item?.content ?? ""),
+        createdAt: item?.created_at ?? null,
+      }))
+    );
+  };
+
+  const sendSupportMessage = async () => {
+    const content = supportDraft.trim();
+    if (!content) return;
+    setSupportBusy(true);
+    try {
+      const auth = await getAuthParams();
+      if (!auth) return;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/messages/support`, {
+        method: "POST",
+        headers: {
+          ...auth.headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ content }),
+      });
+      if (!response.ok) throw new Error("Failed to send message");
+      setSupportDraft("");
+      await loadSupportMessages();
+    } finally {
+      setSupportBusy(false);
+    }
+  };
+
+  const sendFeedback = async () => {
+    const message = feedbackMessage.trim();
+    if (!message) return;
+    setFeedbackBusy(true);
+    setFeedbackNotice(null);
+    try {
+      const auth = await getAuthParams();
+      if (!auth) return;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/messages/feedback`, {
+        method: "POST",
+        headers: {
+          ...auth.headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ category: feedbackCategory, message }),
+      });
+      if (!response.ok) throw new Error("Failed to send feedback");
+      setFeedbackMessage("");
+      setFeedbackNotice(t("messagesFeedbackSent"));
+      setTimeout(() => {
+        setFeedbackNotice(null);
+      }, 3000);
+    } finally {
+      setFeedbackBusy(false);
+    }
+  };
+
+  const loadDailyMessageUsage = async () => {
+    try {
+      const auth = await getAuthParams();
+      if (!auth) return;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/usage/messages/daily`, {
+        headers: auth.headers,
+      });
+      if (!response.ok) return;
+      const payload = await response.json();
+      setDailyMessageUsage({
+        used: Number(payload?.used ?? 0),
+        limit:
+          typeof payload?.limit === "number"
+            ? payload.limit
+            : payload?.limit === null
+              ? null
+              : null,
+        periodStart: payload?.periodStart ?? null,
+      });
+    } catch {
+      // ignore
+    }
+  };
+
+  const startCheckout = async (targetPlan: "plus") => {
+    setBillingError(null);
+    setBillingBusy(true);
+    try {
+      const auth = await getAuthParams();
+      if (!auth || auth.tokenType !== "supabase") {
+        openLimitModal();
+        return;
+      }
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/billing/checkout`, {
+        method: "POST",
+        headers: {
+          ...auth.headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ plan: targetPlan }),
+      });
+      if (!response.ok) {
+        throw new Error(`Checkout failed (${response.status})`);
+      }
+      const payload = await response.json();
+      if (payload?.url) {
+        if (typeof window !== "undefined") {
+          window.location.assign(String(payload.url));
+        }
+      } else if (payload?.status === "ok") {
+        setCheckoutNotice({ type: "success", message: t("billingPlanUpdated") });
+        void loadPlan();
+        void loadBillingSummary();
+      } else {
+        throw new Error("Missing checkout URL");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Checkout failed";
+      setBillingError(message);
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
+  const openBillingPortal = async () => {
+    setBillingError(null);
+    setBillingBusy(true);
+    try {
+      const auth = await getAuthParams();
+      if (!auth || auth.tokenType !== "supabase") {
+        openLimitModal();
+        return;
+      }
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/billing/portal`, {
+        method: "POST",
+        headers: auth.headers,
+      });
+      if (!response.ok) {
+        throw new Error(`Portal failed (${response.status})`);
+      }
+      const payload = await response.json();
+      if (!payload?.url) {
+        throw new Error("Missing portal URL");
+      }
+      openShareUrl(payload.url);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Portal failed";
+      setBillingError(message);
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
+  const cancelSubscription = async () => {
+    setBillingError(null);
+    setBillingBusy(true);
+    try {
+      const auth = await getAuthParams();
+      if (!auth || auth.tokenType !== "supabase") {
+        openLimitModal();
+        return;
+      }
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/billing/cancel`, {
+        method: "POST",
+        headers: auth.headers,
+      });
+      if (!response.ok) {
+        throw new Error(`Cancel failed (${response.status})`);
+      }
+      setCheckoutNotice({ type: "success", message: t("billingCancelRequested") });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Cancel failed";
+      setBillingError(message);
+      setCheckoutNotice({ type: "error", message });
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
+  const scheduleDowngrade = async (targetPlan: "free") => {
+    setBillingError(null);
+    setBillingBusy(true);
+    try {
+      const auth = await getAuthParams();
+      if (!auth || auth.tokenType !== "supabase") {
+        openLimitModal();
+        return;
+      }
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/billing/downgrade`, {
+        method: "POST",
+        headers: {
+          ...auth.headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ plan: targetPlan }),
+      });
+      if (!response.ok) {
+        throw new Error(`Downgrade failed (${response.status})`);
+      }
+      setCheckoutNotice({ type: "success", message: t("billingCancelRequested") });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Downgrade failed";
+      setBillingError(message);
+      setCheckoutNotice({ type: "error", message });
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
+  const isCancelScheduled =
+    plan === "plus" && Boolean(billingSummary?.cancelAtPeriodEnd);
+  const isLimitModalFromLimit = Boolean(limitModalMessage);
+  const limitModalTitle = isLimitModalFromLimit ? t("planUpgradeTitle") : t("planUpgrade");
+  const planCtaLabel =
+    plan === selectedPlan
+      ? t("planCurrent")
+      : selectedPlan === "free" && isCancelScheduled
+        ? t("planCancelScheduled")
+        : selectedPlan === "free"
+          ? t("planDowngrade")
+          : t("planUpgrade");
+
+  const handlePlanCta = async () => {
+    if (!isAuthed) {
+      router.push("/login");
+      return;
+    }
+    if (billingBusy) return;
+    const targetPlan = selectedPlan;
+    try {
+      setBillingBusy(true);
+      const latestPlan = await loadPlan();
+      const latestBilling = await loadBillingSummary();
+      if (targetPlan === latestPlan) {
+        return;
+      }
+      if (targetPlan === "free" && latestBilling?.cancelAtPeriodEnd) {
+        return;
+      }
+    } catch {
+      // ignore and fall through
+    } finally {
+      setBillingBusy(false);
+    }
+    if (targetPlan === "free") {
+      void scheduleDowngrade("free");
+      return;
+    }
+    if (targetPlan === "plus") {
+      void startCheckout(targetPlan);
+    }
+  };
+
+  const updatePlan = async (
+    nextPlan: Exclude<PlanName, "guest">,
+    options: { closeModal?: boolean } = {}
+  ) => {
+    setPlanUpdating(true);
+    try {
+      const auth = await getAuthParams();
+      if (!auth || auth.tokenType !== "supabase") {
+        openLimitModal();
+        return;
+      }
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/plans/me`, {
+        method: "PATCH",
+        headers: {
+          ...auth.headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ plan: nextPlan }),
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to update plan (${response.status})`);
+      }
+      const payload = await response.json();
+      const planName: "free" | "plus" =
+        payload?.plan === "free" || payload?.plan === "plus" ? payload.plan : nextPlan;
+      const fallbackLimits = getFallbackPlanLimits(planName);
+      setPlan(planName);
+      setSelectedPlan(planName);
+      setPlanLimits(normalizePlanLimits(payload?.limits ?? {}, fallbackLimits));
+      void loadDailyMessageUsage();
+      if (options.closeModal) {
+        setLimitModalOpen(false);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to update plan";
+      setChatError(message);
+    } finally {
+      setPlanUpdating(false);
+    }
+  };
+
+  const handleUploadClick = () => {
+    if (!canUseApi) return;
+    fileInputRef.current?.click();
+  };
+
+  const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (planLimits.maxFiles !== null && documents.length >= planLimits.maxFiles) {
+      const message = t("errors.documentLimit", { limit: planLimits.maxFiles });
+      openLimitModal(message);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+    if (
+      planLimits.maxFileMb !== null &&
+      file.size > planLimits.maxFileMb * 1024 * 1024
+    ) {
+      const message = t("errors.fileSizeLimit", { limit: planLimits.maxFileMb });
+      openLimitModal(message);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+    setUploading(true);
+    setDocsError(null);
+    try {
+      const auth = await getAuthParams();
+      if (!auth) throw new Error("Not authenticated");
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch(`${baseUrl}/documents/index`, {
+        method: "POST",
+        headers: {
+          ...auth.headers,
+        },
+        body: form,
+      });
+      if (response.status === 403 || response.status === 413) {
+        let detail: string | null = null;
+        try {
+          const payload = await response.json();
+          if (payload && typeof payload.detail === "string") {
+            detail = payload.detail;
+          }
+        } catch {}
+        const isUploadLimit =
+          response.status === 403 &&
+          typeof detail === "string" &&
+          detail.includes("同時にアップロード/解析できるPDF");
+        const message =
+          response.status === 413
+            ? t("errors.fileSizeLimit", { limit: planLimits.maxFileMb ?? "?" })
+            : detail ?? t("errors.documentLimit", { limit: planLimits.maxFiles ?? "?" });
+        if (isUploadLimit) {
+          setUploadLimitMessage(message);
+          setUploadLimitModalOpen(true);
+        } else {
+          openLimitModal(message);
+        }
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(`Upload failed (${response.status})`);
+      }
+      await loadDocuments();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Upload failed";
+      setDocsError(message);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handleSelectDocument = async (
+    doc: DocumentItem,
+    options: { restoreChatId?: string | null; autoOpenChat?: boolean } = {}
+  ) => {
+    if (doc.status === "ready") {
+      try {
+        const auth = await getAuthParams();
+        if (auth) {
+          const baseUrl =
+            process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+          fetch(`${baseUrl}/documents/${doc.id}/status`, {
+            method: "PATCH",
+            headers: {
+              ...auth.headers,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ status: "done" }),
+          }).catch(() => {});
+        }
+      } catch {}
+      setDocuments((prev) =>
+        prev.map((item) => (item.id === doc.id ? { ...item, status: "done" } : item))
+      );
+    }
+    if (isMobileLayout) {
+      setSidebarOpen(false);
+    }
+    markDocumentSeen(doc.id);
+    setSelectedTabId(doc.id);
+    setSelectedDocumentId(doc.id);
+    setSelectedDocumentTitle(doc.title);
+    setOpenDocuments((prev) => {
+      if (prev.some((item) => item.id === doc.id)) return prev;
+      return [...prev, { id: doc.id, title: doc.title }];
+    });
+    setSelectedDocumentUrl(null);
+    setSelectedDocumentResult(null);
+    setSelectedDocumentAnnotations(null);
+    setViewerError(null);
+    setViewerLoading(true);
+    setReferenceRequest(null);
+    setActiveRefId(null);
+    setChatMessages([]);
+    setChatThreads([]);
+    setActiveChatId(null);
+    setHasMoreMessages(false);
+    setLoadingMoreMessages(false);
+    setShowThreadList(false);
+    setShowAllChatList(false);
+    setAllChatThreads([]);
+    try {
+      const auth = await getAuthParams();
+      if (!auth) throw new Error("Not authenticated");
+      setSelectedDocumentToken(auth.token);
+      if (USE_CLIENT_RAG) {
+        void loadDocumentChunkCache(doc.id);
+      }
+      const chatsTask = (async () => {
+        const chatsStart = performance.now();
+        if (options.restoreChatId) {
+          const target = options.restoreChatId;
+          setActiveChatId(target);
+          setShowThreadList(false);
+          await loadChatMessages(doc.id, target);
+        } else if (options.autoOpenChat ?? true) {
+          await loadLatestChat(doc.id);
+        } else {
+          await loadChats(doc.id, { autoOpen: false });
+        }
+        console.info(
+          "[perf] loadChats",
+          Math.round(performance.now() - chatsStart),
+          "ms"
+        );
+      })().catch((error) => {
+        console.warn("[loadChats] failed", error);
+      });
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      signedUrlAbortRef.current?.abort();
+      const controller = new AbortController();
+      signedUrlAbortRef.current = controller;
+      const signedStart = performance.now();
+      const cachedBundle = bundleCacheRef.current.get(doc.id);
+      if (
+        cachedBundle &&
+        cachedBundle.signedUrl &&
+        cachedBundle.expiresAt * 1000 > Date.now() + 30000
+      ) {
+        setSelectedDocumentUrl(cachedBundle.signedUrl);
+        setSelectedDocumentResult(cachedBundle.result ?? null);
+        setSelectedDocumentAnnotations(cachedBundle.annotations ?? {});
+      } else {
+        const response = await fetch(`${baseUrl}/documents/${doc.id}/bundle`, {
+          headers: auth.headers,
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to load PDF (${response.status})`);
+        }
+        const payload = await response.json();
+        const url = String(payload.signed_url ?? "");
+        if (!url) {
+          throw new Error("Signed URL is missing");
+        }
+        const annotations =
+          payload.annotations && typeof payload.annotations === "object"
+            ? payload.annotations
+            : {};
+        setSelectedDocumentUrl(url);
+        setSelectedDocumentResult(payload.result ?? null);
+        setSelectedDocumentAnnotations(annotations);
+        if (typeof payload.expires_at === "number") {
+          bundleCacheRef.current.set(doc.id, {
+            signedUrl: url,
+            expiresAt: payload.expires_at,
+            result: payload.result ?? null,
+            annotations,
+          });
+        }
+        console.info(
+          "[perf] bundle",
+          Math.round(performance.now() - signedStart),
+          "ms"
+        );
+      }
+      void chatsTask;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
+      const message = error instanceof Error ? error.message : "Failed to load PDF";
+      setViewerError(message);
+    } finally {
+      if (signedUrlAbortRef.current) {
+        signedUrlAbortRef.current = null;
+      }
+      setViewerLoading(false);
+    }
+  };
+
+  const handleSelectTab = (docId: string) => {
+    if (docId === SETTINGS_TAB_ID) {
+      setSelectedTabId(SETTINGS_TAB_ID);
+      setSelectedDocumentId(null);
+      setSelectedDocumentTitle(t("settingsTitle"));
+      setSelectedDocumentUrl(null);
+      setSelectedDocumentResult(null);
+      setSelectedDocumentAnnotations(null);
+      setViewerError(null);
+      setViewerLoading(false);
+      setReferenceRequest(null);
+      setActiveRefId(null);
+      return;
+    }
+    const doc = openDocuments.find((item) => item.id === docId);
+    if (!doc) return;
+    void handleSelectDocument({ id: doc.id, title: doc.title });
+  };
+
+  const handleCloseTab = (docId: string) => {
+    setOpenDocuments((prev) => prev.filter((item) => item.id !== docId));
+    if (selectedTabId === docId) {
+      const remaining = openDocuments.filter((item) => item.id !== docId);
+      if (remaining.length > 0) {
+        const nextDoc = remaining[remaining.length - 1];
+        void handleSelectDocument(nextDoc);
+      } else {
+        setSelectedTabId(null);
+        setSelectedDocumentId(null);
+        setSelectedDocumentTitle(null);
+        setSelectedDocumentUrl(null);
+        setSelectedDocumentResult(null);
+        setSelectedDocumentAnnotations(null);
+        setViewerError(null);
+        setChatMessages([]);
+        setChatThreads([]);
+        setActiveChatId(null);
+        void (async () => {
+          const auth = await getAuthParams();
+          if (auth) {
+            void loadAllChats();
+          }
+        })();
+      }
+    }
+  };
+
+  const handleOpenSettings = () => {
+    setOpenDocuments((prev) => {
+      if (prev.some((item) => item.id === SETTINGS_TAB_ID)) return prev;
+      return [...prev, { id: SETTINGS_TAB_ID, title: t("settingsTitle") }];
+    });
+    if (isMobileLayout) {
+      setSidebarOpen(false);
+    }
+    setSettingsSection("general");
+    handleSelectTab(SETTINGS_TAB_ID);
+  };
+
+  const openSettingsSection = (
+    section: "general" | "account" | "usage" | "messages" | "manual" | "service" | "faq"
+  ) => {
+    setOpenDocuments((prev) => {
+      if (prev.some((item) => item.id === SETTINGS_TAB_ID)) return prev;
+      return [...prev, { id: SETTINGS_TAB_ID, title: t("settingsTitle") }];
+    });
+    if (isMobileLayout) {
+      setSidebarOpen(false);
+    }
+    setSettingsSection(section);
+    handleSelectTab(SETTINGS_TAB_ID);
+  };
+
+  const scrollTabs = (direction: "left" | "right") => {
+    const container = tabsRef.current;
+    if (!container) return;
+    const step = 200;
+    container.scrollBy({
+      left: direction === "left" ? -step : step,
+      behavior: "smooth",
+    });
+  };
+
+  useEffect(() => {
+    const container = tabsRef.current;
+    const wrap = tabsWrapRef.current;
+    if (!container || !wrap) return;
+    const updateOverflow = () => {
+      setTabsOverflow(container.scrollWidth > wrap.clientWidth + 1);
+    };
+    const raf = requestAnimationFrame(updateOverflow);
+    const resizeObserver = new ResizeObserver(updateOverflow);
+    resizeObserver.observe(wrap);
+    window.addEventListener("resize", updateOverflow);
+    return () => {
+      cancelAnimationFrame(raf);
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updateOverflow);
+    };
+  }, [openDocuments.length, chatWidth, chatOpen]);
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+  };
+
+  const openDeleteAccountModal = () => {
+    if (!isAuthed || accountDeleting) return;
+    setDeleteAccountReason("");
+    setDeleteAccountReasonError(null);
+    setDeleteAccountModalOpen(true);
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!isAuthed || accountDeleting) return;
+    const reason = deleteAccountReason.trim();
+    if (!reason) {
+      setDeleteAccountReasonError(t("accountDeleteReasonRequired"));
+      return;
+    }
+    setDeleteAccountReasonError(null);
+    setAccountDeleting(true);
+    setChatError(null);
+    try {
+      const auth = await getAuthParams();
+      if (!auth || auth.tokenType !== "supabase") {
+        throw new Error("Not authenticated");
+      }
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/account/me`, {
+        method: "DELETE",
+        headers: {
+          ...auth.headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ reason }),
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to delete account (${response.status})`);
+      }
+      setDeleteAccountModalOpen(false);
+      await supabase.auth.signOut();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to delete account";
+      setChatError(message);
+    } finally {
+      setAccountDeleting(false);
+    }
+  };
+
+  const handleRefClick = async (refId: string, options: { documentId?: string } = {}) => {
+    const targetDocumentId = options.documentId ?? selectedDocumentId;
+    if (!targetDocumentId) return;
+    const refKey = `${targetDocumentId}:${refId}`;
+    if (activeRefId === refKey) {
+      setReferenceRequest(null);
+      setActiveRefId(null);
+      return;
+    }
+    if (options.documentId && options.documentId !== selectedDocumentId) {
+      const doc = documents.find((item) => item.id === options.documentId);
+      if (!doc) return;
+      await handleSelectDocument(doc, { autoOpenChat: false });
+    }
+    const chunkId = refId.startsWith("chunk-") ? refId.slice(6) : refId;
+    if (!chunkId) return;
+    try {
+      setActiveRefId(refKey);
+      setReferenceRequest(null);
+      const auth = await getAuthParams();
+      if (!auth) {
+        setActiveRefId(null);
+        return;
+      }
+      refAbortRef.current?.abort();
+      const controller = new AbortController();
+      refAbortRef.current = controller;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(
+        `${baseUrl}/documents/${targetDocumentId}/chunks/${chunkId}`,
+        {
+          headers: auth.headers,
+          signal: controller.signal,
+        }
+      );
+      if (!response.ok) {
+        setActiveRefId(null);
+        return;
+      }
+      const payload = await response.json();
+      const rawMetadata = payload?.chunk?.metadata;
+      const metadata =
+        typeof rawMetadata === "string"
+          ? (() => {
+              try {
+                return JSON.parse(rawMetadata);
+              } catch {
+                return null;
+              }
+            })()
+          : rawMetadata;
+      if (!metadata || typeof metadata !== "object") {
+        setActiveRefId(null);
+        return;
+      }
+      const pages = (metadata as Record<string, unknown>).page
+        ?? (metadata as Record<string, unknown>).pages
+        ?? (metadata as Record<string, unknown>).page_number;
+      const wordIndexes =
+        (metadata as Record<string, unknown>).word_indexes
+        ?? (metadata as Record<string, unknown>).wordIndexes;
+      if (!Array.isArray(wordIndexes) || wordIndexes.length === 0) {
+        setActiveRefId(null);
+        return;
+      }
+      const pageList: number[] = Array.isArray(pages)
+        ? pages.filter((value: unknown) => Number.isFinite(Number(value))).map(Number)
+        : Number.isFinite(Number(pages))
+          ? [Number(pages)]
+          : [];
+      if (pageList.length === 0) {
+        setActiveRefId(null);
+        return;
+      }
+      const requestPages: Record<number, number[]> = {};
+      for (const pageNumber of pageList) {
+        requestPages[pageNumber] = wordIndexes
+          .filter((value: unknown) => Number.isFinite(Number(value)))
+          .map(Number);
+      }
+      setReferenceRequest({ pages: requestPages });
+    } catch {
+      setActiveRefId(null);
+      return;
+    } finally {
+      refAbortRef.current = null;
+    }
+  };
+
+  const isAllChatList = !selectedDocumentId || showAllChatList;
+  const selectedDocumentStatus = selectedDocumentId
+    ? documents.find((doc) => doc.id === selectedDocumentId)?.status ?? null
+    : null;
+  const isChatReady =
+    selectedDocumentStatus === "ready" || selectedDocumentStatus === "done";
+  const activeChatTitle = selectedDocumentId
+    ? showAllChatList
+      ? t("chat.allChatList")
+      : showThreadList
+        ? t("chat.documentChatList")
+        : chatThreads.find((thread) => thread.id === activeChatId)?.title ??
+          (activeChatId ? t("chat.newChat") : t("chat.chat"))
+    : t("chat.allChatList");
+  const planLabel =
+    plan === "guest"
+      ? t("planGuest")
+      : plan === "plus"
+        ? t("planPlus")
+        : t("planFree");
+
+  const planRows: {
+    key: string;
+    label: string;
+    values: Record<PlanName, string>;
+  }[] = [
+    {
+      key: "price",
+      label: t("planTablePrice"),
+      values: {
+        guest: "¥0",
+        free: PLAN_PRICES.free,
+        plus: PLAN_PRICES.plus,
+      },
+    },
+    {
+      key: "files",
+      label: t("planTableFiles"),
+      values: {
+        guest: String(planCatalog.guest.maxFiles ?? t("common.unlimited")),
+        free: String(planCatalog.free.maxFiles ?? t("common.unlimited")),
+        plus: String(planCatalog.plus.maxFiles ?? t("common.unlimited")),
+      },
+    },
+    {
+      key: "size",
+      label: t("planTableFileSize"),
+      values: {
+        guest: `${planCatalog.guest.maxFileMb ?? "-"}MB`,
+        free: `${planCatalog.free.maxFileMb ?? "-"}MB`,
+        plus: `${planCatalog.plus.maxFileMb ?? "-"}MB`,
+      },
+    },
+    {
+      key: "chats",
+      label: t("planTableChats"),
+      values: {
+        guest: String(planCatalog.guest.maxMessagesPerThread ?? t("common.unlimited")),
+        free: String(planCatalog.free.maxMessagesPerThread ?? t("common.unlimited")),
+        plus: String(planCatalog.plus.maxMessagesPerThread ?? t("common.unlimited")),
+      },
+    },
+  ];
+
+  const formatRelativeTime = (value: string | null) => {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    const diffMs = Date.now() - date.getTime();
+    const diffMinutes = Math.max(0, Math.floor(diffMs / 60000));
+    if (diffMinutes < 1) return t("time.now");
+    if (diffMinutes < 60) {
+      const rounded = Math.max(1, Math.round(diffMinutes / 5) * 5);
+      return t("time.minutesAgo", { count: rounded });
+    }
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) {
+      const rounded = Math.max(1, Math.round(diffHours));
+      return t("time.hoursAgo", { count: rounded });
+    }
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays < 30) {
+      const rounded = Math.max(1, Math.round(diffDays));
+      return t("time.daysAgo", { count: rounded });
+    }
+    const diffMonths = Math.floor(diffDays / 30);
+    if (diffMonths < 12) {
+      const rounded = Math.max(1, Math.round(diffMonths));
+      return t("time.monthsAgo", { count: rounded });
+    }
+    const diffYears = Math.floor(diffMonths / 12);
+    return t("time.yearsAgo", { count: Math.max(1, diffYears) });
+  };
+
+  const buildEmbeddingVector = (value: unknown) => {
+    if (!Array.isArray(value)) return null;
+    const numbers = value
+      .map((item) => (typeof item === "number" ? item : Number(item)))
+      .filter((item) => Number.isFinite(item));
+    if (numbers.length === 0) return null;
+    return new Float32Array(numbers);
+  };
+
+  const calcVectorNorm = (vector: Float32Array) => {
+    let sum = 0;
+    for (let i = 0; i < vector.length; i += 1) {
+      const val = vector[i];
+      sum += val * val;
+    }
+    return Math.sqrt(sum);
+  };
+
+  const dotProduct = (a: Float32Array, b: Float32Array) => {
+    const len = Math.min(a.length, b.length);
+    let sum = 0;
+    for (let i = 0; i < len; i += 1) {
+      sum += a[i] * b[i];
+    }
+    return sum;
+  };
+
+  const loadDocumentChunkCache = async (documentId: string) => {
+    if (!documentId) return null;
+    const cached = documentChunkCacheRef.current.get(documentId);
+    if (cached) return cached;
+    const inflight = documentChunkLoadRef.current.get(documentId);
+    if (inflight) return inflight;
+    const promise = (async () => {
+      const auth = await getAuthParams();
+      if (!auth) return null;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/documents/${documentId}/chunks`, {
+        headers: auth.headers,
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load chunks (${response.status})`);
+      }
+      const payload = await response.json();
+      const items = Array.isArray(payload.chunks) ? payload.chunks : [];
+      const chunks: ClientChunk[] = [];
+      for (const item of items) {
+        const embedding = buildEmbeddingVector(item?.embedding);
+        if (!embedding) continue;
+        const norm = calcVectorNorm(embedding);
+        if (!Number.isFinite(norm) || norm === 0) continue;
+        chunks.push({
+          id: String(item.id),
+          documentId: String(item.documentId ?? documentId),
+          content: String(item.content ?? ""),
+          metadata: item.metadata ?? null,
+          embedding,
+          norm,
+        });
+      }
+      const cache: ChunkCache = {
+        loadedAt: Date.now(),
+        chunks,
+      };
+      documentChunkCacheRef.current.set(documentId, cache);
+      return cache;
+    })();
+    documentChunkLoadRef.current.set(documentId, promise);
+    try {
+      return await promise;
+    } catch {
+      return null;
+    } finally {
+      documentChunkLoadRef.current.delete(documentId);
+    }
+  };
+
+  const fetchQueryEmbedding = async (text: string, documentId: string) => {
+    const auth = await getAuthParams();
+    if (!auth) return null;
+    const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+    const response = await fetch(`${baseUrl}/embeddings`, {
+      method: "POST",
+      headers: {
+        ...auth.headers,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ text, document_id: documentId }),
+    });
+    if (!response.ok) return null;
+    const payload = await response.json();
+    return Array.isArray(payload.embedding) ? payload.embedding : null;
+  };
+
+  const getClientMatches = async (question: string, documentId: string) => {
+    if (!USE_CLIENT_RAG) return null;
+    const cache = documentChunkCacheRef.current.get(documentId);
+    if (!cache || cache.chunks.length === 0) return null;
+    const embedding = await fetchQueryEmbedding(question, documentId);
+    if (!embedding) return null;
+    const query = buildEmbeddingVector(embedding);
+    if (!query) return null;
+    const queryNorm = calcVectorNorm(query);
+    if (!Number.isFinite(queryNorm) || queryNorm === 0) return null;
+    const scored = cache.chunks.map((chunk) => ({
+      chunk,
+      similarity: dotProduct(query, chunk.embedding) / (queryNorm * chunk.norm),
+    }));
+    scored.sort((a, b) => b.similarity - a.similarity);
+    return scored.slice(0, CLIENT_MATCH_MAX).map(({ chunk, similarity }) => ({
+      id: chunk.id,
+      content: chunk.content,
+      metadata: chunk.metadata,
+      similarity,
+      documentId: chunk.documentId,
+    }));
+  };
+
+
+  const sendMessage = async () => {
+    if (!isChatReady) return;
+    const trimmed = chatInput.trim();
+    if (!trimmed) return;
+    if (chatSendingRef.current) return;
+    if (!selectedDocumentId) return;
+    setChatSendingState(true);
+    let chatId = activeChatId;
+    if (!chatId) {
+      const nextIndex = chatThreads.length + 1;
+      const title = t("chat.newChatNumber", { count: nextIndex });
+      const created = await createChat(selectedDocumentId, title);
+      if (!created) {
+        setChatSendingState(false);
+        return;
+      }
+      chatId = created.id;
+      setChatThreads((prev) => [created, ...prev]);
+      setActiveChatId(created.id);
+      setChatMessages([]);
+      setShowThreadList(false);
+      setShowAllChatList(false);
+    }
+    try {
+      const auth = await getAuthParams();
+      if (!auth) {
+        setChatSendingState(false);
+        return;
+      }
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(
+        `${baseUrl}/documents/${selectedDocumentId}/chats/${chatId}/messages`,
+        {
+          method: "POST",
+          headers: {
+            ...auth.headers,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            role: "user",
+            text: trimmed,
+          }),
+        }
+      );
+      if (response.status === 403) {
+        const messageText = t("errors.messageLimit", {
+          limit: planLimits.maxMessagesPerThread ?? "?",
+        });
+        openLimitModal(messageText);
+        setChatSendingState(false);
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(`Failed to send message (${response.status})`);
+      }
+      const payload = await response.json();
+      const saved = payload?.message;
+      if (!saved?.id) {
+        setChatSendingState(false);
+        return;
+      }
+      const message: ChatMessage = {
+        id: String(saved.id),
+        role: "user",
+        text: trimmed,
+        createdAt: String(saved.createdAt ?? new Date().toISOString()),
+      };
+      setChatMessages((prev) => [...prev, message]);
+      setChatInput("");
+      void requestAssistantReply(trimmed, { chatId });
+    } catch (error) {
+      const messageText =
+        error instanceof Error ? error.message : "Failed to send message";
+      setChatError(messageText);
+      setChatSendingState(false);
+    }
+  };
+
+  const requestAssistantReply = async (
+    question: string,
+    options: { existingId?: string; chatId?: string } = {}
+  ) => {
+    const targetChatId = options.chatId ?? activeChatId;
+    if (!selectedDocumentId || !targetChatId) return;
+    const pendingId = options.existingId ?? crypto.randomUUID();
+    const pending: ChatMessage = {
+      id: pendingId,
+      role: "assistant",
+      text: "",
+      createdAt: new Date().toISOString(),
+      status: "loading",
+    };
+    setChatMessages((prev) =>
+      options.existingId
+        ? prev.map((item) => (item.id === pendingId ? pending : item))
+        : [...prev, pending]
+    );
+    setChatSendingState(true);
+    setChatError(null);
+    streamingMessageIdRef.current = pendingId;
+    try {
+      const auth = await getAuthParams();
+      if (!auth) throw new Error("Not authenticated");
+      const clientMatches =
+        USE_CLIENT_RAG && selectedDocumentId
+          ? await getClientMatches(question, selectedDocumentId)
+          : null;
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+    const wsUrl = `${baseUrl.replace(/^http/, "ws")}/documents/${selectedDocumentId}/chats/${targetChatId}/assistant/ws?token=${encodeURIComponent(
+      auth.token
+    )}&token_type=${encodeURIComponent(auth.tokenType)}`;
+      await new Promise<void>((resolve, reject) => {
+        const socket = new WebSocket(wsUrl);
+        chatSocketRef.current = socket;
+        const payloadObj: Record<string, any> = {
+          message: question,
+          message_id: options.existingId ?? null,
+          mode: chatMode,
+        };
+        if (clientMatches && clientMatches.length > 0) {
+          payloadObj.client_matches = clientMatches;
+        }
+        const payload = JSON.stringify(payloadObj);
+        socket.addEventListener("open", () => {
+          socket.send(payload);
+        });
+        socket.addEventListener("message", (event) => {
+          let data: any = null;
+          try {
+            data = JSON.parse(String(event.data));
+          } catch {
+            data = null;
+          }
+          if (!data || typeof data !== "object") return;
+          if (data.type === "delta") {
+            const deltaText = String(data.delta ?? "");
+            if (!deltaText) return;
+            setChatMessages((prev) =>
+              prev.map((item) =>
+                item.id === pendingId
+                  ? {
+                      ...item,
+                      text: `${item.text ?? ""}${deltaText}`,
+                    }
+                  : item
+              )
+            );
+          } else if (data.type === "message") {
+            const saved = data.message;
+            if (saved?.id) {
+              const status = saved.status === "error" ? "error" : undefined;
+              const text =
+                status === "error" && !saved.text
+                  ? t("chat.answerFailed")
+                  : String(saved.text ?? "");
+              if (saved.status === "ok") {
+                setDailyMessageUsage((prev) => {
+                  if (!prev) return prev;
+                  return { ...prev, used: prev.used + 1 };
+                });
+              }
+              setChatMessages((prev) =>
+                prev.map((item) =>
+                  item.id === pendingId
+                    ? {
+                        id: String(saved.id),
+                        role: "assistant",
+                        text,
+                        status,
+                        refs: normalizeRefs(saved.refs),
+                        createdAt: String(saved.createdAt ?? item.createdAt),
+                      }
+                    : item
+                )
+              );
+            }
+          } else if (data.type === "error") {
+            const messageText = String(data.message ?? "");
+            if (messageText.toLowerCase().includes("daily message limit")) {
+              openLimitModal(
+                t("errors.messageLimit", {
+                  limit: planLimits.maxMessagesPerThread ?? "?",
+                })
+              );
+              setChatMessages((prev) =>
+                prev.filter((item) => item.id !== pendingId)
+              );
+              return;
+            }
+            setChatMessages((prev) =>
+              prev.map((item) =>
+                item.id === pendingId
+                  ? {
+                      ...item,
+                      text: t("chat.answerFailed"),
+                      status: "error",
+                    }
+                  : item
+              )
+            );
+          } else if (data.type === "done") {
+            socket.close();
+            resolve();
+          }
+        });
+        socket.addEventListener("error", () => {
+          socket.close();
+          reject(new Error("WebSocket error"));
+        });
+        socket.addEventListener("close", (event) => {
+          chatSocketRef.current = null;
+          streamingMessageIdRef.current = null;
+          if (event.code !== 1000) {
+            reject(new Error("WebSocket closed"));
+          } else {
+            resolve();
+          }
+        });
+      });
+    } catch (error) {
+      const messageText =
+        error instanceof Error ? error.message : "Failed to generate answer";
+      setChatError(messageText);
+      setChatMessages((prev) =>
+        prev.map((item) =>
+          item.id === pendingId
+            ? {
+                ...item,
+                text: t("chat.answerFailed"),
+                status: "error",
+              }
+            : item
+        )
+      );
+    } finally {
+      setChatSendingState(false);
+    }
+  };
+
+  const handleStopStreaming = () => {
+    if (chatSocketRef.current) {
+      chatSocketRef.current.close(1000, "stopped");
+      chatSocketRef.current = null;
+    }
+    const targetId = streamingMessageIdRef.current;
+    if (!targetId) return;
+    setChatMessages((prev) =>
+      prev.map((item) =>
+        item.id === targetId
+          ? {
+              ...item,
+              status: "stopped",
+            }
+          : item
+      )
+    );
+    setChatSendingState(false);
+    streamingMessageIdRef.current = null;
+  };
+
+  const renderLoadingText = (text: string) => (
+    <span className="loading-fade" aria-label={text}>
+      {text.split("").map((char, index) => (
+        <span
+          key={`${char}-${index}`}
+          style={{ "--fade-delay": `${index * 0.08}s` } as React.CSSProperties}
+        >
+          {char}
+        </span>
+      ))}
+    </span>
+  );
+
+
+  const renderSettingsDetail = () => {
+    if (settingsSection === "general") {
+      return (
+        <>
+          <h2 className="settings__title">{t("general")}</h2>
+          <div className="settings__group">
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">{t("language")}</div>
+                <div className="settings__item-desc">{t("languageDesc")}</div>
+              </div>
+              <select
+                className="settings__select"
+                value={locale}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (
+                    value === "ja" ||
+                    value === "en" ||
+                    value === "es" ||
+                    value === "fr" ||
+                    value === "de" ||
+                    value === "ko" ||
+                    value === "zh"
+                  ) {
+                    router.replace(pathname, { locale: value });
+                  }
+                }}
+              >
+                <option value="ja">{t("languageJa")}</option>
+                <option value="en">{t("languageEn")}</option>
+                <option value="es">{t("languageEs")}</option>
+                <option value="fr">{t("languageFr")}</option>
+                <option value="de">{t("languageDe")}</option>
+                <option value="ko">{t("languageKo")}</option>
+                <option value="zh">{t("languageZh")}</option>
+              </select>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">{t("theme")}</div>
+                <div className="settings__item-desc">{t("themeDesc")}</div>
+              </div>
+              <select
+                className="settings__select"
+                value={theme}
+                onChange={(event) => {
+                  const value = event.target.value as ThemeMode;
+                  setTheme(value === "light" || value === "dark" ? value : "system");
+                }}
+              >
+                <option value="light">{t("themeLight")}</option>
+                <option value="dark">{t("themeDark")}</option>
+                <option value="system">{t("themeSystem")}</option>
+              </select>
+            </div>
+          </div>
+        </>
+      );
+    }
+    if (settingsSection === "account") {
+      return (
+        <>
+          <h2 className="settings__title">{t("account")}</h2>
+          <div className="settings__group">
+            <div className="settings__item settings__item--stack">
+              <div className="settings__subsection settings__subsection--split">
+                <div>
+                  <div className="settings__subsection-title">{t("email")}</div>
+                  <div className="settings__subsection-desc">{t("emailDesc")}</div>
+                </div>
+                <div className="settings__subsection-content settings__subsection-content--right">
+                  <div className="settings__value settings__value--right">
+                    {userEmail ?? t("auth.notSignedIn")}
+                  </div>
+                </div>
+              </div>
+              <div className="settings__subsection-divider" />
+              <div className="settings__subsection settings__subsection--split">
+                <div>
+                  <div className="settings__subsection-title">{t("username")}</div>
+                  <div className="settings__subsection-desc">{t("usernameDesc")}</div>
+                </div>
+                <div className="settings__subsection-content">
+                  <div className="settings__value settings__value--right">{userId ?? "-"}</div>
+                </div>
+              </div>
+            </div>
+            <div className="settings__item settings__item--stack">
+              <div className="settings__subsection settings__subsection--split">
+                <div>
+                  <div className="settings__subsection-title">{t("plan")}</div>
+                  <div className="settings__subsection-desc">{t("planDesc")}</div>
+                </div>
+                <div className="settings__subsection-content">
+                  <div className="settings__value settings__value--right">
+                    <div>{planLabel}</div>
+                    {billingSummary?.nextPlan ? (
+                      <div className="settings__subvalue">
+                        {t("planNext", {
+                          plan:
+                            billingSummary.nextPlan === "plus"
+                              ? t("planPlus")
+                              : t("planFree"),
+                          date: formatDate(billingSummary.nextPlanAt),
+                        })}
+                      </div>
+                    ) : null}
+                    {!billingSummary?.nextPlan &&
+                    billingSummary?.cancelAtPeriodEnd &&
+                    billingSummary?.currentPeriodEnd ? (
+                      <div className="settings__subvalue">
+                        {t("planUntilCanceled", {
+                          date: formatDate(billingSummary.currentPeriodEnd),
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+              <div className="settings__subsection-divider" />
+              <div className="settings__subsection settings__subsection--center">
+                <div className="settings__subsection-title">{t("planTableTitle")}</div>
+                <div className="settings__subsection-desc">{t("planTableDesc")}</div>
+                <div className="plan-compare">
+                  <div className="plan-table">
+                    <div className="plan-table__header">
+                      <div className="plan-table__cell plan-table__cell--feature" />
+                      <div className="plan-table__cell">{t("planGuest")}</div>
+                      <div className="plan-table__cell">{t("planFree")}</div>
+                      <div className="plan-table__cell">{t("planPlus")}</div>
+                    </div>
+                    {planRows.map((row) => (
+                      <div key={row.key} className="plan-table__row">
+                        <div className="plan-table__cell plan-table__cell--feature">
+                          {row.label}
+                        </div>
+                        <div className="plan-table__cell">{row.values.guest}</div>
+                        <div className="plan-table__cell">{row.values.free}</div>
+                        <div className="plan-table__cell">{row.values.plus}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="plan-cards">
+                    {(["free", "plus"] as const).map((planName) => (
+                      <button
+                        key={planName}
+                        type="button"
+                        className={`plan-card ${
+                          selectedPlan === planName ? "is-selected" : ""
+                        } ${plan === planName ? "is-current" : ""}`}
+                        onClick={() => setSelectedPlan(planName)}
+                      >
+                        <div className="plan-card__title">
+                          {planName === "free"
+                            ? t("planFree")
+                            : t("planPlus")}
+                        </div>
+                    <div className="plan-card__price">
+                      {PLAN_PRICES[planName]}
+                      <span className="plan-card__unit">{t("planPerMonth")}</span>
+                    </div>
+                    {plan === planName ? (
+                      <div className="plan-card__badge">{t("planCurrent")}</div>
+                    ) : null}
+                  </button>
+                    ))}
+                    <button
+                      type="button"
+                      className="plan-cta"
+                      disabled={
+                        billingBusy ||
+                        plan === selectedPlan ||
+                        (selectedPlan === "free" && isCancelScheduled)
+                      }
+                      onClick={handlePlanCta}
+                    >
+                      {billingBusy ? t("planUpdating") : planCtaLabel}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="settings__item settings__item--stack">
+              <div className="settings__subsection settings__subsection--split">
+                <div>
+                  <div className="settings__subsection-title">{t("billing")}</div>
+                  <div className="settings__subsection-desc">{t("billingDesc")}</div>
+                </div>
+                <div className="settings__subsection-content">
+                  <button
+                    type="button"
+                    className="settings__btn"
+                    onClick={() => void openBillingPortal()}
+                    disabled={!isAuthed || billingBusy}
+                  >
+                    {t("manage")}
+                  </button>
+                </div>
+              </div>
+              <div className="settings__subsection-divider" />
+              <div className="settings__subsection settings__subsection--split">
+                <div>
+                  <div className="settings__subsection-title">{t("billingNextPayment")}</div>
+                  <div className="settings__subsection-desc">{t("billingNextPaymentDesc")}</div>
+                </div>
+                <div className="settings__subsection-content settings__subsection-content--right">
+                  <div className="billing-summary">
+                    {billingLoading ? (
+                      <div className="settings__value">{t("common.loading")}</div>
+                    ) : billingFetchError ? (
+                      <div className="settings__value">{t("common.fetchFailed")}</div>
+                    ) : billingSummary?.plan === "free" ||
+                      billingSummary?.cancelAtPeriodEnd ? (
+                      <div className="billing-summary__row">
+                        <div className="billing-summary__amount">
+                          {formatCurrency(
+                            0,
+                            billingSummary?.upcomingInvoice?.currency ??
+                              billingSummary?.invoices?.[0]?.currency ??
+                              "jpy"
+                          )}
+                        </div>
+                        <div className="billing-summary__date">
+                          {formatDate(billingSummary.currentPeriodEnd)}
+                        </div>
+                      </div>
+                    ) : billingSummary?.upcomingInvoice ? (
+                      <div className="billing-summary__row">
+                        <div className="billing-summary__amount">
+                          {formatCurrency(
+                            billingSummary.upcomingInvoice.amountDue,
+                            billingSummary.upcomingInvoice.currency
+                          )}
+                        </div>
+                        <div className="billing-summary__date">
+                          {formatDate(billingSummary.upcomingInvoice.nextPaymentAt)}
+                        </div>
+                      </div>
+                    ) : billingSummary?.currentPeriodEnd ? (
+                      <div className="billing-summary__row">
+                        <div className="billing-summary__amount">{t("common.unset")}</div>
+                        <div className="billing-summary__date">
+                          {formatDate(billingSummary.currentPeriodEnd)}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="settings__value">{t("billingNone")}</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="settings__subsection-divider" />
+              <div className="settings__subsection settings__subsection--split">
+                <div>
+                  <div className="settings__subsection-title">{t("billingHistory")}</div>
+                  <div className="settings__subsection-desc">{t("billingHistoryDesc")}</div>
+                </div>
+                <div className="settings__subsection-content settings__subsection-content--right">
+                  <div className="billing-history">
+                    {billingLoading ? (
+                      <div className="settings__value">{t("common.loading")}</div>
+                    ) : billingFetchError ? (
+                      <div className="settings__value">{t("common.fetchFailed")}</div>
+                    ) : billingSummary?.invoices?.length ? (
+                      billingSummary.invoices.map((invoice) => (
+                        <button
+                          type="button"
+                          key={invoice.id}
+                          className="billing-history__item"
+                          onClick={() => void openBillingPortal()}
+                          disabled={!isAuthed || billingBusy}
+                        >
+                          <div className="billing-history__meta">
+                            <div className="billing-history__amount">
+                              {formatCurrency(invoice.amountPaid, invoice.currency)}
+                            </div>
+                            <div className="billing-history__date">
+                              {formatDateTime(invoice.created)}
+                            </div>
+                          </div>
+                          <div className="billing-history__lines">
+                            {invoice.lines?.length ? (
+                              invoice.lines.map((line, index) => (
+                                <div
+                                  key={line.id ?? `${invoice.id}-line-${index}`}
+                                  className="billing-history__line"
+                                >
+                                  <div className="billing-history__line-desc">
+                                    {line.description || "-"}
+                                  </div>
+                                  <div className="billing-history__line-amount">
+                                    {formatSignedCurrency(
+                                      line.amount ?? null,
+                                      line.currency ?? invoice.currency
+                                    )}
+                                  </div>
+                                  <div className="billing-history__line-status">
+                                    {invoice.status ?? "-"}
+                                  </div>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="billing-history__line">
+                                <div className="billing-history__line-desc">-</div>
+                                <div className="billing-history__line-amount">-</div>
+                                <div className="billing-history__line-status">
+                                  {invoice.status ?? "-"}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="settings__value">{t("billingNone")}</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              {billingError ? (
+                <div className="settings__hint">{billingError}</div>
+              ) : null}
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">{t("signOut")}</div>
+                <div className="settings__item-desc">{t("signOutDesc")}</div>
+              </div>
+              <button
+                type="button"
+                className="settings__btn settings__btn--danger"
+                onClick={handleSignOut}
+              >
+                {t("signOut")}
+              </button>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">{t("accountDelete")}</div>
+                <div className="settings__item-desc">{t("accountDeleteDesc")}</div>
+              </div>
+              <button
+                type="button"
+                className="settings__btn settings__btn--danger"
+                onClick={openDeleteAccountModal}
+                disabled={!isAuthed || accountDeleting}
+              >
+                {accountDeleting ? t("common.loading") : t("accountDelete")}
+              </button>
+            </div>
+          </div>
+        </>
+      );
+    }
+    if (settingsSection === "usage") {
+      const pdfCountValue = docsLoading
+        ? t("common.loading")
+        : t("common.count", { value: formatNumber(documents.length) });
+      const todayChatValue = usageLoading
+        ? t("common.loading")
+        : usageError
+          ? t("common.fetchFailed")
+          : dailyMessageUsage
+            ? dailyMessageUsage.limit === null
+              ? t("common.count", { value: formatNumber(dailyMessageUsage.used) })
+              : t("usageTodayChatsValue", {
+                  used: formatNumber(dailyMessageUsage.used),
+                  limit: formatNumber(dailyMessageUsage.limit),
+                })
+            : t("common.noData");
+      return (
+        <>
+          <h2 className="settings__title">{t("usageTab")}</h2>
+          <div className="settings__group">
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">{t("usagePdfCount")}</div>
+                <div className="settings__item-desc">{t("usagePdfCountDesc")}</div>
+              </div>
+              <div className="settings__value">{pdfCountValue}</div>
+            </div>
+            <div className="settings__item">
+              <div>
+                <div className="settings__item-title">{t("usageTodayChats")}</div>
+                <div className="settings__item-desc">{t("usageTodayChatsDesc")}</div>
+              </div>
+              <div className="settings__value">{todayChatValue}</div>
+            </div>
+          </div>
+        </>
+      );
+    }
+    if (settingsSection === "messages") {
+      return (
+        <>
+          <h2 className="settings__title">{t("messages.title")}</h2>
+          <div className="settings__group">
+            <div className="settings__item settings__item--stack">
+              <div>
+                <div className="settings__item-title">{t("messagesAnnouncementsTitle")}</div>
+                <div className="settings__item-desc">{t("messagesAnnouncementsDesc")}</div>
+              </div>
+              <div className="settings__value announcements">
+                {announcements.length === 0 ? (
+                  <div className="settings__empty">{t("messagesEmptyAnnouncements")}</div>
+                ) : (
+                  announcements.map((item) => (
+                    <div key={item.id} className="announcement-card">
+                      <div className="announcement-card__title">{item.title}</div>
+                      <div className="announcement-card__meta">
+                        {formatDate(item.publishedAt || item.createdAt)}
+                      </div>
+                      <div className="announcement-card__body">{item.body}</div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+            <div className="settings__item settings__item--stack">
+              <div>
+                <div className="settings__item-title">{t("messagesFeedbackTitle")}</div>
+                <div className="settings__item-desc">{t("messagesFeedbackDesc")}</div>
+              </div>
+              <div className="settings__value support">
+                <div className="support-form">
+                  <label className="settings__label">{t("messagesFeedbackCategory")}</label>
+                  <select
+                    className="settings__select"
+                    value={feedbackCategory}
+                    onChange={(event) => setFeedbackCategory(event.target.value)}
+                  >
+                    <option value="bug">{t("messagesFeedbackCategoryBug")}</option>
+                    <option value="feature">{t("messagesFeedbackCategoryFeature")}</option>
+                    <option value="ui">{t("messagesFeedbackCategoryUi")}</option>
+                    <option value="billing">{t("messagesFeedbackCategoryBilling")}</option>
+                    <option value="other">{t("messagesFeedbackCategoryOther")}</option>
+                  </select>
+                  <textarea
+                    className="support-form__input"
+                    rows={4}
+                    value={feedbackMessage}
+                    onChange={(event) => setFeedbackMessage(event.target.value)}
+                    placeholder={t("messagesFeedbackPlaceholder")}
+                  />
+                  {feedbackNotice ? <div className="settings__hint">{feedbackNotice}</div> : null}
+                  <button
+                    type="button"
+                    className="settings__btn"
+                    onClick={() => void sendFeedback()}
+                    disabled={feedbackBusy || feedbackMessage.trim().length === 0}
+                  >
+                    {feedbackBusy ? t("common.sending") : t("messagesFeedbackSend")}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="settings__item settings__item--stack">
+              <div>
+                <div className="settings__item-title">{t("messagesSupportTitle")}</div>
+                <div className="settings__item-desc">{t("messagesSupportDesc")}</div>
+              </div>
+              <div className="settings__value support">
+                <div className="support-thread">
+                  {supportMessages.length === 0 ? (
+                    <div className="settings__empty">{t("messagesEmptySupport")}</div>
+                  ) : (
+                    supportMessages
+                      .slice()
+                      .reverse()
+                      .map((msg) => (
+                        <div
+                          key={msg.id}
+                          className={`support-thread__item support-thread__item--${msg.direction}`}
+                        >
+                          <div className="support-thread__bubble">{msg.content}</div>
+                          <div className="support-thread__meta">{formatDateTime(msg.createdAt)}</div>
+                        </div>
+                      ))
+                  )}
+                </div>
+                <div className="support-form">
+                  <textarea
+                    className="support-form__input"
+                    rows={3}
+                    value={supportDraft}
+                    onChange={(event) => setSupportDraft(event.target.value)}
+                    placeholder={t("messagesSupportPlaceholder")}
+                  />
+                  <button
+                    type="button"
+                    className="settings__btn"
+                    onClick={() => void sendSupportMessage()}
+                    disabled={supportBusy || supportDraft.trim().length === 0}
+                  >
+                    {supportBusy ? t("common.sending") : t("messagesSupportSend")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      );
+    }
+    if (settingsSection === "service") {
+      return (
+        <>
+          <h2 className="settings__title">{t("serviceTitle")}</h2>
+          <div className="settings__group">
+                  <div className="settings__item">
+                    <div>
+                      <div className="settings__item-title">{t("servicePlanTitle")}</div>
+                      <div className="settings__item-desc">{t("servicePlanDesc")}</div>
+                    </div>
+                    <button type="button" className="settings__btn" onClick={() => openLimitModal()}>
+                      {t("open")}
+                    </button>
+                  </div>
+            <div className="settings__item settings__item--stack">
+              <div>
+                <div className="settings__item-title">{t("servicePolicyTermsTitle")}</div>
+              </div>
+              <div className="settings__value settings__stack">
+                <div className="settings__stack-item">
+                  <div className="settings__stack-desc">
+                    <ReactMarkdown
+                      className="markdown"
+                      remarkPlugins={[remarkGfm]}
+                      rehypePlugins={[rehypeRaw]}
+                    >
+                      {termsMd}
+                    </ReactMarkdown>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="settings__item settings__item--stack">
+              <div>
+                <div className="settings__item-title">{t("servicePolicyPrivacyTitle")}</div>
+              </div>
+              <div className="settings__value settings__stack">
+                <div className="settings__stack-item">
+                  <div className="settings__stack-desc">
+                    <ReactMarkdown
+                      className="markdown"
+                      remarkPlugins={[remarkGfm]}
+                      rehypePlugins={[rehypeRaw]}
+                    >
+                      {privacyMd}
+                    </ReactMarkdown>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="settings__item settings__item--stack">
+              <div>
+                <div className="settings__item-title">{t("servicePolicyTokushoTitle")}</div>
+                <div className="settings__item-actions">
+                  <Link className="settings__btn" href="/tokushoho">
+                    {t("open")}
+                  </Link>
+                </div>
+              </div>
+              <div className="settings__value settings__stack">
+                <div className="settings__stack-item">
+                  <div className="settings__stack-desc">
+                    <ReactMarkdown
+                      className="markdown"
+                      remarkPlugins={[remarkGfm]}
+                      rehypePlugins={[rehypeRaw]}
+                    >
+                      {tokushoMd}
+                    </ReactMarkdown>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      );
+    }
+    if (settingsSection === "faq") {
+      return (
+        <>
+          <h2 className="settings__title">{t("faqTitle")}</h2>
+          <div className="settings__group">
+            <div className="settings__item settings__item--stack">
+              <div>
+                <div className="settings__item-title">{t("faqGeneralTitle")}</div>
+                <div className="settings__item-desc">{t("faqGeneralDesc")}</div>
+              </div>
+              <div className="settings__value faq-list">
+                <div className="faq-item">
+                  <div className="faq-item__q">{t("faqQ1")}</div>
+                  <div className="faq-item__a">{t("faqA1")}</div>
+                </div>
+                <div className="faq-item">
+                  <div className="faq-item__q">{t("faqQ2")}</div>
+                  <div className="faq-item__a">{t("faqA2")}</div>
+                </div>
+                <div className="faq-item">
+                  <div className="faq-item__q">{t("faqQ3")}</div>
+                  <div className="faq-item__a">{t("faqA3")}</div>
+                </div>
+                <div className="faq-item">
+                  <div className="faq-item__q">{t("faqQ4")}</div>
+                  <div className="faq-item__a">{t("faqA4")}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      );
+    }
+      return (
+        <>
+        <h2 className="settings__title">{t("manual.title")}</h2>
+        <div className="settings__group">
+          <div className="settings__item settings__item--stack">
+            <div>
+                <div className="settings__item-title">{t("manual.basicsTitle")}</div>
+                <div className="settings__item-desc">{t("manual.basicsDesc")}</div>
+              </div>
+            <div className="settings__value">
+              <div className="settings__stack">
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.manualStepUploadTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.manualStepUploadDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.manualStepAskTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.manualStepAskDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.manualStepRefsTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.manualStepRefsDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.manualStepThreadsTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.manualStepThreadsDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.manualStepLimitsTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.manualStepLimitsDesc")}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="settings__item settings__item--stack">
+            <div>
+              <div className="settings__item-title">{t("manual.shortcutsTitle")}</div>
+              <div className="settings__item-desc">{t("manual.shortcutsDesc")}</div>
+            </div>
+            <div className="settings__value">
+              <div className="settings__stack">
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutSearchTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutSearchDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutChatFocusTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutChatFocusDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutToggleChatTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutToggleChatDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutSendTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutSendDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutPdfSearchTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutPdfSearchDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutPdfPageTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutPdfPageDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutPdfZoomTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutPdfZoomDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutPdfDownloadTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutPdfDownloadDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutPdfThumbsTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutPdfThumbsDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutAnnotateHighlightTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutAnnotateHighlightDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutAnnotateUnderlineTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutAnnotateUnderlineDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutAnnotateCopyTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutAnnotateCopyDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutAnnotateAddToChatTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutAnnotateAddToChatDesc")}</div>
+                </div>
+                <div className="settings__stack-item">
+                  <div className="settings__stack-title">{t("manual.shortcutAnnotateDeleteTitle")}</div>
+                  <div className="settings__stack-desc">{t("manual.shortcutAnnotateDeleteDesc")}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </>
+      );
+  };
+
+  const handleSendMessage = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await sendMessage();
+  };
+
+  const handleCreateChat = async () => {
+    if (!isChatReady) return;
+    if (!selectedDocumentId) return;
+    const auth = await getAuthParams();
+    if (!auth) return;
+    const nextIndex = chatThreads.length + 1;
+    const title = t("chat.newChatNumber", { count: nextIndex });
+    const created = await createChat(selectedDocumentId, title);
+    if (!created) return;
+    setChatThreads((prev) => [created, ...prev]);
+    setActiveChatId(created.id);
+    setChatMessages([]);
+    setShowThreadList(false);
+    await loadChatMessages(selectedDocumentId, created.id);
+  };
+
+  const applyDocumentTitleUpdate = (docId: string, title: string) => {
+    setDocuments((prev) =>
+      prev.map((doc) => (doc.id === docId ? { ...doc, title } : doc))
+    );
+    setOpenDocuments((prev) =>
+      prev.map((doc) => (doc.id === docId ? { ...doc, title } : doc))
+    );
+    setAllChatThreads((prev) =>
+      prev.map((thread) =>
+        thread.documentId === docId ? { ...thread, documentTitle: title } : thread
+      )
+    );
+    if (selectedDocumentId === docId) {
+      setSelectedDocumentTitle(title);
+    }
+  };
+
+  const startRenameDocument = (doc: DocumentItem) => {
+    setEditingDocumentId(doc.id);
+    setDocumentTitleDraft(doc.title);
+  };
+
+  const cancelRenameDocument = () => {
+    setEditingDocumentId(null);
+    setDocumentTitleDraft("");
+  };
+
+  const saveRenameDocument = async (docId: string) => {
+    const nextTitle = documentTitleDraft.trim();
+    if (!nextTitle) {
+      cancelRenameDocument();
+      return;
+    }
+    try {
+      const auth = await getAuthParams();
+      if (!auth) throw new Error("Not authenticated");
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(`${baseUrl}/documents/${docId}`, {
+        method: "PATCH",
+        headers: {
+          ...auth.headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ title: nextTitle }),
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to rename (${response.status})`);
+      }
+      applyDocumentTitleUpdate(docId, nextTitle);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Rename failed";
+      setDocsError(message);
+    } finally {
+      cancelRenameDocument();
+    }
+  };
+
+  const startEditChatTitle = () => {
+    if (!activeChatId || showThreadList || showAllChatList) return;
+    const current =
+      chatThreads.find((thread) => thread.id === activeChatId)?.title ??
+      t("chat.newChat");
+    setEditingChatTitle(true);
+    setChatTitleDraft(current);
+  };
+
+  const cancelEditChatTitle = () => {
+    setEditingChatTitle(false);
+    setChatTitleDraft("");
+  };
+
+  const saveChatTitle = async () => {
+    if (!selectedDocumentId || !activeChatId) return;
+    const nextTitle = chatTitleDraft.trim();
+    if (!nextTitle) {
+      cancelEditChatTitle();
+      return;
+    }
+    try {
+      const auth = await getAuthParams();
+      if (!auth) throw new Error("Not authenticated");
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+      const response = await fetch(
+        `${baseUrl}/documents/${selectedDocumentId}/chats/${activeChatId}`,
+        {
+          method: "PATCH",
+          headers: {
+            ...auth.headers,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ title: nextTitle }),
+        }
+      );
+      if (!response.ok) {
+        throw new Error(`Failed to update chat title (${response.status})`);
+      }
+      setChatThreads((prev) =>
+        prev.map((thread) =>
+          thread.id === activeChatId ? { ...thread, title: nextTitle } : thread
+        )
+      );
+      setAllChatThreads((prev) =>
+        prev.map((thread) =>
+          thread.id === activeChatId ? { ...thread, title: nextTitle } : thread
+        )
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to update chat title";
+      setChatError(message);
+    } finally {
+      cancelEditChatTitle();
+    }
+  };
+
+  return (
+    <main className={`app ${sidebarOpen ? "" : "app--sidebar-closed"}`}>
+      <section className="sidebar">
+        <div className="sidebar__header sidebar__header--primary">
+          <span className="logo" aria-hidden="true">
+            <img className="logo__icon" src="/icon.svg" alt="" />
+          </span>
+          <span className="brand">AskPDF</span>
+        </div>
+
+        <div className="sidebar__header sidebar__header--secondary">
+          <button
+            type="button"
+            className="history-item header-btn"
+            onClick={() => setSidebarOpen((prev) => !prev)}
+            data-tooltip={sidebarOpen ? t("sidebar.collapse") : t("sidebar.expand")}
+            aria-label={sidebarOpen ? t("sidebar.collapse") : t("sidebar.expand")}
+          >
+            <svg
+              className="btn-icon"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+              <path d="M4 6a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2l0 -12" />
+              <path d="M9 4l0 16" />
+            </svg>
+            <span className="label">
+              {sidebarOpen ? t("sidebar.collapse") : t("sidebar.expand")}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={`history-item sidebar-upload ${uploading ? "is-uploading" : ""}`}
+            onClick={handleUploadClick}
+            disabled={!canUseApi || uploading}
+            data-tooltip={t("sidebar.upload")}
+            aria-label={t("sidebar.upload")}
+          >
+            {uploading ? (
+              <>
+                <span className="spinner" aria-label={t("aria.uploading")} />
+                <span className="label">{t("sidebar.uploading")}</span>
+              </>
+            ) : (
+              <>
+                <svg
+                  className="btn-icon"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 5v14" />
+                  <path d="M5 12h14" />
+                </svg>
+                <span className="label">{sidebarOpen ? t("sidebar.upload") : ""}</span>
+              </>
+            )}
+          </button>
+          <button
+            type="button"
+            className="history-item header-btn"
+            onClick={() => {
+              if (!sidebarOpen) {
+                setSidebarOpen(true);
+              }
+              setSidebarSearchOpen((prev) => {
+                const next = !prev;
+                if (next) {
+                  window.setTimeout(() => {
+                    sidebarSearchRef.current?.focus();
+                  }, 0);
+                }
+                return next;
+              });
+            }}
+            data-tooltip={t("sidebar.search")}
+            aria-label={t("sidebar.search")}
+          >
+            <svg
+              className="btn-icon"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="11" cy="11" r="7" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <span className="label">{t("sidebar.search")}</span>
+          </button>
+          {sidebarOpen && sidebarSearchOpen ? (
+            <div className="sidebar__search">
+              <div className="sidebar__search-input-wrap">
+                <input
+                  ref={sidebarSearchRef}
+                  type="text"
+                  className="sidebar__search-input"
+                  value={sidebarSearch}
+                  onChange={(event) => setSidebarSearch(event.target.value)}
+                  placeholder={t("sidebar.searchPlaceholder")}
+                  aria-label={t("sidebar.search")}
+                />
+                {sidebarSearch ? (
+                  <button
+                    type="button"
+                    className="sidebar__search-clear"
+                    onClick={() => {
+                      setSidebarSearch("");
+                      sidebarSearchRef.current?.focus();
+                    }}
+                    aria-label={t("common.clear")}
+                  >
+                    ×
+                  </button>
+                ) : null}
+              </div>
+              <div
+                className="sidebar__search-modes"
+                role="group"
+                aria-label={t("sidebar.searchMode")}
+              >
+                <button
+                  type="button"
+                  className={`sidebar__search-mode ${
+                    sidebarSearchMode === "title" ? "is-active" : ""
+                  }`}
+                  onClick={() => {
+                    setSidebarSearchMode("title");
+                    window.setTimeout(() => sidebarSearchRef.current?.focus(), 0);
+                  }}
+                >
+                  {t("sidebar.searchModeTitle")}
+                </button>
+                <button
+                  type="button"
+                  className={`sidebar__search-mode ${
+                    sidebarSearchMode === "content" ? "is-active" : ""
+                  }`}
+                  onClick={() => {
+                    setSidebarSearchMode("content");
+                    window.setTimeout(() => sidebarSearchRef.current?.focus(), 0);
+                  }}
+                >
+                  {t("sidebar.searchModeContent")}
+                </button>
+              </div>
+            </div>
+          ) : null}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/pdf"
+            onChange={handleUpload}
+            className="visually-hidden"
+          />
+        </div>
+
+        <div className="sidebar__list sidebar__list--settings">
+          <div
+            className="sidebar__list-header"
+            role="button"
+            tabIndex={0}
+            onClick={() => setSidebarSettingsCollapsed((prev) => !prev)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                setSidebarSettingsCollapsed((prev) => !prev);
+              }
+            }}
+            aria-label={
+              sidebarSettingsCollapsed ? t("sidebar.expandList") : t("sidebar.collapseList")
+            }
+            data-tooltip={
+              sidebarSettingsCollapsed ? t("sidebar.expandList") : t("sidebar.collapseList")
+            }
+          >
+            <span className="sidebar__list-title">
+              <span className="sidebar__list-icon" aria-hidden="true">
+                <svg
+                  viewBox="0 0 24 24"
+                  width="24"
+                  height="24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                  <path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065" />
+                  <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
+                </svg>
+              </span>
+              {t("sidebar.settings")}
+            </span>
+            <span className="sidebar__list-indicator" aria-hidden="true">
+              {sidebarSettingsCollapsed ? (
+                <svg
+                  viewBox="0 0 24 24"
+                  width="16"
+                  height="16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M9 6l6 6l-6 6" />
+                </svg>
+              ) : (
+                <svg
+                  viewBox="0 0 24 24"
+                  width="16"
+                  height="16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M6 9l6 6l6 -6" />
+                </svg>
+              )}
+            </span>
+          </div>
+          <div
+            className={`sidebar__list-body ${sidebarSettingsCollapsed ? "is-collapsed" : ""}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="history-item"
+              onClick={() => openSettingsSection("general")}
+              aria-label={t("general")}
+            >
+              <svg
+                className="btn-icon"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path d="M12 6a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" />
+                <path d="M4 6l8 0" />
+                <path d="M16 6l4 0" />
+                <path d="M6 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" />
+                <path d="M4 12l2 0" />
+                <path d="M10 12l10 0" />
+                <path d="M15 18a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" />
+                <path d="M4 18l11 0" />
+                <path d="M19 18l1 0" />
+              </svg>
+              <span className="label">{t("general")}</span>
+            </button>
+            <button
+              type="button"
+              className="history-item"
+              onClick={() => openSettingsSection("messages")}
+              aria-label={t("messages.title")}
+            >
+              <svg
+                className="btn-icon"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path d="M10 5a2 2 0 1 1 4 0a7 7 0 0 1 4 6v3a4 4 0 0 0 2 3h-16a4 4 0 0 0 2 -3v-3a7 7 0 0 1 4 -6" />
+                <path d="M9 17v1a3 3 0 0 0 6 0v-1" />
+              </svg>
+              <span className="label">{t("messages.title")}</span>
+            </button>
+            <button
+              type="button"
+              className="history-item"
+              onClick={() => openSettingsSection("service")}
+              aria-label={t("serviceTitle")}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="btn-icon"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path d="M10 6h10" />
+                <path d="M4 12h16" />
+                <path d="M7 12h13" />
+                <path d="M4 18h10" />
+              </svg>
+              <span className="label">{t("serviceTitle")}</span>
+            </button>
+            <button
+              type="button"
+              className="history-item"
+              onClick={() => openSettingsSection("account")}
+              aria-label={t("tooltip.account")}
+            >
+              <svg
+                className="btn-icon"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="8" r="4" />
+                <path d="M4 20a8 8 0 0 1 16 0" />
+              </svg>
+              <span className="history-item__label-row">
+                <span className="label history-item__label">{t("tooltip.account")}</span>
+                <span className={`history-item__badge plan-badge plan-badge--${plan}`}>
+                  {planLabel}
+                </span>
+              </span>
+            </button>
+            <div className="sidebar__mobile-actions">
+              <div className="sidebar__share-wrap" ref={sidebarShareMenuRef}>
+                <button
+                  type="button"
+                  className="history-item"
+                  data-tooltip={t("tooltip.share")}
+                  aria-label={t("tooltip.share")}
+                  onClick={() => setShareMenuOpen((prev) => !prev)}
+                >
+                  <svg
+                    className="btn-icon"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                    <path d="M3 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                    <path d="M15 6a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                    <path d="M15 18a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                    <path d="M8.7 10.7l6.6 -3.4" />
+                    <path d="M8.7 13.3l6.6 3.4" />
+                  </svg>
+                  <span className="label">{t("tooltip.share")}</span>
+                </button>
+                {shareMenuOpen ? (
+                  <div
+                    className="main-toolbar__menu-popover"
+                    style={isMobileLayout ? sidebarSharePopoverStyle ?? undefined : undefined}
+                  >
+                    <button
+                      type="button"
+                      className="main-toolbar__menu-item"
+                      onClick={() => void handleShareNative()}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                        <path d="M3 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                        <path d="M15 6a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                        <path d="M15 18a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                        <path d="M8.7 10.7l6.6 -3.4" />
+                        <path d="M8.7 13.3l6.6 3.4" />
+                      </svg>
+                      <span>{t("share.native")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="main-toolbar__menu-item"
+                      onClick={() => void handleCopyShare()}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="icon icon-tabler icons-tabler-outline icon-tabler-copy"
+                        aria-hidden="true"
+                      >
+                        <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                        <path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666" />
+                        <path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" />
+                      </svg>
+                      <span>{t("share.copy")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="main-toolbar__menu-item"
+                      onClick={() => void handleShareX()}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="icon icon-tabler icons-tabler-outline icon-tabler-brand-x"
+                        aria-hidden="true"
+                      >
+                        <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                        <path d="M4 4l11.733 16h4.267l-11.733 -16l-4.267 0" />
+                        <path d="M4 20l6.768 -6.768m2.46 -2.46l6.772 -6.772" />
+                      </svg>
+                      <span>{t("share.x")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="main-toolbar__menu-item"
+                      onClick={() => void handleShareLine()}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="icon icon-tabler icons-tabler-outline icon-tabler-message-circle"
+                        aria-hidden="true"
+                      >
+                        <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                        <path d="M3 20l1.3 -3.9c-2.324 -3.437 -1.426 -7.872 2.1 -10.374c3.526 -2.501 8.59 -2.296 11.845 .48c3.255 2.777 3.695 7.266 1.029 10.501c-2.666 3.235 -7.615 4.215 -11.574 2.293l-4.7 1" />
+                      </svg>
+                      <span>{t("share.line")}</span>
+                    </button>
+                    {shareNotice ? (
+                      <div className="main-toolbar__menu-hint">{shareNotice}</div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                className="history-item"
+                data-tooltip={t("tooltip.feedback")}
+                aria-label={t("tooltip.feedback")}
+                onClick={() => openSettingsSection("messages")}
+              >
+                <svg
+                  className="btn-icon"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                  <path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3h12" />
+                  <path d="M9.5 9h.01" />
+                  <path d="M14.5 9h.01" />
+                  <path d="M9.5 13a3.5 3.5 0 0 0 5 0" />
+                </svg>
+                <span className="label">{t("tooltip.feedback")}</span>
+              </button>
+              <button
+                type="button"
+                className="history-item"
+                data-tooltip={t("tooltip.plan")}
+                aria-label={t("tooltip.plan")}
+                onClick={() => {
+                  setSelectedPlan("plus");
+                  openLimitModal();
+                }}
+              >
+                <svg
+                  className="btn-icon"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                  <path d="M16 18a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2m0 -12a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2m-7 12a6 6 0 0 1 6 -6a6 6 0 0 1 -6 -6a6 6 0 0 1 -6 6a6 6 0 0 1 6 6" />
+                </svg>
+                <span className="label">{t("tooltip.plan")}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="sidebar__list">
+          <div
+            className="sidebar__list-header"
+            role="button"
+            tabIndex={0}
+            onClick={() => setSidebarListCollapsed((prev) => !prev)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                setSidebarListCollapsed((prev) => !prev);
+              }
+            }}
+            aria-label={
+              sidebarListCollapsed ? t("sidebar.expandList") : t("sidebar.collapseList")
+            }
+            data-tooltip={
+              sidebarListCollapsed ? t("sidebar.expandList") : t("sidebar.collapseList")
+            }
+          >
+            <span className="sidebar__list-title">
+              <span className="sidebar__list-icon" aria-hidden="true">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                  <path d="M14 3v4a1 1 0 0 0 1 1h4" />
+                  <path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2" />
+                </svg>
+              </span>
+              {t("sidebar.documents")}
+              {sidebarDocumentCount > 0 ? (
+                <span className="sidebar__list-count">({sidebarDocumentCount})</span>
+              ) : null}
+            </span>
+            <span className="sidebar__list-indicator" aria-hidden="true">
+              {sidebarListCollapsed ? (
+                <svg
+                  viewBox="0 0 24 24"
+                  width="16"
+                  height="16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M9 6l6 6l-6 6" />
+                </svg>
+              ) : (
+                <svg
+                  viewBox="0 0 24 24"
+                  width="16"
+                  height="16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M6 9l6 6l6 -6" />
+                </svg>
+              )}
+            </span>
+          </div>
+          <div
+            className={`sidebar__list-body ${sidebarListCollapsed ? "is-collapsed" : ""}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+          {canUseApi ? (
+            docsLoading ? (
+              <div className="auth-hint auth-hint--inline">
+                <p>{renderLoadingText(t("common.loading"))}</p>
+                <button
+                  type="button"
+                  className="list-reload"
+                  onClick={handleReloadDocuments}
+                  aria-label={t("common.reload")}
+                  data-tooltip={t("common.reload")}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                    <path d="M19.933 13.041a8 8 0 1 1 -9.925 -8.788c3.899 -1 7.935 1.007 9.425 4.747" />
+                    <path d="M20 4v5h-5" />
+                  </svg>
+                </button>
+              </div>
+            ) : docsError ? (
+              <div className="auth-hint">
+                <p>{docsError ?? t("common.errorOccurred")}</p>
+              </div>
+            ) : documents.length === 0 ? (
+              <div className="auth-hint">
+                <p>{t("sidebar.noDocuments")}</p>
+              </div>
+            ) : searchResults.length === 0 ? (
+              <div className="auth-hint">
+                <p>{t("sidebar.noSearchResults")}</p>
+                {contentSearchLoading ? (
+                  <span className="auth-hint__sub">{t("common.loading")}</span>
+                ) : null}
+                {contentSearchError ? (
+                  <span className="auth-hint__sub">{t("common.fetchFailed")}</span>
+                ) : null}
+              </div>
+            ) : (
+              searchResults.map((item) => (
+                <div
+                  key={item.doc.id}
+                  className={`history-item ${
+                    selectedDocumentId === item.doc.id ? "is-active" : ""
+                  } ${item.snippet ? "history-item--multi" : ""}`}
+                  onClick={() => {
+                    if (editingDocumentId === item.doc.id) return;
+                    handleSelectDocument(item.doc);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      if (editingDocumentId === item.doc.id) return;
+                      handleSelectDocument(item.doc);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  data-tooltip={item.doc.title}
+                >
+                  {editingDocumentId === item.doc.id ? (
+                    <input
+                      className="history-item__input"
+                      value={documentTitleDraft}
+                      onChange={(event) => setDocumentTitleDraft(event.target.value)}
+                      onClick={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void saveRenameDocument(item.doc.id);
+                        }
+                        if (event.key === "Escape") {
+                          event.preventDefault();
+                          cancelRenameDocument();
+                        }
+                      }}
+                      onBlur={() => void saveRenameDocument(item.doc.id)}
+                      aria-label={t("aria.renameDocument")}
+                      autoFocus
+                    />
+                  ) : (
+                    <>
+                      <span className="history-item__label-row">
+                        <span className="label history-item__label">
+                          {renderSearchSnippet(
+                            item.doc.title || t("common.untitled"),
+                            sidebarSearch
+                          )}
+                        </span>
+                        {documentStatusLabel(item.doc.status) ? (
+                          <span
+                            className={`history-item__badge ${
+                              item.doc.status === "failed"
+                                ? "history-item__badge--error"
+                                : ""
+                            } ${
+                              item.doc.status === "uploading" ||
+                              item.doc.status === "processing"
+                                ? "history-item__badge--loading"
+                                : ""
+                            }`}
+                          >
+                            {documentStatusLabel(item.doc.status)}
+                          </span>
+                        ) : null}
+                        {item.doc.status === "ready" ? (
+                          <span className="history-item__badge history-item__badge--new">
+                            {t("badges.new")}
+                          </span>
+                        ) : null}
+                      </span>
+                      {item.snippet ? (
+                        <span className="history-item__snippet">
+                          <span className="history-item__snippet-line">
+                            <span className="history-item__snippet-text">
+                              {renderSearchSnippet(item.snippet, sidebarSearch)}
+                            </span>
+                            {item.extraHits ? (
+                              <span className="history-item__snippet-count">
+                                {" "}
+                                {t("sidebar.moreHits", { count: item.extraHits })}
+                              </span>
+                            ) : null}
+                          </span>
+                        </span>
+                      ) : null}
+                      {sidebarOpen ? (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          className="history-item__menu-trigger"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setOpenDocMenuId((prev) =>
+                              prev === item.doc.id ? null : item.doc.id
+                            );
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setOpenDocMenuId((prev) =>
+                                prev === item.doc.id ? null : item.doc.id
+                              );
+                            }
+                          }}
+                          aria-label={t("tooltip.menu")}
+                          data-tooltip={t("tooltip.menu")}
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="18"
+                            height="18"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                            <path d="M4 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                            <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                            <path d="M18 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                          </svg>
+                        </span>
+                      ) : null}
+                      {sidebarOpen && openDocMenuId === item.doc.id ? (
+                        <div className="history-item__menu" onClick={(event) => event.stopPropagation()}>
+                          <button
+                            type="button"
+                            className="history-item__menu-item"
+                            onClick={() => {
+                              setOpenDocMenuId(null);
+                              startRenameDocument(item.doc);
+                            }}
+                          >
+                            <span className="menu-item__icon" aria-hidden="true">
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                                <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+                                <path d="M13.5 6.5l4 4" />
+                              </svg>
+                            </span>
+                            <span className="menu-item__label">{t("tooltip.rename")}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="history-item__menu-item"
+                            onClick={() => {
+                              setOpenDocMenuId(null);
+                              void handleDownloadDocument(item.doc.id);
+                            }}
+                          >
+                            <span className="menu-item__icon" aria-hidden="true">
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                                <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2" />
+                                <path d="M7 11l5 5l5 -5" />
+                                <path d="M12 4l0 12" />
+                              </svg>
+                            </span>
+                            <span className="menu-item__label">{t("pdf.download")}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="history-item__menu-item history-item__menu-item--danger"
+                            onClick={() => {
+                              setOpenDocMenuId(null);
+                              void handleDeleteDocument(item.doc.id);
+                            }}
+                          >
+                            <span className="menu-item__icon" aria-hidden="true">
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                                <path d="M4 7l16 0" />
+                                <path d="M10 11l0 6" />
+                                <path d="M14 11l0 6" />
+                                <path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12" />
+                                <path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" />
+                              </svg>
+                            </span>
+                            <span className="menu-item__label">{t("common.delete")}</span>
+                          </button>
+                        </div>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              ))
+            )
+          ) : (
+            <div className="auth-hint">
+              <p>{t("sidebar.signInHint")}</p>
+              <Link className="ghost auth-link" href="/login">
+                {t("auth.signInLink")}
+              </Link>
+            </div>
+          )}
+          </div>
+        </div>
+
+        
+
+        <div className="sidebar__footer">
+          {isAuthed ? (
+            <button
+              type="button"
+              className="history-item history-item--danger"
+              onClick={handleSignOut}
+              data-tooltip={t("auth.signOut")}
+              aria-label={t("auth.signOut")}
+            >
+              <svg
+                className="btn-icon"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M9 21h-4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
+              </svg>
+              <span className="label">{t("auth.signOut")}</span>
+            </button>
+          ) : (
+            <div className="sidebar__footer-actions">
+              <button
+                type="button"
+                className="history-item sidebar-auth sidebar-auth--accent"
+                onClick={() => {
+                  setSelectedPlan("plus");
+                  openLimitModal();
+                }}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="btn-icon"
+                  aria-hidden="true"
+                >
+                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                  <path d="M8 7a4 4 0 1 0 8 0a4 4 0 0 0 -8 0" />
+                  <path d="M6 21v-2a4 4 0 0 1 4 -4h4" />
+                  <path d="M19 22v-6" />
+                  <path d="M22 19l-3 -3l-3 3" />
+                </svg>
+                <span className="label">{t("planUpgrade")}</span>
+              </button>
+              <Link className="history-item sidebar-auth sidebar-auth--primary" href="/login">
+                <svg
+                  className="btn-icon"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+                  <polyline points="10 17 15 12 10 7" />
+                  <line x1="15" y1="12" x2="3" y2="12" />
+                </svg>
+                <span className="label">{t("auth.signIn")}</span>
+              </Link>
+              <Link className="history-item sidebar-auth sidebar-auth--ghost" href="/signup">
+                <svg
+                  className="btn-icon"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 5v14" />
+                  <path d="M5 12h14" />
+                </svg>
+                <span className="label">{t("auth.signUp")}</span>
+              </Link>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {limitModalOpen
+        ? createPortal(
+            <div
+              className="limit-modal__overlay"
+              role="dialog"
+              aria-modal="true"
+              onClick={() => setLimitModalOpen(false)}
+            >
+              <div
+                className="limit-modal limit-modal--split"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="limit-modal__art">
+                  <div className="limit-modal__art-badge">
+                    {isLimitModalFromLimit ? t("common.limitTitle") : limitModalTitle}
+                  </div>
+                  <div className="limit-modal__art-figure" />
+                  <div className="limit-modal__art-cloud limit-modal__art-cloud--one" />
+                  <div className="limit-modal__art-cloud limit-modal__art-cloud--two" />
+                </div>
+                <div className="limit-modal__content">
+                  <div className="limit-modal__header">
+                    <div className="limit-modal__title">{limitModalTitle}</div>
+                    <button
+                      type="button"
+                      className="limit-modal__close"
+                      onClick={() => setLimitModalOpen(false)}
+                      aria-label={t("aria.close")}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <div className="limit-modal__body">
+                    <p className="limit-modal__desc">
+                      {isLimitModalFromLimit ? t("common.limitDesc") : t("planModalDesc")}
+                    </p>
+                    {limitModalMessage ? (
+                      <div className="limit-modal__note">{limitModalMessage}</div>
+                    ) : null}
+                    <ul className="limit-modal__bullets">
+                      <li>{t("planBenefitPdf")}</li>
+                      <li>{t("planBenefitChat")}</li>
+                    </ul>
+                    <div className="limit-modal__plans">
+                      {(["free", "plus"] as const).map((planName) => (
+                        <label
+                          key={planName}
+                          className={`limit-plan ${
+                            selectedPlan === planName ? "is-selected" : ""
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="plan"
+                            value={planName}
+                            checked={selectedPlan === planName}
+                            onChange={() => setSelectedPlan(planName)}
+                          />
+                          <div className="limit-plan__meta">
+                            <div className="limit-plan__name">
+                              {planName === "free"
+                                ? t("planFree")
+                                : t("planPlus")}
+                            </div>
+                            <div className="limit-plan__price">
+                              {PLAN_PRICES[planName]}
+                              <span>{t("planPerMonth")}</span>
+                            </div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="limit-modal__actions">
+                    {isAuthed ? (
+                      <button
+                        type="button"
+                        className="limit-modal__btn limit-modal__btn--primary"
+                        disabled={
+                          billingBusy ||
+                          plan === selectedPlan ||
+                          (selectedPlan === "free" && isCancelScheduled)
+                        }
+                        onClick={handlePlanCta}
+                      >
+                        {billingBusy ? t("planUpdating") : planCtaLabel}
+                      </button>
+                    ) : (
+                      <>
+                        <Link
+                          className="limit-modal__btn limit-modal__btn--primary"
+                          href="/login"
+                          onClick={() => setLimitModalOpen(false)}
+                        >
+                          {t("auth.signIn")}
+                        </Link>
+                        <Link
+                          className="limit-modal__btn limit-modal__btn--ghost"
+                          href="/signup"
+                          onClick={() => setLimitModalOpen(false)}
+                        >
+                          {t("auth.signUp")}
+                        </Link>
+                      </>
+                    )}
+                    <div className="limit-modal__hint">{t("planHint")}</div>
+                  </div>
+                  <div className="limit-modal__table">
+                    <div className="plan-table plan-table--compact">
+                      <div className="plan-table__header">
+                        <div className="plan-table__cell plan-table__cell--feature" />
+                        <div
+                          className={`plan-table__cell ${
+                            plan === "guest" ? "is-selected" : ""
+                          }`}
+                        >
+                          {t("planGuest")}
+                        </div>
+                        <div
+                          className={`plan-table__cell ${
+                            selectedPlan === "free" ? "is-selected" : ""
+                          }`}
+                        >
+                          {t("planFree")}
+                        </div>
+                        <div
+                          className={`plan-table__cell ${
+                            selectedPlan === "plus" ? "is-selected" : ""
+                          }`}
+                        >
+                          {t("planPlus")}
+                        </div>
+                      </div>
+                      {planRows.map((row) => (
+                        <div key={`modal-${row.key}`} className="plan-table__row">
+                          <div className="plan-table__cell plan-table__cell--feature">
+                            {row.label}
+                          </div>
+                          <div
+                            className={`plan-table__cell ${
+                              plan === "guest" ? "is-selected" : ""
+                            }`}
+                          >
+                            {row.values.guest}
+                          </div>
+                          <div
+                            className={`plan-table__cell ${
+                              selectedPlan === "free" ? "is-selected" : ""
+                            }`}
+                          >
+                            {row.values.free}
+                          </div>
+                          <div
+                            className={`plan-table__cell ${
+                              selectedPlan === "plus" ? "is-selected" : ""
+                            }`}
+                          >
+                            {row.values.plus}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+
+      {uploadLimitModalOpen
+        ? createPortal(
+            <div
+              className="upload-limit-modal__overlay"
+              role="dialog"
+              aria-modal="true"
+              onClick={() => setUploadLimitModalOpen(false)}
+            >
+              <div
+                className="upload-limit-modal"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="upload-limit-modal__header">
+                  <div className="upload-limit-modal__title">
+                    {t("uploadLimit.title")}
+                  </div>
+                  <button
+                    type="button"
+                    className="upload-limit-modal__close"
+                    onClick={() => setUploadLimitModalOpen(false)}
+                    aria-label={t("aria.close")}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="upload-limit-modal__body">
+                  <p className="upload-limit-modal__message">
+                    {uploadLimitMessage ?? t("uploadLimit.message")}
+                  </p>
+                  <button
+                    type="button"
+                    className="upload-limit-modal__btn"
+                    onClick={() => setUploadLimitModalOpen(false)}
+                  >
+                    OK
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+
+      {deleteAccountModalOpen
+        ? createPortal(
+            <div
+              className="account-delete-modal__overlay"
+              role="dialog"
+              aria-modal="true"
+              onClick={() => {
+                if (accountDeleting) return;
+                setDeleteAccountModalOpen(false);
+              }}
+            >
+              <div
+                className="account-delete-modal"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="account-delete-modal__header">
+                  <div className="account-delete-modal__title">{t("accountDelete")}</div>
+                  <button
+                    type="button"
+                    className="account-delete-modal__close"
+                    onClick={() => {
+                      if (accountDeleting) return;
+                      setDeleteAccountModalOpen(false);
+                    }}
+                    aria-label={t("aria.close")}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="account-delete-modal__body">
+                  <p className="account-delete-modal__message">{t("accountDeleteConfirm")}</p>
+                  <label className="account-delete-modal__label" htmlFor="account-delete-reason">
+                    {t("accountDeleteReasonPrompt")}
+                  </label>
+                  <textarea
+                    id="account-delete-reason"
+                    className="account-delete-modal__textarea"
+                    value={deleteAccountReason}
+                    onChange={(event) => {
+                      setDeleteAccountReason(event.target.value);
+                      if (deleteAccountReasonError) setDeleteAccountReasonError(null);
+                    }}
+                    rows={4}
+                    maxLength={1000}
+                    placeholder={t("accountDeleteReasonPrompt")}
+                  />
+                  {deleteAccountReasonError ? (
+                    <div className="account-delete-modal__error">{deleteAccountReasonError}</div>
+                  ) : null}
+                </div>
+                <div className="account-delete-modal__actions">
+                  <button
+                    type="button"
+                    className="account-delete-modal__btn account-delete-modal__btn--ghost"
+                    onClick={() => setDeleteAccountModalOpen(false)}
+                    disabled={accountDeleting}
+                  >
+                    {t("accountDeleteCancel")}
+                  </button>
+                  <button
+                    type="button"
+                    className="account-delete-modal__btn account-delete-modal__btn--danger"
+                    onClick={() => void handleDeleteAccount()}
+                    disabled={accountDeleting}
+                  >
+                    {accountDeleting ? t("common.loading") : t("accountDeleteSubmit")}
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+
+      <div
+        className={`right-col ${chatOpen ? "is-chat-open" : ""} ${
+          isMobileLayout ? "is-mobile" : ""
+        } ${isChatExpanded ? "is-chat-expanded" : ""}`}
+        style={
+          isMobileLayout
+            ? ({
+                "--chat-header-height": `${chatHeaderHeight}px`,
+              } as React.CSSProperties)
+            : undefined
+        }
+      >
+      {checkoutNotice ? (
+        <div className={`notice-banner notice-banner--${checkoutNotice.type}`}>
+          <span>{checkoutNotice.message}</span>
+          <button
+            type="button"
+            className="notice-banner__close"
+            aria-label={t("aria.close")}
+            onClick={() => setCheckoutNotice(null)}
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
+      <section className="main" style={mainStyle} ref={containerRef}>
+        <div className="main-toolbar">
+          <div className="main-toolbar__left">
+            <span className="main-toolbar__title">
+              {selectedDocumentTitle ? selectedDocumentTitle : t("viewer.noDocument")}
+            </span>
+          </div>
+          <div className="main-toolbar__right" ref={shareMenuRef}>
+            <div className="main-toolbar__menu">
+              <button
+                type="button"
+                className="icon-btn main-toolbar__action"
+                data-tooltip={t("tooltip.share")}
+                aria-label={t("tooltip.share")}
+                onClick={() => setShareMenuOpen((prev) => !prev)}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="icon icon-tabler icons-tabler-outline icon-tabler-share"
+                  aria-hidden="true"
+                >
+                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                  <path d="M3 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                  <path d="M15 6a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                  <path d="M15 18a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                  <path d="M8.7 10.7l6.6 -3.4" />
+                  <path d="M8.7 13.3l6.6 3.4" />
+                </svg>
+              </button>
+              {shareMenuOpen ? (
+                <div className="main-toolbar__menu-popover">
+                  <button
+                    type="button"
+                    className="main-toolbar__menu-item"
+                    onClick={() => void handleShareNative()}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                      <path d="M3 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                      <path d="M15 6a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                      <path d="M15 18a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" />
+                      <path d="M8.7 10.7l6.6 -3.4" />
+                      <path d="M8.7 13.3l6.6 3.4" />
+                    </svg>
+                    <span>{t("share.native")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="main-toolbar__menu-item"
+                    onClick={() => void handleCopyShare()}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="icon icon-tabler icons-tabler-outline icon-tabler-copy"
+                      aria-hidden="true"
+                    >
+                      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                      <path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666" />
+                      <path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" />
+                    </svg>
+                    <span>{t("share.copy")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="main-toolbar__menu-item"
+                    onClick={() => void handleShareX()}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="icon icon-tabler icons-tabler-outline icon-tabler-brand-x"
+                      aria-hidden="true"
+                    >
+                      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                      <path d="M4 4l11.733 16h4.267l-11.733 -16l-4.267 0" />
+                      <path d="M4 20l6.768 -6.768m2.46 -2.46l6.772 -6.772" />
+                    </svg>
+                    <span>{t("share.x")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="main-toolbar__menu-item"
+                    onClick={() => void handleShareLine()}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="icon icon-tabler icons-tabler-outline icon-tabler-message-circle"
+                      aria-hidden="true"
+                    >
+                      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                      <path d="M3 20l1.3 -3.9c-2.324 -3.437 -1.426 -7.872 2.1 -10.374c3.526 -2.501 8.59 -2.296 11.845 .48c3.255 2.777 3.695 7.266 1.029 10.501c-2.666 3.235 -7.615 4.215 -11.574 2.293l-4.7 1" />
+                    </svg>
+                    <span>{t("share.line")}</span>
+                  </button>
+                  {shareNotice ? (
+                    <div className="main-toolbar__menu-hint">{shareNotice}</div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              className="icon-btn main-toolbar__action"
+              data-tooltip={t("tooltip.feedback")}
+              aria-label={t("tooltip.feedback")}
+              onClick={() => openSettingsSection("messages")}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="icon icon-tabler icons-tabler-outline icon-tabler-message-chatbot"
+                aria-hidden="true"
+              >
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3h12" />
+                <path d="M9.5 9h.01" />
+                <path d="M14.5 9h.01" />
+                <path d="M9.5 13a3.5 3.5 0 0 0 5 0" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className="icon-btn main-toolbar__action"
+              data-tooltip={t("tooltip.plan")}
+              aria-label={t("tooltip.plan")}
+              onClick={() => {
+                setSelectedPlan("plus");
+                openLimitModal();
+              }}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="icon icon-tabler icons-tabler-outline icon-tabler-sparkles"
+                aria-hidden="true"
+              >
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path d="M16 18a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2m0 -12a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2m-7 12a6 6 0 0 1 6 -6a6 6 0 0 1 -6 -6a6 6 0 0 1 -6 6a6 6 0 0 1 6 6" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <section className="viewer">
+          <div
+            className={`viewer__tabs-wrap ${tabsOverflow ? "is-overflow" : ""} ${
+              openDocuments.length > 0 ? "" : "is-empty"
+            }`}
+            ref={tabsWrapRef}
+          >
+            <button
+              type="button"
+              className={`viewer__tabs-nav ${tabsOverflow ? "" : "is-hidden"}`}
+              onClick={() => scrollTabs("left")}
+              aria-label="scroll left"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="icon icon-tabler icons-tabler-outline icon-tabler-chevrons-left"
+                aria-hidden="true"
+              >
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path d="M11 7l-5 5l5 5" />
+                <path d="M17 7l-5 5l5 5" />
+              </svg>
+            </button>
+            <div className="viewer__tabs" ref={tabsRef}>
+              {openDocuments.map((doc) => (
+                <button
+                  key={doc.id}
+                  type="button"
+                  className={`viewer__tab ${
+                    doc.id === selectedTabId ? "viewer__tab--active" : ""
+                  }`}
+                  onClick={() => handleSelectTab(doc.id)}
+                  data-tooltip={doc.title}
+                  data-tooltip-position="bottom"
+                >
+                  <span className="viewer__tab-label">
+                    {doc.title}
+                  </span>
+                  <span
+                    className="viewer__tab-close"
+                    role="button"
+                    aria-label={t("aria.close")}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleCloseTab(doc.id);
+                    }}
+                  >
+                    ×
+                  </span>
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              className={`viewer__tabs-nav ${tabsOverflow ? "" : "is-hidden"}`}
+              onClick={() => scrollTabs("right")}
+              aria-label="scroll right"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="icon icon-tabler icons-tabler-outline icon-tabler-chevrons-right"
+                aria-hidden="true"
+              >
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path d="M7 7l5 5l-5 5" />
+                <path d="M13 7l5 5l-5 5" />
+              </svg>
+            </button>
+          </div>
+          <div className="viewer__canvas">
+            {viewerLoading ? (
+              <div className="empty-state">{renderLoadingText(t("common.loading"))}</div>
+            ) : selectedTabId === SETTINGS_TAB_ID ? (
+              <div className="settings">
+                <aside className="settings__nav">
+                  <div className="settings__profile">
+                    <div className={`settings__avatar settings__avatar--${plan}`}>
+                      {(userEmail?.[0] ?? "U").toUpperCase()}
+                    </div>
+                    <div>
+                      <div className="settings__email" title={userEmail ?? undefined}>
+                        {userEmail ? formatMiddleEllipsis(userEmail, 18) : t("auth.notSignedIn")}
+                      </div>
+                      <div className="settings__plan">{planLabel}</div>
+                    </div>
+                  </div>
+                  <div className="settings__nav-group">
+                    {[
+                      { id: "general", label: t("general") },
+                      { id: "account", label: t("account") },
+                      { id: "usage", label: t("usageTab") },
+                      { id: "messages", label: t("messages.title") },
+                      { id: "manual", label: t("manual.title") },
+                      { id: "service", label: t("serviceTitle") },
+                      { id: "faq", label: t("faqTitle") },
+                    ].map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`settings__nav-item ${
+                          settingsSection === item.id ? "is-active" : ""
+                        }`}
+                        onClick={() =>
+                          setSettingsSection(
+                            item.id as
+                              | "general"
+                              | "account"
+                              | "messages"
+                              | "manual"
+                              | "usage"
+                              | "service"
+                              | "faq"
+                          )
+                        }
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </aside>
+                <div className="settings__detail">{renderSettingsDetail()}</div>
+              </div>
+            ) : viewerError ? (
+              <div className="empty-state">{t("common.errorOccurred")}</div>
+            ) : selectedDocumentUrl ? (
+              <PdfViewer
+                url={selectedDocumentUrl}
+                documentId={selectedDocumentId}
+                accessToken={selectedDocumentToken}
+                initialResult={selectedDocumentResult}
+                initialAnnotations={selectedDocumentAnnotations}
+                referenceRequest={referenceRequest}
+                onClearReferenceRequest={() => {
+                  setReferenceRequest(null);
+                  setActiveRefId(null);
+                }}
+                onAddToChat={(text) => {
+                  setChatInput((prev) => {
+                    const prefix = prev.trim().length > 0 ? "\n" : "";
+                    return `${prev}${prefix}"${text}"`;
+                  });
+                }}
+              />
+            ) : (
+              <div className="empty-state">
+                <div className="empty-state__icon" aria-hidden="true">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="icon icon-tabler icons-tabler-outline icon-tabler-file"
+                  >
+                    <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                    <path d="M14 3v4a1 1 0 0 0 1 1h4" />
+                    <path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2" />
+                  </svg>
+                </div>
+                <div className="empty-state__title">{t("viewer.noDocument")}</div>
+                <div className="empty-state__subtitle">
+                  <button
+                    type="button"
+                    className="empty-state__link"
+                    onClick={handleUploadClick}
+                    disabled={!canUseApi || uploading}
+                  >
+                    {t("viewer.uploadAction")}
+                  </button>
+                  <span>{t("viewer.emptySuffix")}</span>
+                </div>
+              </div>
+            )}
+            {tooltipContainer && !isMobileLayout
+              ? createPortal(
+                  <div
+                    className="ref-tooltip"
+                    style={{
+                      left: `${refTooltip.x}px`,
+                      top: `${refTooltip.y}px`,
+                      opacity: refTooltip.visible ? 1 : 0,
+                      pointerEvents: refTooltip.visible ? "auto" : "none",
+                    }}
+                    onMouseEnter={() =>
+                      setRefTooltip((prev) => (prev.visible ? prev : { ...prev, visible: true }))
+                    }
+                    onMouseMove={() => {
+                      if (!refTooltip.visible) return;
+                      const rect = refTooltip.anchor;
+                      if (!rect) return;
+                      const { x, y } = computeRefTooltipPosition(rect);
+                      setRefTooltip((prev) => ({ ...prev, x, y }));
+                    }}
+                    onMouseLeave={hideRefTooltip}
+                  >
+                    <div className="ref-tooltip__header">
+                      <div className="ref-tooltip__header-title">
+                        <span className="ref-tooltip__title">
+                          {refTooltip.refId
+                            ? getRefPreviewData(
+                                refTooltip.refId,
+                                refTooltip.documentId ?? undefined
+                              )?.documentTitle || refTooltip.title
+                            : refTooltip.title}
+                        </span>
+                      </div>
+                      <div className="ref-tooltip__header-page">
+                        {(() => {
+                          if (!refTooltip.refId) return null;
+                          const preview = getRefPreviewData(
+                            refTooltip.refId,
+                            refTooltip.documentId ?? undefined
+                          );
+                          const page =
+                            getRefPageLabel(preview?.metadata) ?? refTooltip.pageLabel;
+                          return page ? <span className="ref-tooltip__page">{page}</span> : null;
+                        })()}
+                      </div>
+                    </div>
+                    <div className="ref-tooltip__body" ref={refTooltipBodyRef}>
+                      {`...${
+                        refTooltip.refId
+                          ? getRefPreviewData(
+                              refTooltip.refId,
+                              refTooltip.documentId ?? undefined
+                            )?.text || refTooltip.text
+                          : refTooltip.text
+                      }...`}
+                    </div>
+                  </div>,
+                  tooltipContainer
+                )
+              : null}
+            <button
+              type="button"
+              className="viewer__chat-toggle"
+              onClick={() => setChatOpen((prev) => !prev)}
+              aria-label={chatOpen ? "Collapse chat" : "Expand chat"}
+              data-tooltip={chatOpen ? t("tooltip.chatCollapse") : t("tooltip.chatExpand")}
+              data-tooltip-portal="true"
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                {chatOpen ? (
+                  <polyline
+                    points="9 6 15 12 9 18"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                ) : (
+                  <polyline
+                    points="15 6 9 12 15 18"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                )}
+              </svg>
+            </button>
+          </div>
+        </section>
+
+        {chatOpen ? (
+          <div
+            className="resizer"
+            role="separator"
+            aria-orientation="vertical"
+            onPointerDown={handleResizeStart}
+          />
+        ) : null}
+
+        <section
+          className={`chat ${chatOpen ? "" : "chat--collapsed"} ${
+            chatInputVisible ? "" : "chat--input-hidden"
+          }`}
+          style={
+            isMobileLayout && chatDrawerHeight
+              ? ({
+                  "--chat-drawer-height": `${chatDrawerHeight}px`,
+                } as React.CSSProperties)
+              : undefined
+          }
+        >
+          <div
+            className="chat__header"
+            ref={chatHeaderRef}
+            onPointerDown={(event) => {
+              if (!isMobileLayout) return;
+              if (
+                event.target instanceof Element &&
+                event.target.closest(
+                  "button, input, textarea, [contenteditable='true'], a, .chat__header-input, [role='button']"
+                )
+              ) {
+                return;
+              }
+              chatDragRef.current.dragging = true;
+              chatDragMovedRef.current = false;
+              chatDragRef.current.startY = event.clientY;
+              chatDragRef.current.startHeight =
+                chatDrawerHeight ?? chatHeaderRef.current?.offsetHeight ?? 56;
+              event.currentTarget.setPointerCapture?.(event.pointerId);
+            }}
+            onPointerMove={(event) => {
+              if (!isMobileLayout) return;
+              if (!chatDragRef.current.dragging) return;
+              const delta = chatDragRef.current.startY - event.clientY;
+              if (Math.abs(delta) > 4) {
+                chatDragMovedRef.current = true;
+              }
+              const nextHeight = clampChatHeight(chatDragRef.current.startHeight + delta);
+              setChatDrawerHeight(nextHeight);
+            }}
+            onPointerUp={(event) => {
+              if (!isMobileLayout) return;
+              if (!chatDragRef.current.dragging) return;
+              chatDragRef.current.dragging = false;
+              event.currentTarget.releasePointerCapture?.(event.pointerId);
+              const min = getChatDrawerMin();
+              const max = Math.max(min, getChatDrawerMax());
+              const current = chatDrawerHeight ?? min;
+              setChatDrawerHeight(clampChatHeight(current));
+            }}
+            onPointerCancel={(event) => {
+              if (!isMobileLayout) return;
+              if (!chatDragRef.current.dragging) return;
+              chatDragRef.current.dragging = false;
+              event.currentTarget.releasePointerCapture?.(event.pointerId);
+              setChatDrawerHeight(getChatDrawerMin());
+            }}
+            onClick={(event) => {
+              if (!isMobileLayout) return;
+              if (
+                event.target instanceof Element &&
+                event.target.closest(
+                  "button, input, textarea, [contenteditable='true'], a, .chat__header-input, [role='button']"
+                )
+              ) {
+                return;
+              }
+              if (chatDragMovedRef.current) {
+                chatDragMovedRef.current = false;
+                return;
+              }
+              const min = getChatDrawerMin();
+              const max = Math.max(min, getChatDrawerMax());
+              const current = chatDrawerHeight ?? min;
+              if (current <= min + 4) {
+                const restore =
+                  chatLastExpandedHeightRef.current &&
+                  chatLastExpandedHeightRef.current > min + 4
+                    ? chatLastExpandedHeightRef.current
+                    : max;
+                setChatDrawerHeight(clampChatHeight(restore));
+              } else {
+                chatLastExpandedHeightRef.current = clampChatHeight(current);
+                setChatDrawerHeight(min);
+              }
+            }}
+          >
+            {selectedDocumentId ? (
+              <div className="chat__header-left">
+                {showThreadList ? null : (
+                  <button
+                    type="button"
+                    className="chat__header-action"
+                    aria-label={t("aria.back")}
+                    onClick={async () => {
+                      setShowThreadList(true);
+                      setShowAllChatList(false);
+                      if (selectedDocumentId) {
+                        await loadChats(selectedDocumentId, { autoOpen: false });
+                      }
+                    }}
+                    data-tooltip={t("tooltip.chatHistory")}
+                  >
+                    ←
+                  </button>
+                )}
+                <span className="chat__header-icon" aria-hidden="true">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#536DFE"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="icon icon-tabler icons-tabler-outline icon-tabler-robot-face"
+                  >
+                    <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                    <path d="M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2" />
+                    <path d="M9 16c1 .667 2 1 3 1s2 -.333 3 -1" />
+                    <path d="M9 7l-1 -4" />
+                    <path d="M15 7l1 -4" />
+                    <path d="M9 12v-1" />
+                    <path d="M15 12v-1" />
+                  </svg>
+                </span>
+                {editingChatTitle && activeChatId && !showThreadList && !showAllChatList ? (
+                  <input
+                    className="chat__header-input"
+                    value={chatTitleDraft}
+                    onChange={(event) => setChatTitleDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void saveChatTitle();
+                      }
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        cancelEditChatTitle();
+                      }
+                    }}
+                    onBlur={() => void saveChatTitle()}
+                    aria-label={t("aria.renameChat")}
+                    autoFocus
+                  />
+                ) : (
+                  <span
+                    className="chat__header-title"
+                    onClick={startEditChatTitle}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        startEditChatTitle();
+                      }
+                    }}
+                  >
+                    {activeChatTitle}
+                  </span>
+                )}
+                {showThreadList || showAllChatList ? (
+                  <button
+                    type="button"
+                    className="chat__header-action"
+                    aria-label={
+                      showAllChatList ? t("chat.documentChatList") : t("chat.allChatList")
+                    }
+                    data-tooltip={
+                      showAllChatList ? t("chat.documentChatList") : t("chat.allChatList")
+                    }
+                    onClick={() => {
+                      if (showAllChatList) {
+                        setShowAllChatList(false);
+                        setShowThreadList(true);
+                        return;
+                      }
+                      setShowAllChatList(true);
+                      setShowThreadList(true);
+                      void loadAllChats();
+                    }}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                      <path d="M16 3l4 4l-4 4" />
+                      <path d="M10 7l10 0" />
+                      <path d="M8 13l-4 4l4 4" />
+                      <path d="M4 17l9 0" />
+                    </svg>
+                  </button>
+                ) : null}
+              </div>
+            ) : (
+              <div className="chat__header-left">
+                <span className="chat__header-icon" aria-hidden="true">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#536DFE"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="icon icon-tabler icons-tabler-outline icon-tabler-robot-face"
+                  >
+                    <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                    <path d="M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2" />
+                    <path d="M9 16c1 .667 2 1 3 1s2 -.333 3 -1" />
+                    <path d="M9 7l-1 -4" />
+                    <path d="M15 7l1 -4" />
+                    <path d="M9 12v-1" />
+                    <path d="M15 12v-1" />
+                  </svg>
+                </span>
+                <span className="chat__header-title">{activeChatTitle}</span>
+              </div>
+            )}
+            <div className="chat__header-actions">
+              {selectedDocumentId ? (
+                <>
+                  <button
+                    type="button"
+                    className="chat__header-action"
+                    aria-label={t("aria.newChat")}
+                    onClick={handleCreateChat}
+                    data-tooltip={t("tooltip.newChat")}
+                    disabled={!isChatReady}
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="16"
+                      height="16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                      <path d="M7 7h-1a2 2 0 0 0 -2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2 -2v-1" />
+                      <path d="M20.385 6.585a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3l8.385 -8.415" />
+                      <path d="M16 5l3 3" />
+                    </svg>
+                  </button>
+                </>
+              ) : null}
+            </div>
+          </div>
+                <div className="chat__messages-wrap">
+            <div
+              className={`chat__messages ${
+                isAllChatList || showThreadList ? "is-thread-list" : ""
+              }`}
+              ref={chatMessagesRef}
+            >
+              {chatLoading ? (
+                <div className="empty-state">
+                  <div className="empty-state__row">
+                    {renderLoadingText(t("common.loading"))}
+                    <button
+                      type="button"
+                      className="list-reload"
+                      onClick={handleReloadChatsList}
+                      aria-label={t("common.reload")}
+                      data-tooltip={t("common.reload")}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                        <path d="M19.933 13.041a8 8 0 1 1 -9.925 -8.788c3.899 -1 7.935 1.007 9.425 4.747" />
+                        <path d="M20 4v5h-5" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              ) : chatError ? (
+                <div className="empty-state">{t("common.errorOccurred")}</div>
+              ) : isAllChatList ? (
+                allChatThreads.length === 0 ? (
+                  <div className="empty-state">{t("chat.noChats")}</div>
+                ) : (
+                  <div className="chat__thread-list">
+                    {allChatThreads.map((thread) => (
+                      <div
+                        key={thread.id}
+                        className="chat__thread-item"
+                        onClick={() => {
+                          if (editingChatListId === thread.id) return;
+                          handleSelectDocument({
+                            id: thread.documentId,
+                            title: thread.documentTitle ?? t("common.untitled"),
+                          });
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            if (editingChatListId === thread.id) return;
+                            handleSelectDocument({
+                              id: thread.documentId,
+                              title: thread.documentTitle ?? t("common.untitled"),
+                            });
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
+                      >
+                        <div className="chat__thread-row">
+                          {editingChatListId === thread.id ? (
+                            <input
+                              className="chat__thread-input"
+                              value={chatListTitleDraft}
+                              onChange={(event) => setChatListTitleDraft(event.target.value)}
+                              onClick={(event) => event.stopPropagation()}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  void saveChatTitleFromList(thread.documentId, thread.id);
+                                }
+                                if (event.key === "Escape") {
+                                  event.preventDefault();
+                                  cancelEditChatFromList();
+                                }
+                              }}
+                              onBlur={() => void saveChatTitleFromList(thread.documentId, thread.id)}
+                              aria-label={t("aria.renameChat")}
+                              autoFocus
+                            />
+                          ) : (
+                            <div className="chat__thread-title">
+                              {thread.title ?? t("chat.newChat")}
+                            </div>
+                          )}
+                          {thread.updatedAt ? (
+                            <span className="chat__thread-time">
+                              {formatRelativeTime(thread.updatedAt)}
+                            </span>
+                          ) : null}
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            className="chat__thread-menu-trigger"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setOpenChatMenuId((prev) => (prev === thread.id ? null : thread.id));
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                setOpenChatMenuId((prev) => (prev === thread.id ? null : thread.id));
+                              }
+                            }}
+                            aria-label={t("tooltip.menu")}
+                            data-tooltip={t("tooltip.menu")}
+                          >
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              width="18"
+                              height="18"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                              <path d="M4 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                              <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                              <path d="M18 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                            </svg>
+                          </span>
+                        </div>
+                        {openChatMenuId === thread.id ? (
+                          <div
+                            className="chat__thread-menu"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              className="chat__thread-menu-item"
+                              onClick={() => {
+                                setOpenChatMenuId(null);
+                                startEditChatFromList(thread.id, thread.title ?? null);
+                              }}
+                            >
+                              <span className="menu-item__icon" aria-hidden="true">
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  width="24"
+                                  height="24"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                                  <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+                                  <path d="M13.5 6.5l4 4" />
+                                </svg>
+                              </span>
+                              <span className="menu-item__label">{t("tooltip.rename")}</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="chat__thread-menu-item chat__thread-menu-item--danger"
+                              onClick={() => {
+                                setOpenChatMenuId(null);
+                                void handleDeleteChatThread(thread.documentId, thread.id);
+                              }}
+                            >
+                              <span className="menu-item__icon" aria-hidden="true">
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  width="24"
+                                  height="24"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                                  <path d="M4 7l16 0" />
+                                  <path d="M10 11l0 6" />
+                                  <path d="M14 11l0 6" />
+                                  <path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12" />
+                                  <path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" />
+                                </svg>
+                              </span>
+                              <span className="menu-item__label">{t("common.delete")}</span>
+                            </button>
+                          </div>
+                        ) : null}
+                        <div className="chat__thread-meta">
+                          {thread.documentTitle ?? t("common.untitled")}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )
+              ) : showThreadList ? (
+                chatThreads.length === 0 ? (
+                  <div className="empty-state">
+                    <div>{t("chat.noDocumentChats")}</div>
+                    <button type="button" className="primary" onClick={handleCreateChat}>
+                      {t("chat.newChat")}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="chat__thread-list">
+                    {chatThreads.map((thread) => (
+                      <div
+                        key={thread.id}
+                        className="chat__thread-item"
+                        onClick={async () => {
+                          if (editingChatListId === thread.id) return;
+                          chatsAbortRef.current?.abort();
+                          setActiveChatId(thread.id);
+                          setShowThreadList(false);
+                          if (selectedDocumentId) {
+                            await loadChatMessages(selectedDocumentId, thread.id);
+                          }
+                        }}
+                        onKeyDown={async (event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            if (editingChatListId === thread.id) return;
+                            chatsAbortRef.current?.abort();
+                            setActiveChatId(thread.id);
+                            setShowThreadList(false);
+                            if (selectedDocumentId) {
+                              await loadChatMessages(selectedDocumentId, thread.id);
+                            }
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
+                      >
+                        <div className="chat__thread-row">
+                          {editingChatListId === thread.id ? (
+                            <input
+                              className="chat__thread-input"
+                              value={chatListTitleDraft}
+                              onChange={(event) => setChatListTitleDraft(event.target.value)}
+                              onClick={(event) => event.stopPropagation()}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  if (selectedDocumentId) {
+                                    void saveChatTitleFromList(selectedDocumentId, thread.id);
+                                  }
+                                }
+                                if (event.key === "Escape") {
+                                  event.preventDefault();
+                                  cancelEditChatFromList();
+                                }
+                              }}
+                              onBlur={() => {
+                                if (selectedDocumentId) {
+                                  void saveChatTitleFromList(selectedDocumentId, thread.id);
+                                }
+                              }}
+                              aria-label={t("aria.renameChat")}
+                              autoFocus
+                            />
+                          ) : (
+                            <div className="chat__thread-title">
+                              {thread.title ?? t("chat.newChat")}
+                            </div>
+                          )}
+                          {thread.updatedAt ? (
+                            <span className="chat__thread-time">
+                              {formatRelativeTime(thread.updatedAt)}
+                            </span>
+                          ) : null}
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            className="chat__thread-menu-trigger"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setOpenChatMenuId((prev) => (prev === thread.id ? null : thread.id));
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                setOpenChatMenuId((prev) => (prev === thread.id ? null : thread.id));
+                              }
+                            }}
+                            aria-label={t("tooltip.menu")}
+                            data-tooltip={t("tooltip.menu")}
+                          >
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              width="18"
+                              height="18"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                              <path d="M4 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                              <path d="M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                              <path d="M18 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                            </svg>
+                          </span>
+                        </div>
+                        {openChatMenuId === thread.id ? (
+                          <div
+                            className="chat__thread-menu"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              className="chat__thread-menu-item"
+                              onClick={() => {
+                                setOpenChatMenuId(null);
+                                startEditChatFromList(thread.id, thread.title ?? null);
+                              }}
+                            >
+                              <span className="menu-item__icon" aria-hidden="true">
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  width="24"
+                                  height="24"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                                  <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+                                  <path d="M13.5 6.5l4 4" />
+                                </svg>
+                              </span>
+                              <span className="menu-item__label">{t("tooltip.rename")}</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="chat__thread-menu-item chat__thread-menu-item--danger"
+                              onClick={() => {
+                                setOpenChatMenuId(null);
+                                if (selectedDocumentId) {
+                                  void handleDeleteChatThread(selectedDocumentId, thread.id);
+                                }
+                              }}
+                            >
+                              <span className="menu-item__icon" aria-hidden="true">
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  width="24"
+                                  height="24"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                                  <path d="M4 7l16 0" />
+                                  <path d="M10 11l0 6" />
+                                  <path d="M14 11l0 6" />
+                                  <path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12" />
+                                  <path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" />
+                                </svg>
+                              </span>
+                              <span className="menu-item__label">{t("common.delete")}</span>
+                            </button>
+                          </div>
+                        ) : null}
+                        <div className="chat__thread-meta">
+                          {thread.lastMessage ?? t("chat.noMessages")}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )
+              ) : chatMessages.length === 0 ? (
+                <div className="empty-state">
+                  {selectedDocumentId ? t("chat.noChats") : t("viewer.selectPdf")}
+                </div>
+              ) : (
+                chatMessages.map((msg, index) => {
+                  const isLatest = index === chatMessages.length - 1;
+                  const previousUserMessage = isLatest
+                    ? [...chatMessages]
+                        .slice(0, index)
+                        .reverse()
+                        .find((item) => item.role === "user")
+                    : undefined;
+                  const canCopyMessage =
+                    msg.status !== "loading" && typeof msg.text === "string" && msg.text.trim();
+                  const displayText =
+                    msg.role === "assistant"
+                      ? msg.text
+                      : replaceRefTags(msg.text, msg.refs);
+                  const refLabelLookup = buildRefLabelLookup(msg.refs);
+                  const refIdLookup = buildRefIdLookup(msg.refs);
+                  const visibleRefs = Array.isArray(msg.refs)
+                    ? msg.refs.filter(isRefVisible)
+                    : [];
+                  return (
+                  <div key={msg.id} className={`bubble-wrap bubble-wrap--${msg.role}`}>
+                    <div className={`bubble bubble--${msg.role}`}>
+                    {msg.status === "loading" ? (
+                      msg.text ? (
+                        <div className="bubble__content markdown">
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              a: ({ href, children }) => {
+                                const parsed = parseRefHref(href);
+                                if (parsed) {
+                                  const ref = refIdLookup.get(parsed.refId);
+                                  return (
+                                    <button
+                                      type="button"
+                                      className="ref ref--inline"
+                                      onClick={() =>
+                                        handleRefClick(parsed.refId, {
+                                          documentId: parsed.documentId,
+                                        })
+                                      }
+                                      onMouseEnter={() =>
+                                        ensureRefPreview(parsed.refId, parsed.documentId)
+                                      }
+                                      title={getRefPreviewTitle(
+                                        parsed.refId,
+                                        parsed.documentId,
+                                        ref?.label ?? ""
+                                      )}
+                                    >
+                                      {children}
+                                    </button>
+                                  );
+                                }
+                                const labelText = getNodeText(children)
+                                  .replace(/\s+/g, " ")
+                                  .trim();
+                                const matchedRef =
+                                  labelText ? refLabelLookup.get(labelText) : undefined;
+                                if (matchedRef) {
+                                  return (
+                                    <button
+                                      type="button"
+                                      className="ref ref--inline"
+                                      onClick={() =>
+                                        handleRefClick(matchedRef.id, {
+                                          documentId: matchedRef.documentId,
+                                        })
+                                      }
+                                      onMouseEnter={() =>
+                                        ensureRefPreview(matchedRef.id, matchedRef.documentId)
+                                      }
+                                      title={getRefPreviewTitle(
+                                        matchedRef.id,
+                                        matchedRef.documentId,
+                                        matchedRef.label ?? ""
+                                      )}
+                                    >
+                                      {children}
+                                    </button>
+                                  );
+                                }
+                                return (
+                                  <a href={href} target="_blank" rel="noreferrer">
+                                    {children}
+                                  </a>
+                                );
+                              },
+                            }}
+                          >
+                            {buildRefLinkedText(msg.text, msg.refs)}
+                          </ReactMarkdown>
+                        </div>
+                      ) : (
+                        <p>{renderLoadingText(t("chat.answering"))}</p>
+                      )
+                    ) : msg.status === "error" || msg.status === "stopped" ? (
+                      <div className="bubble__row">
+                        <p className="bubble__content">{displayText}</p>
+                        {msg.status === "stopped" ? (
+                          <p className="bubble__stopped">{t("chat.stopped")}</p>
+                        ) : null}
+                        {isLatest && previousUserMessage?.text ? (
+                          <button
+                            type="button"
+                            className="bubble__retry"
+                            onClick={() =>
+                              requestAssistantReply(previousUserMessage.text, {
+                                existingId: msg.id,
+                              })
+                            }
+                            aria-label={t("aria.retry")}
+                          >
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <polyline points="1 4 1 10 7 10" />
+                              <path d="M3.51 15a9 9 0 1 0 .49-9.36L1 10" />
+                            </svg>
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : msg.role === "assistant" ? (
+                      <div className="bubble__content markdown">
+                        <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          a: ({ href, children }) => {
+                            const parsed = parseRefHref(href);
+                            if (parsed) {
+                              const ref = refIdLookup.get(parsed.refId);
+                              return (
+                                <button
+                                  type="button"
+                                  className="ref ref--inline"
+                                  onClick={() =>
+                                    handleRefClick(parsed.refId, {
+                                      documentId: parsed.documentId,
+                                    })
+                                  }
+                                  onMouseEnter={(event) => {
+                                    ensureRefPreview(parsed.refId, parsed.documentId);
+                                    showRefTooltip(
+                                      event,
+                                      parsed.refId,
+                                      parsed.documentId,
+                                      ref?.label ?? ""
+                                    );
+                                  }}
+                                  onMouseMove={(event) =>
+                                    showRefTooltip(
+                                      event,
+                                      parsed.refId,
+                                                  parsed.documentId,
+                                      ref?.label ?? ""
+                                    )
+                                  }
+                                  onMouseLeave={handleRefButtonLeave}
+                                            >
+                                              {children}
+                                            </button>
+                                          );
+                                        }
+                            const labelText = getNodeText(children)
+                              .replace(/\s+/g, " ")
+                              .trim();
+                            const matchedRef =
+                              labelText ? refLabelLookup.get(labelText) : undefined;
+                            if (matchedRef) {
+                              return (
+                                <button
+                                  type="button"
+                                  className="ref ref--inline"
+                                  onClick={() =>
+                                    handleRefClick(matchedRef.id, {
+                                      documentId: matchedRef.documentId,
+                                    })
+                                  }
+                                  onMouseEnter={(event) => {
+                                    ensureRefPreview(matchedRef.id, matchedRef.documentId);
+                                    showRefTooltip(
+                                      event,
+                                      matchedRef.id,
+                                      matchedRef.documentId,
+                                      matchedRef.label ?? ""
+                                    );
+                                  }}
+                                  onMouseMove={(event) =>
+                                    showRefTooltip(
+                                      event,
+                                      matchedRef.id,
+                                                  matchedRef.documentId,
+                                      matchedRef.label ?? ""
+                                    )
+                                  }
+                                  onMouseLeave={handleRefButtonLeave}
+                                            >
+                                              {children}
+                                            </button>
+                                          );
+                                        }
+                            return (
+                              <a href={href} target="_blank" rel="noreferrer">
+                                {children}
+                              </a>
+                            );
+                          },
+                          }}
+                        >
+                          {buildRefLinkedText(msg.text, msg.refs)}
+                        </ReactMarkdown>
+                        {msg.status === "stopped" ? (
+                          <p className="bubble__stopped">{t("chat.stopped")}</p>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <p className="bubble__content">{displayText}</p>
+                    )}
+                    {visibleRefs.length > 0 ? (
+                      <div className="refs">
+                        <div className="refs__title">REFERENCES</div>
+                        <div className="refs__list">
+                          {visibleRefs.map((ref) => (
+                            <button
+                              type="button"
+                              key={ref.id}
+                              className="ref"
+                              onClick={() => handleRefClick(ref.id)}
+                              onMouseEnter={(event) => {
+                                ensureRefPreview(ref.id, ref.documentId);
+                                showRefTooltip(
+                                  event,
+                                  ref.id,
+                                  ref.documentId,
+                                  ref.label ?? ""
+                                );
+                              }}
+                              onMouseMove={(event) =>
+                                showRefTooltip(
+                                  event,
+                                  ref.id,
+                                  ref.documentId,
+                                  ref.label ?? ""
+                                )
+                              }
+                              onMouseLeave={handleRefButtonLeave}
+                            >
+                              <span className="ref__icon" aria-hidden="true">
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  width="24"
+                                  height="24"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                                  <path d="M3 19a9 9 0 0 1 9 0a9 9 0 0 1 9 0" />
+                                  <path d="M3 6a9 9 0 0 1 9 0a9 9 0 0 1 9 0" />
+                                  <path d="M3 6l0 13" />
+                                  <path d="M12 6l0 13" />
+                                  <path d="M21 6l0 13" />
+                                </svg>
+                              </span>
+                              <span className="ref__label">{ref.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    </div>
+                    {canCopyMessage ? (
+                      <button
+                        type="button"
+                        className={`bubble__copy bubble__copy--${msg.role}`}
+                        onClick={() => handleCopyMessage(getCopyMessageText(msg))}
+                        aria-label={t("tooltip.copyMessage")}
+                        data-tooltip={t("tooltip.copyMessage")}
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          width="24"
+                          height="24"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className="icon icon-tabler icons-tabler-outline icon-tabler-copy"
+                          aria-hidden="true"
+                        >
+                          <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                          <path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666" />
+                          <path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" />
+                        </svg>
+                      </button>
+                    ) : null}
+                  </div>
+                  );
+                })
+              )}
+            </div>
+
+            <button
+              type="button"
+              className={`chat__jump ${showChatJump ? "" : "is-hidden"}`}
+              onClick={() => {
+                if (chatMessagesRef.current) {
+                  chatMessagesRef.current.scrollTo({
+                    top: chatMessagesRef.current.scrollHeight,
+                    behavior: "smooth",
+                  });
+                }
+              }}
+              aria-label={t("aria.scrollToLatest")}
+            >
+              ↓
+            </button>
+          </div>
+          <form
+            className="chat__input"
+            onSubmit={handleSendMessage}
+            ref={chatInputFormRef}
+          >
+            {!isChatReady ? (
+              <div className="chat__input-notice">
+                {selectedDocumentStatus === "failed"
+                  ? t("chat.disabledFailed")
+                  : t("chat.disabled")}
+              </div>
+            ) : null}
+            <div className="input-panel">
+              <div className="input-panel__top">
+                <textarea
+                  placeholder={t("chat.placeholder")}
+                  rows={1}
+                  value={chatInput}
+                  onChange={(event) => setChatInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    const isComposing = event.nativeEvent.isComposing || false;
+                    const hasModifier =
+                      event.shiftKey || event.metaKey || event.ctrlKey || event.altKey;
+                    if (event.key === "Enter" && !hasModifier && !isComposing) {
+                      event.preventDefault();
+                      if (!chatSending) {
+                        void sendMessage();
+                      }
+                    }
+                  }}
+                  ref={chatInputRef}
+                  disabled={!isChatReady}
+                />
+              </div>
+              <div className="input-panel__bottom">
+                <div className="model-cluster">
+                  <div className="model-select">
+                    <button
+                      type="button"
+                      className={`model-option ${chatMode === "fast" ? "is-active" : ""}`}
+                      onClick={() => setChatMode("fast")}
+                      disabled={!isChatReady}
+                    >
+                      {t("model.fast")}
+                    </button>
+                    <button
+                      type="button"
+                      className={`model-option ${chatMode === "standard" ? "is-active" : ""}`}
+                      onClick={() => setChatMode("standard")}
+                      disabled={!isChatReady}
+                    >
+                      {t("model.standard")}
+                    </button>
+                  </div>
+                  {(() => {
+                    const limit = dailyMessageUsage?.limit ?? planLimits.maxMessagesPerThread;
+                    const used = dailyMessageUsage?.used ?? 0;
+                    const percent =
+                      typeof limit === "number" && limit > 0
+                        ? Math.min((used / limit) * 100, 100)
+                        : 0;
+                    const remaining =
+                      typeof limit === "number" && limit > 0 ? Math.max(limit - used, 0) : null;
+                    const now = Date.now();
+                    const periodStart = dailyMessageUsage?.periodStart
+                      ? new Date(dailyMessageUsage.periodStart).getTime()
+                      : null;
+                    const resetAt = periodStart ? periodStart + 24 * 60 * 60 * 1000 : null;
+                    const minutesToReset = resetAt
+                      ? Math.max(Math.ceil((resetAt - now) / 60000), 0)
+                      : null;
+                    const resetLabel =
+                      typeof minutesToReset === "number"
+                        ? `${Math.floor(minutesToReset / 60)}h ${minutesToReset % 60}m`
+                        : t("common.unlimited");
+                    const label =
+                      typeof limit === "number" && limit > 0
+                        ? t("aria.usageRing", { percent: Math.round(percent) })
+                        : t("common.unlimited");
+                    return (
+                      <div className="usage-ring-wrap">
+                        <div
+                          className="usage-ring"
+                          aria-label={label}
+                          style={{
+                            background: `conic-gradient(var(--bubble-user-bg) 0 ${percent}%, #e6e6e0 ${percent}% 100%)`,
+                          }}
+                        >
+                          <span className="usage-ring__center" />
+                        </div>
+                        <div className="usage-ring-tooltip">
+                          <div className="usage-ring-tooltip__title">
+                            {t("usageRing.rate", { value: Math.round(percent) })}
+                          </div>
+                          <div className="usage-ring-tooltip__row">
+                            {t("usageRing.used", {
+                              used,
+                              limit: typeof limit === "number" ? limit : t("common.unlimited"),
+                            })}
+                          </div>
+                          <div className="usage-ring-tooltip__row">
+                            {t("usageRing.remaining", {
+                              value:
+                                typeof remaining === "number"
+                                  ? remaining
+                                  : t("common.unlimited"),
+                            })}
+                          </div>
+                          <div className="usage-ring-tooltip__row">
+                            {t("usageRing.reset", {
+                              value: resetLabel,
+                            })}
+                          </div>
+                          <button
+                            type="button"
+                            className="usage-ring-tooltip__cta"
+                            onClick={() => {
+                              setSelectedPlan("plus");
+                              openLimitModal();
+                            }}
+                          >
+                            {t("planUpgrade")}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+                <button
+                  type="submit"
+                  className="send"
+                  onClick={(event) => {
+                    if (chatSending) {
+                      event.preventDefault();
+                      handleStopStreaming();
+                    }
+                  }}
+                  disabled={
+                    !selectedDocumentId ||
+                    showThreadList ||
+                    showAllChatList ||
+                    !isChatReady ||
+                    chatLoading
+                  }
+                  aria-label={chatSending ? t("chat.stop") : t("chat.send")}
+                >
+                  {chatSending ? (
+                    "■"
+                  ) : (
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="24"
+                      height="24"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                      <path d="M10 14l11 -11" />
+                      <path d="M21 3l-6.5 18a.55 .55 0 0 1 -1 0l-3.5 -7l-7 -3.5a.55 .55 0 0 1 0 -1l18 -6.5" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+            </div>
+          </form>
+        </section>
+      </section>
+      </div>
+    </main>
+  );
+}
