@@ -1052,6 +1052,9 @@
 
 .footerPanel {
   position: relative;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto;
   border-radius: 32px;
   background: #ffffff;
   border: 1px solid transparent;
