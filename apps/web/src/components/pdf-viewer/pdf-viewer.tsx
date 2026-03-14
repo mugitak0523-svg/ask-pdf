@@ -571,6 +571,8 @@ const renderLoadingText = (text: string) => (
     const markers = markersRef.current;
     const container = containerRef.current;
     if (!markers || !container) return;
+    // Always reset markers first so deleted annotations are reflected immediately.
+    markers.innerHTML = "";
     const scrollHeight = container.scrollHeight;
     const clientHeight = container.clientHeight;
 
@@ -605,8 +607,6 @@ const renderLoadingText = (text: string) => (
     if (clientHeight === 0 || scrollHeight <= clientHeight) {
       return;
     }
-
-    markers.innerHTML = "";
 
     annotatedPages.forEach(({ page, items }) => {
       const node = pageNodes.get(page);

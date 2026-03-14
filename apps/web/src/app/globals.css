@@ -181,6 +181,11 @@ body {
   height: 100%;
 }
 
+html {
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+}
+
 #__next {
   min-height: 100%;
 }
@@ -192,6 +197,7 @@ body {
   background: linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
   min-height: 100vh;
   min-height: 100dvh;
+  scrollbar-gutter: stable;
   scrollbar-color: var(--scrollbar-thumb) transparent;
   scrollbar-width: thin;
 }

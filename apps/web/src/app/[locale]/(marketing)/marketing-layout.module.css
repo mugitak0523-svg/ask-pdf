@@ -1,0 +1,7 @@
+.mkShell {
+  min-height: 100vh;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(90, 110, 255, 0.2), transparent 60%),
+    radial-gradient(900px 520px at 95% 10%, rgba(0, 185, 148, 0.12), transparent 58%),
+    linear-gradient(180deg, #cfe3ff 0%, #e8f0ff 24%, #ffffff 68%);
+}

@@ -1,0 +1,12 @@
+Great idea. Here’s a clean English service description you can use for your demo:
+
+AskPDF is an AI-powered workspace that helps you understand documents faster.  
+Upload a PDF, and the system reads the content, indexes key sections, and lets you ask natural questions in plain English. Instead of scrolling through dozens of pages, you can instantly find important facts, summarize long passages, and get clear answers with context. It works for reports, contracts, manuals, research papers, and class materials.
+
+The service is built for real-world documents, not just perfect text files.  
+It can handle scanned pages and even handwritten English notes, so information remains searchable even when the source is messy. You can chat with your files, revisit previous conversations, and keep your insights organized in one place.
+
+AskPDF is designed for people who need speed and accuracy: students, researchers, consultants, legal teams, and operations teams.  
+Whether you are preparing a meeting, reviewing technical documentation, or checking details before making a decision, AskPDF reduces reading time and helps you focus on what matters most.
+
+In short, AskPDF turns static PDFs into interactive knowledge you can actually use.

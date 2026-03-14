@@ -34,6 +34,7 @@ class ChatAnswerRequest(BaseModel):
 ChatAnswerRequest.model_rebuild()
 
 _SEARCH_SPACE_PATTERN = re.compile(r"[\s\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000\uFEFF]+")
+_ANSWER_RETRY_ATTEMPTS = 3
 
 
 def _build_model(settings, mode: str | None) -> str | None:
@@ -44,6 +45,11 @@ def _build_model(settings, mode: str | None) -> str | None:
     if mode == "standard":
         return settings.chat_model_standard
     return None
+
+
+def _build_model_attempts(settings, mode: str | None) -> list[str | None]:
+    model = _build_model(settings, mode)
+    return [model for _ in range(_ANSWER_RETRY_ATTEMPTS)]
 
 
 def _resolve_rag_params(settings, payload: ChatAnswerRequest) -> tuple[int, int, float]:
@@ -1293,21 +1299,41 @@ async def create_document_chat_assistant_message(
         "推測で補完しないでください。\n"
         "\n"
         "Instruction:\n"
+        "- 回答言語は、原則としてユーザーの質問と同じ言語にしてください。\n"
+        "- ユーザーが「日本語で答えて」「英語で回答して」など回答言語を明示した場合は、その指示を最優先してください。\n"
+        "- 直近の会話文脈に言語指定がある場合は、その指定に従ってください。\n"
         "- 参照した場合は [@:chunk-{id}] を文中に挿入してください。\n"
         "- 参照は複数可、段落末尾に付けてください。\n",
     )
 
-    model = _build_model(settings, payload.mode)
+    model_attempts = _build_model_attempts(settings, payload.mode)
+    model = model_attempts[0]
 
     try:
-        answer_payload = await parser.create_answer(
-            question=message,
-            context="\n\n".join(context_parts),
-            model=model,
-        )
-        answer = str(answer_payload.get("answer") or "").strip()
-        if not answer:
-            raise RuntimeError("Answer generation failed")
+        answer_payload: dict[str, Any] | None = None
+        answer = ""
+        used_model: str | None = model
+        last_error: str | None = None
+        for candidate in model_attempts:
+            try:
+                response = await parser.create_answer(
+                    question=message,
+                    context="\n\n".join(context_parts),
+                    model=candidate,
+                )
+                candidate_answer = str(response.get("answer") or "").strip()
+                if not candidate_answer:
+                    last_error = "Answer generation failed"
+                    continue
+                answer_payload = response
+                answer = candidate_answer
+                used_model = _extract_model_name(response) or candidate
+                break
+            except Exception as exc:
+                last_error = str(exc)
+                continue
+        if answer_payload is None or not answer:
+            raise RuntimeError(last_error or "Answer generation failed")
         _ = _extract_tag_refs(answer, ref_map)
         final_refs = refs if refs else None
         async with pool.acquire() as conn:
@@ -1344,7 +1370,7 @@ async def create_document_chat_assistant_message(
                 document_id=document_id,
                 chat_id=chat_id,
                 message_id=str(saved["id"]),
-                model=model,
+                model=used_model,
             )
         return {
             "message": {
@@ -1563,10 +1589,14 @@ async def stream_document_chat_assistant_message(
         "推測で補完しないでください。\n"
         "\n"
         "Instruction:\n"
+        "- 回答言語は、原則としてユーザーの質問と同じ言語にしてください。\n"
+        "- ユーザーが「日本語で答えて」「英語で回答して」など回答言語を明示した場合は、その指示を最優先してください。\n"
+        "- 直近の会話文脈に言語指定がある場合は、その指定に従ってください。\n"
         "- 参照した場合は [@:chunk-{id}] を文中に挿入してください。\n"
         "- 参照は複数可、段落末尾に付けてください。\n",
     )
     model = _build_model(settings, payload.mode)
+    used_model = model
 
     answer_parts: list[str] = []
     usage = None
@@ -1588,16 +1618,14 @@ async def stream_document_chat_assistant_message(
                 await websocket.send_text(json.dumps({"type": "usage", "usage": usage}))
             elif event_type == "error":
                 parser_error = str(event.get("message") or "Answer generation failed")
-                await websocket.send_text(
-                    json.dumps({"type": "error", "message": parser_error})
-                )
                 break
             elif event_type == "done":
                 break
 
         answer = "".join(answer_parts).strip()
         if not answer:
-            raise RuntimeError("Answer generation failed")
+            raise RuntimeError(parser_error or "Answer generation failed")
+
         save_status = "ok"
         if parser_error:
             save_status = "stopped"
@@ -1647,7 +1675,7 @@ async def stream_document_chat_assistant_message(
             document_id=document_id,
             chat_id=chat_id,
             message_id=str(saved["id"]),
-            model=model,
+            model=used_model,
         )
         await websocket.send_text(
             json.dumps({"type": "message", "message": message_payload, "usage": usage})
@@ -1743,6 +1771,83 @@ async def stream_document_chat_assistant_message(
                 except Exception:
                     pass
                 return
+        # If streaming fails without any usable delta, fallback to one-shot generation.
+        fallback_payload: dict[str, Any] | None = None
+        fallback_answer = ""
+        fallback_error: str | None = None
+        fallback_model: str | None = model
+        try:
+            payload_raw = await parser.create_answer(
+                question=message,
+                context="\n\n".join(context_parts),
+                model=model,
+            )
+            candidate_answer = str(payload_raw.get("answer") or "").strip()
+            if candidate_answer:
+                fallback_payload = payload_raw
+                fallback_answer = candidate_answer
+                fallback_model = _extract_model_name(payload_raw) or model
+            else:
+                fallback_error = "Answer generation failed"
+        except Exception as fallback_exc:
+            fallback_error = str(fallback_exc)
+        if fallback_payload is not None and fallback_answer:
+            _ = _extract_tag_refs(fallback_answer, ref_map)
+            final_refs = refs if refs else None
+            if payload.message_id:
+                saved = await repository.update_document_chat_message(
+                    pool,
+                    chat_id,
+                    user.user_id,
+                    payload.message_id,
+                    fallback_answer,
+                    "ok",
+                    final_refs,
+                )
+            else:
+                saved = await repository.insert_document_chat_message(
+                    pool,
+                    chat_id,
+                    user.user_id,
+                    "assistant",
+                    fallback_answer,
+                    "ok",
+                    final_refs,
+                )
+            if saved is not None:
+                await _record_usage(
+                    pool,
+                    user_id=user.user_id,
+                    operation="answer",
+                    payload=fallback_payload,
+                    document_id=document_id,
+                    chat_id=chat_id,
+                    message_id=str(saved["id"]),
+                    model=fallback_model,
+                )
+                message_payload = {
+                    "id": str(saved["id"]),
+                    "role": saved["role"],
+                    "text": saved["content"],
+                    "status": saved.get("status"),
+                    "refs": saved.get("refs"),
+                    "createdAt": saved["created_at"].isoformat()
+                    if saved.get("created_at")
+                    else None,
+                }
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "message",
+                            "message": message_payload,
+                            "usage": fallback_payload.get("usage"),
+                        }
+                    )
+                )
+                await websocket.send_text(json.dumps({"type": "done"}))
+                return
+        if fallback_error and not parser_error:
+            parser_error = fallback_error
         try:
             await websocket.send_text(
                 json.dumps({"type": "error", "message": "Answer generation failed"})
