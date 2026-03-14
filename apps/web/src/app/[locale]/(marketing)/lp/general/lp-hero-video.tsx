@@ -5,9 +5,10 @@ import { useEffect, useRef } from "react";
 type LpHeroVideoProps = {
   src: string;
   className?: string;
+  poster?: string;
 };
 
-export function LpHeroVideo({ src, className }: LpHeroVideoProps) {
+export function LpHeroVideo({ src, className, poster = "/lp-hero-image.jpg" }: LpHeroVideoProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
@@ -30,6 +31,7 @@ export function LpHeroVideo({ src, className }: LpHeroVideoProps) {
       ref={videoRef}
       className={className}
       src={src}
+      poster={poster}
       autoPlay
       loop
       muted

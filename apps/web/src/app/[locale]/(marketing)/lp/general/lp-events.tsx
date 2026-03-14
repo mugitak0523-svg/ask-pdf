@@ -34,6 +34,8 @@ export function LpSignupCta({
   placement,
   variant = "primary",
 }: LpSignupCtaProps) {
+  const isPlusPricingCta = placement === "pricing" && label.includes("Plus");
+  const href = isPlusPricingCta ? "/?open=upgrade&plan=plus" : "/";
   const className =
     variant === "ghost"
       ? `${styles.ctaButton} ${styles.ctaButtonGhost}`
@@ -41,8 +43,10 @@ export function LpSignupCta({
 
   return (
     <Link
-      href="/"
+      href={href}
       className={className}
+      target="_blank"
+      rel="noopener noreferrer"
       onClick={() => {
         trackMarketingEvent("lp_cta_click", {
           locale,

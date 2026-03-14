@@ -197,8 +197,8 @@
   align-items: center;
   padding: 8px 14px;
   border-radius: 999px;
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
   font-size: 0.8rem;
   font-weight: 600;
   color: #475569;
@@ -212,25 +212,20 @@
   border: 1px solid #0f172a;
   background: rgba(255, 255, 255, 0.85);
   box-shadow: 0 24px 60px -24px rgba(15, 23, 42, 0.25);
-  padding: 14px;
+  padding: 0;
   display: grid;
   align-content: stretch;
 }
 
 .heroImageFrame {
-  border-radius: 14px;
+  border-radius: inherit;
   overflow: hidden;
-  border: 1px solid #e2e8f0;
-  background: #ffffff;
-  aspect-ratio: 16 / 9;
 }
 
 .heroImage {
   width: 100%;
-  height: 100%;
-  object-fit: contain;
+  height: auto;
   display: block;
-  background: #f8fafc;
 }
 
 .panelChrome {
@@ -353,7 +348,7 @@
 }
 
 .section {
-  padding: 56px 20px;
+  padding: 44px 20px;
 }
 
 .sectionCool {
@@ -434,6 +429,10 @@
   gap: 24px;
 }
 
+.painGrid {
+  grid-auto-rows: 1fr;
+}
+
 .painCard,
 .featureCard,
 .stepCard,
@@ -457,13 +456,13 @@
 
 .painCard {
   grid-column: span 4;
-  border-radius: 14px;
-  background: #ffffff;
+  height: 100%;
+  padding: 24px;
   box-shadow: none;
-  display: grid;
-  align-content: start;
-  gap: 14px;
-  font-size: 1.05rem;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 1rem;
   line-height: 1.7;
   color: #334155;
   font-weight: 500;
@@ -476,24 +475,35 @@
 }
 
 .painIcon {
-  width: 38px;
-  height: 38px;
+  width: 48px;
+  height: 48px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid #dbe4ef;
-  border-radius: 10px;
-  color: #1e293b;
+  color: #2563eb;
   background: transparent;
 }
 
 .painIcon svg {
-  width: 20px;
-  height: 20px;
+  width: 30px;
+  height: 30px;
 }
 
 .painText {
   margin: 0;
+}
+
+.solutionSplit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  gap: 24px;
+  align-items: center;
+}
+
+.solutionLeft {
+  min-width: 0;
+  display: flex;
+  align-items: center;
 }
 
 .solutionList {
@@ -501,19 +511,41 @@
   padding: 0;
   list-style: none;
   display: grid;
-  gap: 16px;
+  gap: 0;
 }
 
 .solutionItem {
-  border-radius: 20px;
-  border: 1px solid #e0e7ff;
-  background: linear-gradient(135deg, #f5f8ff 0%, #ffffff 100%);
-  padding: 24px 32px;
-  line-height: 1.7;
-  font-size: 1.1rem;
+  position: relative;
+  padding: 16px 0;
+  line-height: 1.65;
+  font-size: 1.02rem;
   font-weight: 500;
-  color: #0f172a;
-  box-shadow: 0 4px 16px -4px rgba(37, 99, 235, 0.05);
+  color: #334155;
+  padding-left: 28px;
+}
+
+.solutionItem::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  top: 16px;
+  color: #84cc16;
+  font-weight: 800;
+}
+
+.solutionVisual {
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.solutionImage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 360px;
+  object-fit: cover;
 }
 
 .featureCard,
@@ -523,9 +555,9 @@
 
 .stepsSplit {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.95fr);
   gap: 24px;
-  align-items: stretch;
+  align-items: start;
 }
 
 .stepsVisual {
@@ -533,23 +565,23 @@
   border-radius: 16px;
   overflow: hidden;
   background: #ffffff;
+  align-self: start;
 }
 
 .stepsVisualImage {
   display: block;
   width: 100%;
-  height: 100%;
-  min-height: 420px;
-  object-fit: cover;
+  height: auto;
 }
 
 .stepsList {
   padding: 0;
+  align-self: center;
 }
 
 .stepRow {
   position: relative;
-  padding: 24px 56px 24px 0;
+  padding: 16px 56px 16px 0;
   border-bottom: 1px solid #e2e8f0;
 }
 
@@ -567,7 +599,7 @@
 }
 
 .stepRowText {
-  margin: 10px 0 0;
+  margin: 6px 0 0;
   font-size: 1rem;
   line-height: 1.6;
   color: #334155;
@@ -575,7 +607,7 @@
 
 .stepRowIndex {
   position: absolute;
-  top: 26px;
+  top: 18px;
   right: 0;
   font-size: 0.8rem;
   letter-spacing: 0.14em;
@@ -597,48 +629,41 @@
   color: #dbeafe;
 }
 
-.featureMore {
-  margin-top: 28px;
-  border-top: 1px solid #dbe3ee;
-  border-bottom: 1px solid #dbe3ee;
-}
-
-.featureMoreSummary {
-  cursor: pointer;
-  list-style: none;
-  padding: 16px 0;
-  font-size: 0.98rem;
-  font-weight: 700;
-  color: #0f172a;
-}
-
-.featureMoreSummary::-webkit-details-marker {
-  display: none;
-}
-
-.featureMoreSummary::marker {
-  content: "";
-}
-
-.featureMoreList {
-  margin: 0 0 16px;
-  padding: 0;
-  list-style: none;
+.featureDetailGrid {
+  margin-top: 24px;
   display: grid;
-  gap: 14px;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  gap: 20px;
 }
 
-.featureMoreItem {
-  padding: 14px 0 0;
-  border-top: 1px solid #eef2f7;
+.featureDetailCard {
+  grid-column: span 4;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 24px;
 }
 
-.featureMoreItem:first-child {
-  border-top: none;
-  padding-top: 4px;
+.featureDetailIcon {
+  width: 48px;
+  height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #2563eb;
+  margin-bottom: 6px;
 }
 
-.featureMoreTitle {
+.featureDetailIcon svg {
+  width: 30px;
+  height: 30px;
+}
+
+.featureDetailTitle {
   margin: 0;
   font-size: 1rem;
   line-height: 1.5;
@@ -646,18 +671,11 @@
   color: #0f172a;
 }
 
-.featureMoreText {
+.featureDetailText {
   margin: 6px 0 0;
   font-size: 0.95rem;
   line-height: 1.7;
   color: #475569;
-}
-
-.featureMoreImageLabel {
-  margin: 8px 0 0;
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: #64748b;
 }
 
 .stepCard {
@@ -1009,12 +1027,24 @@
     grid-column: span 6;
   }
 
+  .featureDetailCard {
+    grid-column: span 6;
+  }
+
+  .solutionSplit {
+    grid-template-columns: 1fr;
+  }
+
+  .solutionImage {
+    min-height: 260px;
+  }
+
   .stepsSplit {
     grid-template-columns: 1fr;
   }
 
   .stepsVisualImage {
-    min-height: 280px;
+    height: auto;
   }
 
   .pricingCard {
@@ -1103,7 +1133,7 @@
   }
 
   .heroPanel {
-    padding: 8px;
+    padding: 0;
     border-radius: 16px;
   }
 
@@ -1114,6 +1144,7 @@
 
   .painCard,
   .featureCard,
+  .featureDetailCard,
   .pricingCard {
     grid-column: span 12;
   }
@@ -1122,16 +1153,11 @@
     padding: 0;
   }
 
-  .featureMoreSummary {
-    font-size: 0.92rem;
-    padding: 14px 0;
-  }
-
-  .featureMoreTitle {
+  .featureDetailTitle {
     font-size: 0.95rem;
   }
 
-  .featureMoreText {
+  .featureDetailText {
     font-size: 0.9rem;
   }
 
@@ -1171,7 +1197,7 @@
   }
 
   .section {
-    padding: 46px 12px;
+    padding: 36px 12px;
   }
 
   .siteFooterInner {

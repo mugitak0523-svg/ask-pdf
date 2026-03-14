@@ -17,7 +17,6 @@ export type LpFeatureItem = {
 export type LpFeatureDetailItem = {
   title: string;
   description: string;
-  imageLabel?: string;
 };
 
 export type LpStepItem = {
@@ -85,54 +84,45 @@ export const lpGeneralContent = {
     {
       title: "PDF管理",
       description:
-        "一般的なファイル管理アプリのように、PDFを一覧で見て整理できます。フォルダ分けは現在開発中で、今後対応予定です。",
+        "ファイル一覧でPDFを整理し、必要な資料にすぐアクセスできます。フォルダ分けは今後対応予定です。",
     },
     {
       title: "PDF閲覧",
       description:
-        "マーカーやアンダーラインなどのアノテーションを使いながら読めます。将来的にはコメント機能などの拡張も予定しています。",
+        "マーカーやアンダーラインを使いながら、本文をスムーズに読み進められます。",
     },
     {
       title: "タブ",
       description:
-        "上部タブでPDFを素早く切り替えられます。一度開いたPDFはできるだけ高速に再表示できるよう最適化しています。",
+        "上部タブでPDFをすばやく切り替えできます。開いたPDFはできるだけ高速に再表示されるよう最適化しています。",
     },
     {
       title: "アノテーションミニマップ",
-      description:
-        "ビューア右側のミニマップから、アノテーション箇所へすぐジャンプできます。",
-      imageLabel: "画像：ミニマップ",
+      description: "右側のミニマップから、アノテーション箇所へワンクリックで移動できます。",
     },
     {
       title: "チャット",
       description:
-        "PDF内容をAIに質問でき、回答の参照箇所も確認できます。1つのPDFに対して複数チャットを使い分けられるのが特徴です。将来は複数PDFを横断した回答にも対応予定です。",
-      imageLabel: "画像：チャット",
+        "PDFについてAIに質問でき、回答の参照箇所も確認できます。1つのPDFで複数チャットを使い分けられます。",
     },
     {
       title: "PDF検索",
-      description: "本文ベースでPDFを検索できます。キーワード検索がしにくい資料でも探しやすくなります。",
+      description: "本文ベースでPDFを検索できるため、必要な記述をすばやく見つけられます。",
     },
     {
       title: "OCR",
       description:
-        "OCR解析により、画像PDFでもチャット・検索・ハイライトが可能です。手書き文書にも対応しています。",
-      imageLabel: "画像：手書きでもチャット・ハイライト対応",
+        "OCRにより、画像PDFでもチャット・検索・ハイライトが可能です。手書き文書にも対応しています。",
     },
     {
       title: "ショートカット",
-      description: "主要操作にショートカットを用意しており、使い慣れるほど効率よく操作できます。",
-    },
-    {
-      title: "シンプルUI",
-      description:
-        "機能を絞ったシンプルな設計で、初めてでも直感的に操作しやすいUIを目指しています。",
+      description: "主要操作にショートカットを用意しており、使い慣れるほど効率的に作業できます。",
     },
   ] satisfies LpFeatureDetailItem[],
   steps: [
     {
       title: "1. PDFをアップロード",
-      description: "確認したい資料をドラッグ&ドロップで追加。",
+      description: "同時に複数資料を解析可能。",
     },
     {
       title: "2. 気になる点を質問",
@@ -158,6 +148,11 @@ export const lpGeneralContent = {
       topic: "読み漏れ対策",
       legacy: "該当箇所を探し直す必要がある",
       askPdf: "回答から該当箇所へ即移動できる",
+    },
+    {
+      topic: "対応ドキュメント",
+      legacy: "手書き文書や画像PDFは扱いにくい",
+      askPdf: "手書き文書・画像PDFも解析可能",
     },
   ] satisfies LpComparisonRow[],
   plans: [

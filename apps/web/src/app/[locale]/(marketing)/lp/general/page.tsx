@@ -76,55 +76,162 @@ const faqPageLd = {
 const painIcons = [
   (
     <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
       <path
-        d="M10.5 4.5a6 6 0 1 0 3.78 10.66l4.28 4.28 1.44-1.44-4.28-4.28A6 6 0 0 0 10.5 4.5Z"
+        d="M20.926 13.15a9 9 0 1 0 -7.835 7.784"
         fill="none"
         stroke="currentColor"
-        strokeWidth="1.8"
+        strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <path
-        d="M8 10.5h5M10.5 8v5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
+      <path d="M12 7v5l2 2" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M22 22l-5 -5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M17 22l5 -5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
   (
     <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 9v4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
       <path
-        d="M12 3.5 5.5 6v5.2c0 4.4 2.8 8.1 6.5 9.3 3.7-1.2 6.5-4.9 6.5-9.3V6L12 3.5Z"
+        d="M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636 -2.87l-8.106 -13.536a1.914 1.914 0 0 0 -3.274 0"
         fill="none"
         stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-      />
-      <path
-        d="m9.2 12.1 1.8 1.8 3.8-3.8"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
+        strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+      <path d="M12 16h.01" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
   (
     <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
       <path
-        d="M7 7h10M13 3l4 4-4 4M17 17H7M11 21l-4-4 4-4"
+        d="M4 12v-6a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v6"
         fill="none"
         stroke="currentColor"
-        strokeWidth="1.8"
+        strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+      <path d="M10 18h-7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M21 18h-7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M6 15l-3 3l3 3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M18 15l3 3l-3 3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
 ];
+
+function renderFeatureDetailIcon(title: string) {
+  switch (title) {
+    case "PDF管理":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+          <path
+            d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      );
+    case "PDF閲覧":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+          <path d="M14 3v4a1 1 0 0 0 1 1h4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M9 9h1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M9 13h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M9 17h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
+    case "タブ":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="2" y="4" width="20" height="16" rx="1" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M2 8H22" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M6 4V8" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M12 4V8" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M18 4V8" stroke="currentColor" strokeWidth="1.5" />
+          <rect x="3" y="5" width="3" height="2" fill="currentColor" opacity="0.3" />
+        </svg>
+      );
+    case "アノテーションミニマップ":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="2" y="2" width="14" height="20" rx="1" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M5 5H13" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+          <path d="M5 9H13" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+          <path d="M5 13H13" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+          <rect x="18" y="2" width="4" height="20" rx="1" stroke="currentColor" strokeWidth="1.5" />
+          <rect x="19" y="6" width="2" height="3" fill="currentColor" />
+          <rect x="19" y="12" width="2" height="2" fill="currentColor" opacity="0.5" />
+        </svg>
+      );
+    case "チャット":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+          <path d="M8 9h8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          <path d="M8 13h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          <path
+            d="M18 4a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-5l-5 3v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3h12"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      );
+    case "PDF検索":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="2" y="2" width="14" height="14" rx="1" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M5 6H13" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+          <path d="M5 9H13" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+          <path d="M5 12H10" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+          <circle cx="18" cy="18" r="3" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M21 21L23 23" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      );
+    case "OCR":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="2" y="3" width="20" height="18" rx="1" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M6 8H8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <path d="M10 8H12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <path d="M14 8H16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <path d="M6 12H8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <path d="M10 12H12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <path d="M14 12H16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <path d="M6 16H8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <path d="M10 16H12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <path d="M14 16H16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      );
+    case "ショートカット":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="3" y="4" width="8" height="8" rx="1" stroke="currentColor" strokeWidth="1.5" />
+          <rect x="13" y="4" width="8" height="8" rx="1" stroke="currentColor" strokeWidth="1.5" />
+          <rect x="3" y="14" width="8" height="8" rx="1" stroke="currentColor" strokeWidth="1.5" />
+          <rect x="13" y="14" width="8" height="8" rx="1" stroke="currentColor" strokeWidth="1.5" />
+          <text x="7" y="9" fontSize="4" fontWeight="bold" textAnchor="middle" fill="currentColor">⌘</text>
+        </svg>
+      );
+    default:
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        </svg>
+      );
+  }
+}
 
 export default function LpGeneralPage({ params }: LpPageProps) {
   const locale = params.locale || "ja";
@@ -239,15 +346,26 @@ export default function LpGeneralPage({ params }: LpPageProps) {
 
       <section className={`${styles.section} ${styles.sectionWarm}`}>
         <div className={`${styles.sectionInner} ${styles.sectionInnerBare}`}>
-          <p className={styles.sectionKicker}>Solution</p>
-          <h2 className={styles.sectionTitle}>このサービスで解決できること</h2>
-          <ul className={styles.solutionList}>
-            {lpGeneralContent.solutionPoints.map((item) => (
-              <li key={item} className={styles.solutionItem}>
-                {item}
-              </li>
-            ))}
-          </ul>
+          <p className={`${styles.sectionKicker} ${styles.sectionHeadingCenter}`}>Solution</p>
+          <h2 className={`${styles.sectionTitle} ${styles.sectionHeadingCenter}`}>このサービスで解決できること</h2>
+          <div className={styles.solutionSplit}>
+            <div className={styles.solutionLeft}>
+              <ul className={styles.solutionList}>
+                {lpGeneralContent.solutionPoints.map((item) => (
+                  <li key={item} className={styles.solutionItem}>
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <aside className={styles.solutionVisual} aria-label="Solution preview">
+              <img
+                src="/solution-preview.svg"
+                alt="AskPDF solution preview"
+                className={styles.solutionImage}
+              />
+            </aside>
+          </div>
         </div>
       </section>
 
@@ -255,30 +373,19 @@ export default function LpGeneralPage({ params }: LpPageProps) {
         <div className={`${styles.sectionInner} ${styles.sectionInnerBare}`}>
           <p className={`${styles.sectionKicker} ${styles.sectionHeadingCenter}`}>Features</p>
           <h2 className={`${styles.sectionTitle} ${styles.sectionHeadingCenter}`}>主要機能</h2>
-          <div className={styles.featureGrid}>
-            {lpGeneralContent.features.map((feature) => (
-              <article key={feature.title} className={styles.featureCard}>
-                <h3 className={styles.cardTitle}>{feature.title}</h3>
-                <p className={styles.cardText}>{feature.description}</p>
+          <div className={styles.featureDetailGrid}>
+            {lpGeneralContent.featureDetails.map((item, index) => (
+              <article key={item.title} className={styles.featureDetailCard}>
+                <span className={styles.featureDetailIcon}>
+                  {renderFeatureDetailIcon(item.title)}
+                </span>
+                <h3 className={styles.featureDetailTitle}>
+                  {index + 1}. {item.title}
+                </h3>
+                <p className={styles.featureDetailText}>{item.description}</p>
               </article>
             ))}
           </div>
-          <details className={styles.featureMore}>
-            <summary className={styles.featureMoreSummary}>もっとみる</summary>
-            <ol className={styles.featureMoreList}>
-              {lpGeneralContent.featureDetails.map((item, index) => (
-                <li key={item.title} className={styles.featureMoreItem}>
-                  <h3 className={styles.featureMoreTitle}>
-                    {index + 1}. {item.title}
-                  </h3>
-                  <p className={styles.featureMoreText}>{item.description}</p>
-                  {item.imageLabel ? (
-                    <p className={styles.featureMoreImageLabel}>{item.imageLabel}</p>
-                  ) : null}
-                </li>
-              ))}
-            </ol>
-          </details>
         </div>
       </section>
 

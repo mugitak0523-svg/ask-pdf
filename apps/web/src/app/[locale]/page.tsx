@@ -1389,6 +1389,25 @@ export default function Home() {
   };
 
   useEffect(() => {
+    if (!isHydrated || typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("open") !== "upgrade") return;
+
+    const plan = params.get("plan");
+    if (plan === "free" || plan === "plus") {
+      setSelectedPlan(plan);
+    } else {
+      setSelectedPlan("plus");
+    }
+    openLimitModal();
+
+    params.delete("open");
+    params.delete("plan");
+    const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
+    window.history.replaceState({}, "", next);
+  }, [isHydrated]);
+
+  useEffect(() => {
     if (!canUseApi) return;
     void loadDailyMessageUsage();
   }, [canUseApi, planLimits.maxMessagesPerThread]);
