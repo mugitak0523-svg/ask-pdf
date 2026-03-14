@@ -4804,10 +4804,12 @@ export default function Home() {
     <main className={`app ${sidebarOpen ? "" : "app--sidebar-closed"}`}>
       <section className="sidebar">
         <div className="sidebar__header sidebar__header--primary">
-          <span className="logo" aria-hidden="true">
-            <img className="logo__icon" src="/icon.svg" alt="" />
-          </span>
-          <span className="brand">AskPDF</span>
+          <Link href="/" locale={locale} className="sidebar__brand-link" aria-label="AskPDF LP">
+            <span className="logo" aria-hidden="true">
+              <img className="logo__icon" src="/icon.svg" alt="" />
+            </span>
+            <span className="brand">AskPDF</span>
+          </Link>
         </div>
 
         <div className="sidebar__header sidebar__header--secondary">

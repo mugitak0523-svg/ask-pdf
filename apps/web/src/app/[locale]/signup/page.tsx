@@ -20,8 +20,8 @@ export default function SignupPage() {
     setNotice(null);
     setLoading(true);
     const emailRedirectTo = locale
-      ? `${window.location.origin}/${locale}`
-      : `${window.location.origin}/`;
+      ? `${window.location.origin}/${locale}/app`
+      : `${window.location.origin}/app`;
     const { data, error: authError } = await supabase.auth.signUp({
       email,
       password,
@@ -49,8 +49,8 @@ export default function SignupPage() {
     setNotice(null);
     setResending(true);
     const emailRedirectTo = locale
-      ? `${window.location.origin}/${locale}`
-      : `${window.location.origin}/`;
+      ? `${window.location.origin}/${locale}/app`
+      : `${window.location.origin}/app`;
     const { error: resendError } = await supabase.auth.resend({
       type: "signup",
       email: targetEmail,
@@ -68,8 +68,8 @@ export default function SignupPage() {
     setError(null);
     setLoading(true);
     const redirectTo = locale
-      ? `${window.location.origin}/${locale}`
-      : `${window.location.origin}/`;
+      ? `${window.location.origin}/${locale}/app`
+      : `${window.location.origin}/app`;
     const { error: authError } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo },

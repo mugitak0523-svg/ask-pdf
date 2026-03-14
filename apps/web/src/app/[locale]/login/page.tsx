@@ -26,7 +26,7 @@ export default function LoginPage() {
     if (authError) {
       setError(authError.message);
     } else {
-      router.replace(locale ? `/${locale}` : "/");
+      router.replace(locale ? `/${locale}/app` : "/app");
       router.refresh();
     }
     setLoading(false);
@@ -37,8 +37,8 @@ export default function LoginPage() {
     setNotice(null);
     setLoading(true);
     const redirectTo = locale
-      ? `${window.location.origin}/${locale}`
-      : `${window.location.origin}/`;
+      ? `${window.location.origin}/${locale}/app`
+      : `${window.location.origin}/app`;
     const { error: authError } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo },
