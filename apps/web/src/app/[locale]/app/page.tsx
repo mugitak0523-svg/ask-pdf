@@ -1178,7 +1178,7 @@ export default function Home() {
       return { url: "", title: "" };
     }
     const url = `${window.location.origin}${window.location.pathname}`;
-    const title = t("appTitle") || "AskPDF";
+    const title = "AskPDF";
     return { url, title };
   };
 
