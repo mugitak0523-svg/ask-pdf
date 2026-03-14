@@ -1,0 +1,207 @@
+{
+  "meta": {
+    "title": "Ask AI About PDFs With Source References | AskPDF",
+    "description": "Manage and read contracts, manuals, proposals, and research PDFs in one screen. Answers include references for fast verification."
+  },
+  "nav": {
+    "brand": "AskPDF",
+    "cta": "Try for Free",
+    "links": {
+      "features": "Features",
+      "compare": "Comparison",
+      "pricing": "Pricing",
+      "faq": "FAQ"
+    },
+    "langLabel": "Language"
+  },
+  "hero": {
+    "title": "Ask AI About PDFs With Citations",
+    "subtitle": "Manage, read, and question contracts, manuals, proposals, and papers in a single workspace.",
+    "primaryCta": "Try for Free",
+    "secondaryCta": "View Pricing",
+    "chips": ["Cited answers", "Multilingual UI", "No install required"]
+  },
+  "trustLine": "AskPDF helps teams and students handle everyday PDF work faster and with more confidence.",
+  "painsSection": {
+    "kicker": "Pain Points",
+    "title": "Common Challenges"
+  },
+  "pains": [
+    "It takes too long to find where key information lives in a PDF.",
+    "AI answers without visible evidence still require manual verification.",
+    "Switching between PDF viewers and AI tools breaks your workflow."
+  ],
+  "solutionSection": {
+    "kicker": "Solution",
+    "title": "What This Service Solves"
+  },
+  "solutionPoints": [
+    "Each answer includes references so you can verify the source instantly.",
+    "Manage PDFs and ask questions in one screen without tool switching.",
+    "Start free and scale to Plus when your usage grows."
+  ],
+  "featuresSection": {
+    "kicker": "Features",
+    "title": "Core Features"
+  },
+  "featureDetails": [
+    {
+      "id": "pdf_management",
+      "title": "PDF Management",
+      "description": "Organize files in a list and access documents quickly. Folder support is planned."
+    },
+    {
+      "id": "pdf_viewing",
+      "title": "PDF Viewing",
+      "description": "Read smoothly with highlights and underlines directly inside the viewer."
+    },
+    {
+      "id": "tabs",
+      "title": "Tabs",
+      "description": "Switch PDFs quickly with top tabs. Opened files are optimized for faster re-display."
+    },
+    {
+      "id": "annotation_minimap",
+      "title": "Annotation Minimap",
+      "description": "Jump to annotated locations with one click from the minimap."
+    },
+    {
+      "id": "chat",
+      "title": "Chat",
+      "description": "Ask AI about your PDF with source references and use multiple chats per file."
+    },
+    {
+      "id": "pdf_search",
+      "title": "PDF Search",
+      "description": "Search within document body text to find important passages faster."
+    },
+    {
+      "id": "ocr",
+      "title": "OCR",
+      "description": "Works with image PDFs and handwritten documents for chat, search, and highlights."
+    },
+    {
+      "id": "shortcut",
+      "title": "Shortcuts",
+      "description": "Use keyboard shortcuts across core actions for a faster daily workflow."
+    }
+  ],
+  "stepsSection": {
+    "kicker": "How It Works",
+    "title": "Get Started in 3 Steps"
+  },
+  "steps": [
+    {
+      "title": "Upload PDFs",
+      "description": "Analyze multiple documents at the same time."
+    },
+    {
+      "title": "Ask Questions",
+      "description": "Type what you want to know in chat."
+    },
+    {
+      "title": "Verify Evidence",
+      "description": "Review answers and references side by side."
+    }
+  ],
+  "comparisonSection": {
+    "kicker": "Comparison",
+    "title": "Comparison",
+    "headers": {
+      "topic": "Item",
+      "legacy": "Conventional",
+      "askPdf": "AskPDF"
+    }
+  },
+  "comparisonRows": [
+    {
+      "topic": "Evidence Check",
+      "legacy": "Source verification takes time",
+      "askPdf": "References are visible immediately"
+    },
+    {
+      "topic": "Workflow",
+      "legacy": "Frequent tool switching",
+      "askPdf": "End-to-end flow in one screen"
+    },
+    {
+      "topic": "Missed Sections",
+      "legacy": "Need to re-search pages manually",
+      "askPdf": "Jump from answer to exact section"
+    },
+    {
+      "topic": "Document Types",
+      "legacy": "Handwritten/image PDFs are hard to process",
+      "askPdf": "Handwritten and image PDFs are supported"
+    }
+  ],
+  "pricingSection": {
+    "kicker": "Pricing",
+    "title": "Plans",
+    "cta": {
+      "plus": "Start Plus",
+      "default": "Try for Free"
+    }
+  },
+  "plans": [
+    {
+      "name": "Guest",
+      "priceAmount": "¥0",
+      "priceUnit": "/month",
+      "points": ["No login required", "Max PDFs: 1", "Max file size: 10MB", "Daily chats: 8"]
+    },
+    {
+      "name": "Free",
+      "priceAmount": "¥0",
+      "priceUnit": "/month",
+      "points": ["For logged-in users", "Max PDFs: 5", "Max file size: 20MB", "Daily chats: 20"]
+    },
+    {
+      "name": "Plus",
+      "priceAmount": "¥1,980",
+      "priceUnit": "/month",
+      "featured": true,
+      "points": ["For heavy usage", "Max PDFs: 50", "Max file size: 50MB", "Daily chats: 120"]
+    }
+  ],
+  "faqSection": {
+    "kicker": "FAQ",
+    "title": "FAQ",
+    "qPrefix": "Q.",
+    "aPrefix": "A."
+  },
+  "faqs": [
+    {
+      "question": "What kinds of PDFs are supported?",
+      "answer": "Contracts, internal docs, manuals, proposals, papers, and more."
+    },
+    {
+      "question": "Can I verify answer sources?",
+      "answer": "Yes. You can review linked references while reading each answer."
+    },
+    {
+      "question": "Can I try it for free?",
+      "answer": "Yes. Start with the Free plan and upgrade to Plus anytime."
+    },
+    {
+      "question": "How is uploaded data handled?",
+      "answer": "Uploaded PDFs and usage data are tied to your account and can be deleted from settings."
+    },
+    {
+      "question": "Can I cancel anytime?",
+      "answer": "Yes. You can change or cancel your plan at any time from settings."
+    }
+  ],
+  "footer": {
+    "note": "Start with the free plan, then switch to Plus when it fits your workflow.",
+    "cta": "Try for Free",
+    "links": {
+      "features": "Features",
+      "pricing": "Pricing",
+      "faq": "FAQ",
+      "legal": "Legal Notice",
+      "terms": "Terms",
+      "privacy": "Privacy"
+    }
+  }
+}

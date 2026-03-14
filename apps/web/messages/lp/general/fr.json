@@ -1,0 +1,207 @@
+{
+  "meta": {
+    "title": "Posez des questions à l'IA sur vos PDF avec références | AskPDF",
+    "description": "Gérez et lisez contrats, manuels, propositions et articles PDF sur un seul écran. Les réponses incluent des références pour vérifier rapidement."
+  },
+  "nav": {
+    "brand": "AskPDF",
+    "cta": "Essayer gratuitement",
+    "links": {
+      "features": "Fonctionnalités",
+      "compare": "Comparaison",
+      "pricing": "Tarifs",
+      "faq": "FAQ"
+    },
+    "langLabel": "Langue"
+  },
+  "hero": {
+    "title": "Interrogez l'IA sur vos PDF avec citations",
+    "subtitle": "Gérez, lisez et interrogez contrats, manuels, propositions et articles dans un espace unique.",
+    "primaryCta": "Essayer gratuitement",
+    "secondaryCta": "Voir les tarifs",
+    "chips": ["Réponses citées", "Interface multilingue", "Aucune installation"]
+  },
+  "trustLine": "AskPDF aide les équipes et les étudiants à traiter les PDF du quotidien plus vite et avec plus de fiabilité.",
+  "painsSection": {
+    "kicker": "Pain Points",
+    "title": "Défis fréquents"
+  },
+  "pains": [
+    "Trouver où se trouve une information clé dans un PDF prend trop de temps.",
+    "Les réponses IA sans preuve visible demandent encore une vérification manuelle.",
+    "Passer du lecteur PDF à l'outil IA casse le flux de travail."
+  ],
+  "solutionSection": {
+    "kicker": "Solution",
+    "title": "Ce que ce service résout"
+  },
+  "solutionPoints": [
+    "Chaque réponse inclut des références pour vérifier la source instantanément.",
+    "Gérez vos PDF et posez des questions sur un seul écran, sans changer d'outil.",
+    "Commencez gratuitement puis passez à Plus selon votre usage."
+  ],
+  "featuresSection": {
+    "kicker": "Features",
+    "title": "Fonctionnalités clés"
+  },
+  "featureDetails": [
+    {
+      "id": "pdf_management",
+      "title": "Gestion des PDF",
+      "description": "Organisez les fichiers en liste et accédez rapidement aux documents. Le support des dossiers est prévu."
+    },
+    {
+      "id": "pdf_viewing",
+      "title": "Lecture PDF",
+      "description": "Lisez facilement avec surlignage et soulignement directement dans le lecteur."
+    },
+    {
+      "id": "tabs",
+      "title": "Onglets",
+      "description": "Basculez vite entre PDF via les onglets en haut. Les fichiers déjà ouverts se réaffichent plus rapidement."
+    },
+    {
+      "id": "annotation_minimap",
+      "title": "Mini-carte d'annotations",
+      "description": "Accédez en un clic aux zones annotées depuis la mini-carte."
+    },
+    {
+      "id": "chat",
+      "title": "Chat",
+      "description": "Posez des questions à l'IA sur vos PDF avec références et utilisez plusieurs chats par fichier."
+    },
+    {
+      "id": "pdf_search",
+      "title": "Recherche PDF",
+      "description": "Recherchez dans le texte du document pour trouver plus vite les passages importants."
+    },
+    {
+      "id": "ocr",
+      "title": "OCR",
+      "description": "Fonctionne avec les PDF image et les documents manuscrits pour le chat, la recherche et le surlignage."
+    },
+    {
+      "id": "shortcut",
+      "title": "Raccourcis",
+      "description": "Utilisez des raccourcis clavier sur les actions clés pour accélérer votre flux quotidien."
+    }
+  ],
+  "stepsSection": {
+    "kicker": "How It Works",
+    "title": "Démarrer en 3 étapes"
+  },
+  "steps": [
+    {
+      "title": "Importer des PDF",
+      "description": "Analysez plusieurs documents en même temps."
+    },
+    {
+      "title": "Poser des questions",
+      "description": "Saisissez dans le chat ce que vous voulez savoir."
+    },
+    {
+      "title": "Vérifier les preuves",
+      "description": "Consultez réponses et références côte à côte."
+    }
+  ],
+  "comparisonSection": {
+    "kicker": "Comparison",
+    "title": "Comparaison",
+    "headers": {
+      "topic": "Point",
+      "legacy": "Classique",
+      "askPdf": "AskPDF"
+    }
+  },
+  "comparisonRows": [
+    {
+      "topic": "Vérification des preuves",
+      "legacy": "Vérifier les sources prend du temps",
+      "askPdf": "Références visibles immédiatement"
+    },
+    {
+      "topic": "Flux de travail",
+      "legacy": "Allers-retours entre outils",
+      "askPdf": "Flux complet sur un seul écran"
+    },
+    {
+      "topic": "Passages manqués",
+      "legacy": "Recherche manuelle à refaire",
+      "askPdf": "Passage direct de la réponse à la section"
+    },
+    {
+      "topic": "Types de documents",
+      "legacy": "PDF manuscrits/image difficiles",
+      "askPdf": "PDF manuscrits et image pris en charge"
+    }
+  ],
+  "pricingSection": {
+    "kicker": "Pricing",
+    "title": "Offres",
+    "cta": {
+      "plus": "Passer à Plus",
+      "default": "Essayer gratuitement"
+    }
+  },
+  "plans": [
+    {
+      "name": "Guest",
+      "priceAmount": "¥0",
+      "priceUnit": "/mois",
+      "points": ["Sans connexion", "PDF max : 1", "Taille max : 10MB", "Chats/jour : 8"]
+    },
+    {
+      "name": "Free",
+      "priceAmount": "¥0",
+      "priceUnit": "/mois",
+      "points": ["Pour utilisateurs connectés", "PDF max : 5", "Taille max : 20MB", "Chats/jour : 20"]
+    },
+    {
+      "name": "Plus",
+      "priceAmount": "¥1,980",
+      "priceUnit": "/mois",
+      "featured": true,
+      "points": ["Pour usage intensif", "PDF max : 50", "Taille max : 50MB", "Chats/jour : 120"]
+    }
+  ],
+  "faqSection": {
+    "kicker": "FAQ",
+    "title": "FAQ",
+    "qPrefix": "Q.",
+    "aPrefix": "A."
+  },
+  "faqs": [
+    {
+      "question": "Quels types de PDF sont pris en charge ?",
+      "answer": "Contrats, documents internes, manuels, propositions, articles et plus encore."
+    },
+    {
+      "question": "Puis-je vérifier les sources des réponses ?",
+      "answer": "Oui. Vous pouvez consulter les références liées pendant la lecture de chaque réponse."
+    },
+    {
+      "question": "Puis-je l'essayer gratuitement ?",
+      "answer": "Oui. Commencez avec l'offre Free puis passez à Plus à tout moment."
+    },
+    {
+      "question": "Comment les données importées sont-elles gérées ?",
+      "answer": "Les PDF importés et les données d'usage sont liés à votre compte et supprimables depuis les paramètres."
+    },
+    {
+      "question": "Puis-je résilier à tout moment ?",
+      "answer": "Oui. Vous pouvez modifier ou annuler votre offre à tout moment depuis les paramètres."
+    }
+  ],
+  "footer": {
+    "note": "Commencez gratuitement, puis passez à Plus si cela correspond à votre activité.",
+    "cta": "Essayer gratuitement",
+    "links": {
+      "features": "Fonctionnalités",
+      "pricing": "Tarifs",
+      "faq": "FAQ",
+      "legal": "Mentions légales",
+      "terms": "Conditions",
+      "privacy": "Confidentialité"
+    }
+  }
+}

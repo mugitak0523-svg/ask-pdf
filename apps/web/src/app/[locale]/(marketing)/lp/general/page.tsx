@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
 
-import { lpGeneralContent } from "@/content/lp/general";
+import { getLpGeneralContent } from "@/content/lp/general";
 import { Link } from "@/i18n/navigation";
+import { routing } from "@/i18n/routing";
 
 import { LpSignupCta, LpViewTracker } from "./lp-events";
 import { LpHeroVideo } from "./lp-hero-video";
@@ -15,34 +15,106 @@ type LpPageProps = {
 };
 
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+const ogImagePath = "/lp-hero-image.jpg";
+
+const ogLocaleMap: Record<string, string> = {
+  ja: "ja_JP",
+  en: "en_US",
+  es: "es_ES",
+  fr: "fr_FR",
+  de: "de_DE",
+  ko: "ko_KR",
+  zh: "zh_CN",
+};
+
+const keywordMap: Record<string, string[]> = {
+  ja: [
+    "PDF AI",
+    "PDF チャット",
+    "PDF 検索",
+    "OCR",
+    "手書き文書解析",
+    "根拠付き回答",
+    "AskPDF",
+  ],
+  en: [
+    "PDF AI",
+    "PDF chat",
+    "PDF search",
+    "OCR",
+    "handwritten document OCR",
+    "cited answers",
+    "AskPDF",
+  ],
+  es: ["IA para PDF", "chat PDF", "búsqueda PDF", "OCR", "AskPDF"],
+  fr: ["IA pour PDF", "chat PDF", "recherche PDF", "OCR", "AskPDF"],
+  de: ["KI für PDF", "PDF-Chat", "PDF-Suche", "OCR", "AskPDF"],
+  ko: ["PDF AI", "PDF 채팅", "PDF 검색", "OCR", "AskPDF"],
+  zh: ["PDF AI", "PDF 聊天", "PDF 搜索", "OCR", "AskPDF"],
+};
 
 export async function generateMetadata({ params }: LpPageProps): Promise<Metadata> {
-  const locale = params.locale || "ja";
-  const title = "PDFを、参照箇所つきでAIに質問 | AskPDF";
-  const description =
-    "契約書・マニュアル・提案書・論文など、PDFの管理，閲覧を1画面で。参照箇所つき回答で確認作業を効率化。";
+  const requestedLocale = params.locale || routing.defaultLocale;
+  const locale = routing.locales.includes(requestedLocale as (typeof routing.locales)[number])
+    ? requestedLocale
+    : routing.defaultLocale;
+  const content = getLpGeneralContent(locale);
+  const title = content.meta.title;
+  const description = content.meta.description;
   const canonical = `${appUrl}/${locale}/lp/general`;
+  const languageAlternates: Record<string, string> = Object.fromEntries(
+    routing.locales.map((item) => [item, `${appUrl}/${item}/lp/general`])
+  );
+  languageAlternates["x-default"] = `${appUrl}/${routing.defaultLocale}/lp/general`;
+  const openGraphLocale = ogLocaleMap[locale] ?? ogLocaleMap.en;
+  const openGraphAlternateLocales = routing.locales
+    .filter((item) => item !== locale)
+    .map((item) => ogLocaleMap[item])
+    .filter(Boolean);
 
   return {
+    metadataBase: new URL(appUrl),
     title,
     description,
+    keywords: keywordMap[locale] ?? keywordMap.en,
+    category: "technology",
+    robots: {
+      index: true,
+      follow: true,
+      googleBot: {
+        index: true,
+        follow: true,
+        "max-image-preview": "large",
+        "max-snippet": -1,
+        "max-video-preview": -1,
+      },
+    },
     alternates: {
       canonical,
-      languages: {
-        ja: `${appUrl}/ja/lp/general`,
-      },
+      languages: languageAlternates,
     },
     openGraph: {
       title,
       description,
       url: canonical,
+      locale: openGraphLocale,
+      alternateLocale: openGraphAlternateLocales,
       siteName: "AskPDF",
+      images: [
+        {
+          url: ogImagePath,
+          width: 1200,
+          height: 630,
+          alt: "AskPDF - Ask AI About PDFs With Citations",
+        },
+      ],
       type: "website",
     },
     twitter: {
       card: "summary_large_image",
       title,
       description,
+      images: [ogImagePath],
     },
   };
 }
@@ -60,17 +132,14 @@ const softwareApplicationLd = {
   },
 };
 
-const faqPageLd = {
-  "@context": "https://schema.org",
-  "@type": "FAQPage",
-  mainEntity: lpGeneralContent.faqs.map((item) => ({
-    "@type": "Question",
-    name: item.question,
-    acceptedAnswer: {
-      "@type": "Answer",
-      text: item.answer,
-    },
-  })),
+const localeLabels: Record<string, string> = {
+  ja: "日本語",
+  en: "English",
+  es: "Español",
+  fr: "Français",
+  de: "Deutsch",
+  ko: "한국어",
+  zh: "中文",
 };
 
 const painIcons = [
@@ -124,9 +193,9 @@ const painIcons = [
   ),
 ];
 
-function renderFeatureDetailIcon(title: string) {
-  switch (title) {
-    case "PDF管理":
+function renderFeatureDetailIcon(id: string) {
+  switch (id) {
+    case "pdf_management":
       return (
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path stroke="none" d="M0 0h24v24H0z" fill="none" />
@@ -139,7 +208,7 @@ function renderFeatureDetailIcon(title: string) {
           />
         </svg>
       );
-    case "PDF閲覧":
+    case "pdf_viewing":
       return (
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path stroke="none" d="M0 0h24v24H0z" fill="none" />
@@ -150,7 +219,7 @@ function renderFeatureDetailIcon(title: string) {
           <path d="M9 17h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       );
-    case "タブ":
+    case "tabs":
       return (
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <rect x="2" y="4" width="20" height="16" rx="1" stroke="currentColor" strokeWidth="1.5" />
@@ -161,7 +230,7 @@ function renderFeatureDetailIcon(title: string) {
           <rect x="3" y="5" width="3" height="2" fill="currentColor" opacity="0.3" />
         </svg>
       );
-    case "アノテーションミニマップ":
+    case "annotation_minimap":
       return (
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <rect x="2" y="2" width="14" height="20" rx="1" stroke="currentColor" strokeWidth="1.5" />
@@ -173,7 +242,7 @@ function renderFeatureDetailIcon(title: string) {
           <rect x="19" y="12" width="2" height="2" fill="currentColor" opacity="0.5" />
         </svg>
       );
-    case "チャット":
+    case "chat":
       return (
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path stroke="none" d="M0 0h24v24H0z" fill="none" />
@@ -188,7 +257,7 @@ function renderFeatureDetailIcon(title: string) {
           />
         </svg>
       );
-    case "PDF検索":
+    case "pdf_search":
       return (
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <rect x="2" y="2" width="14" height="14" rx="1" stroke="currentColor" strokeWidth="1.5" />
@@ -199,7 +268,7 @@ function renderFeatureDetailIcon(title: string) {
           <path d="M21 21L23 23" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
       );
-    case "OCR":
+    case "ocr":
       return (
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <rect x="2" y="3" width="20" height="18" rx="1" stroke="currentColor" strokeWidth="1.5" />
@@ -214,7 +283,7 @@ function renderFeatureDetailIcon(title: string) {
           <path d="M14 16H16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
       );
-    case "ショートカット":
+    case "shortcut":
       return (
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <rect x="3" y="4" width="8" height="8" rx="1" stroke="currentColor" strokeWidth="1.5" />
@@ -234,10 +303,56 @@ function renderFeatureDetailIcon(title: string) {
 }
 
 export default function LpGeneralPage({ params }: LpPageProps) {
-  const locale = params.locale || "ja";
-  if (locale !== "ja") {
-    redirect(`/${locale}`);
-  }
+  const requestedLocale = params.locale || routing.defaultLocale;
+  const locale = routing.locales.includes(requestedLocale as (typeof routing.locales)[number])
+    ? requestedLocale
+    : routing.defaultLocale;
+  const canonicalUrl = `${appUrl}/${locale}/lp/general`;
+  const content = getLpGeneralContent(locale);
+  const faqPageLd = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: content.faqs.map((item) => ({
+      "@type": "Question",
+      name: item.question,
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: item.answer,
+      },
+    })),
+  };
+  const organizationLd = {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    name: "AskPDF",
+    url: appUrl,
+    logo: `${appUrl}/icon.svg`,
+  };
+  const websiteLd = {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    name: "AskPDF",
+    url: appUrl,
+    inLanguage: locale,
+  };
+  const breadcrumbLd = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      {
+        "@type": "ListItem",
+        position: 1,
+        name: "LP",
+        item: `${appUrl}/${locale}/lp`,
+      },
+      {
+        "@type": "ListItem",
+        position: 2,
+        name: "General",
+        item: canonicalUrl,
+      },
+    ],
+  };
 
   return (
     <main className={styles.mkRoot}>
@@ -249,6 +364,18 @@ export default function LpGeneralPage({ params }: LpPageProps) {
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(faqPageLd) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationLd) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteLd) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbLd) }}
       />
 
       <section className={styles.hero}>
@@ -263,40 +390,77 @@ export default function LpGeneralPage({ params }: LpPageProps) {
                 height={34}
               />
               <div className={styles.brandText}>
-                <span className={styles.brand}>{lpGeneralContent.nav.brand}</span>
+                <span className={styles.brand}>{content.nav.brand}</span>
               </div>
             </Link>
             <div className={styles.navLinks}>
               <a href="#features" className={styles.navLink}>
-                機能
+                {content.nav.links.features}
               </a>
               <a href="#compare" className={styles.navLink}>
-                比較
+                {content.nav.links.compare}
               </a>
               <a href="#pricing" className={styles.navLink}>
-                料金
+                {content.nav.links.pricing}
               </a>
               <a href="#faq" className={styles.navLink}>
-                FAQ
+                {content.nav.links.faq}
               </a>
             </div>
-            <div className={styles.navCta}>
-              <LpSignupCta
-                label={lpGeneralContent.nav.cta}
-                locale={locale}
-                placement="hero_secondary"
-                variant="ghost"
-              />
+            <div className={styles.navRight}>
+              <div className={styles.navLocale} aria-label={content.nav.langLabel}>
+                <details className={styles.navLocaleDropdown}>
+                  <summary className={styles.navLocaleTrigger}>
+                    <span className={styles.navLocaleCurrent}>
+                      {localeLabels[locale] ?? locale.toUpperCase()}
+                    </span>
+                    <span className={styles.navLocaleCaret} aria-hidden="true">
+                      <svg viewBox="0 0 20 20">
+                        <path
+                          d="m6 8 4 4 4-4"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </span>
+                  </summary>
+                  <div className={styles.navLocaleMenu} role="listbox" aria-label={content.nav.langLabel}>
+                    {routing.locales.map((item) => (
+                      <Link
+                        key={item}
+                        href="/lp/general"
+                        locale={item}
+                        className={`${styles.navLocaleMenuItem} ${
+                          locale === item ? styles.navLocaleMenuItemActive : ""
+                        }`}
+                      >
+                        {localeLabels[item] ?? item.toUpperCase()}
+                      </Link>
+                    ))}
+                  </div>
+                </details>
+              </div>
+              <div className={styles.navCta}>
+                <LpSignupCta
+                  label={content.nav.cta}
+                  locale={locale}
+                  placement="hero_secondary"
+                  variant="ghost"
+                />
+              </div>
             </div>
           </div>
 
           <div className={styles.heroMain}>
             <div className={styles.heroLeft}>
-              <h1 className={styles.heroTitle}>{lpGeneralContent.hero.title}</h1>
-              <p className={styles.heroSubtitle}>{lpGeneralContent.hero.subtitle}</p>
+              <h1 className={styles.heroTitle}>{content.hero.title}</h1>
+              <p className={styles.heroSubtitle}>{content.hero.subtitle}</p>
               <div className={styles.ctaRow}>
                 <LpSignupCta
-                  label={lpGeneralContent.hero.primaryCta}
+                  label={content.hero.primaryCta}
                   locale={locale}
                   placement="hero_primary"
                 />
@@ -304,7 +468,7 @@ export default function LpGeneralPage({ params }: LpPageProps) {
                   href="#pricing"
                   className={`${styles.ctaButton} ${styles.ctaButtonGhost} ${styles.secondaryCta}`}
                 >
-                  {lpGeneralContent.hero.secondaryCta}
+                  {content.hero.secondaryCta}
                 </a>
               </div>
             </div>
@@ -318,9 +482,9 @@ export default function LpGeneralPage({ params }: LpPageProps) {
               </div>
             </aside>
           </div>
-          <p className={styles.trustLine}>{lpGeneralContent.trustLine}</p>
+          <p className={styles.trustLine}>{content.trustLine}</p>
           <div className={styles.chips}>
-            {lpGeneralContent.hero.chips.map((chip) => (
+            {content.hero.chips.map((chip) => (
               <span key={chip} className={styles.chip}>
                 {chip}
               </span>
@@ -331,10 +495,10 @@ export default function LpGeneralPage({ params }: LpPageProps) {
 
       <section className={`${styles.section} ${styles.sectionWhite}`}>
         <div className={`${styles.sectionInner} ${styles.sectionInnerBare}`}>
-          <p className={`${styles.sectionKicker} ${styles.sectionHeadingCenter}`}>Pain Points</p>
-          <h2 className={`${styles.sectionTitle} ${styles.sectionHeadingCenter}`}>よくある課題</h2>
+          <p className={`${styles.sectionKicker} ${styles.sectionHeadingCenter}`}>{content.painsSection.kicker}</p>
+          <h2 className={`${styles.sectionTitle} ${styles.sectionHeadingCenter}`}>{content.painsSection.title}</h2>
           <div className={styles.painGrid}>
-            {lpGeneralContent.pains.map((item, index) => (
+            {content.pains.map((item, index) => (
               <article key={item} className={styles.painCard}>
                 <span className={styles.painIcon}>{painIcons[index] ?? painIcons[0]}</span>
                 <p className={styles.painText}>{item}</p>
@@ -346,12 +510,12 @@ export default function LpGeneralPage({ params }: LpPageProps) {
 
       <section className={`${styles.section} ${styles.sectionWarm}`}>
         <div className={`${styles.sectionInner} ${styles.sectionInnerBare}`}>
-          <p className={`${styles.sectionKicker} ${styles.sectionHeadingCenter}`}>Solution</p>
-          <h2 className={`${styles.sectionTitle} ${styles.sectionHeadingCenter}`}>このサービスで解決できること</h2>
+          <p className={`${styles.sectionKicker} ${styles.sectionHeadingCenter}`}>{content.solutionSection.kicker}</p>
+          <h2 className={`${styles.sectionTitle} ${styles.sectionHeadingCenter}`}>{content.solutionSection.title}</h2>
           <div className={styles.solutionSplit}>
             <div className={styles.solutionLeft}>
               <ul className={styles.solutionList}>
-                {lpGeneralContent.solutionPoints.map((item) => (
+                {content.solutionPoints.map((item) => (
                   <li key={item} className={styles.solutionItem}>
                     {item}
                   </li>
@@ -371,13 +535,13 @@ export default function LpGeneralPage({ params }: LpPageProps) {
 
       <section id="features" className={`${styles.section} ${styles.sectionBlue}`}>
         <div className={`${styles.sectionInner} ${styles.sectionInnerBare}`}>
-          <p className={`${styles.sectionKicker} ${styles.sectionHeadingCenter}`}>Features</p>
-          <h2 className={`${styles.sectionTitle} ${styles.sectionHeadingCenter}`}>主要機能</h2>
+          <p className={`${styles.sectionKicker} ${styles.sectionHeadingCenter}`}>{content.featuresSection.kicker}</p>
+          <h2 className={`${styles.sectionTitle} ${styles.sectionHeadingCenter}`}>{content.featuresSection.title}</h2>
           <div className={styles.featureDetailGrid}>
-            {lpGeneralContent.featureDetails.map((item, index) => (
+            {content.featureDetails.map((item, index) => (
               <article key={item.title} className={styles.featureDetailCard}>
                 <span className={styles.featureDetailIcon}>
-                  {renderFeatureDetailIcon(item.title)}
+                  {renderFeatureDetailIcon(item.id)}
                 </span>
                 <h3 className={styles.featureDetailTitle}>
                   {index + 1}. {item.title}
@@ -391,8 +555,8 @@ export default function LpGeneralPage({ params }: LpPageProps) {
 
       <section id="steps" className={`${styles.section} ${styles.sectionPlain}`}>
         <div className={`${styles.sectionInner} ${styles.sectionInnerBare}`}>
-          <p className={`${styles.sectionKicker} ${styles.sectionHeadingCenter}`}>How It Works</p>
-          <h2 className={`${styles.sectionTitle} ${styles.sectionHeadingCenter}`}>使い方は3ステップ</h2>
+          <p className={`${styles.sectionKicker} ${styles.sectionHeadingCenter}`}>{content.stepsSection.kicker}</p>
+          <h2 className={`${styles.sectionTitle} ${styles.sectionHeadingCenter}`}>{content.stepsSection.title}</h2>
           <div className={styles.stepsSplit}>
             <aside className={styles.stepsVisual} aria-label="How it works preview">
               <img
@@ -402,7 +566,7 @@ export default function LpGeneralPage({ params }: LpPageProps) {
               />
             </aside>
             <div className={styles.stepsList}>
-              {lpGeneralContent.steps.map((step, index) => (
+              {content.steps.map((step, index) => (
                 <article key={step.title} className={styles.stepRow}>
                   <h3 className={styles.stepRowTitle}>
                     {step.title.replace(/^\d+\.\s*/, "")}
@@ -418,39 +582,47 @@ export default function LpGeneralPage({ params }: LpPageProps) {
         </div>
       </section>
 
-      <section id="compare" className={`${styles.section} ${styles.sectionCool}`}>
+      <section
+        id="compare"
+        className={`${styles.section} ${styles.sectionCool} ${styles.compareSection}`}
+      >
         <div className={`${styles.sectionInner} ${styles.sectionInnerBare}`}>
-          <p className={`${styles.sectionKicker} ${styles.sectionHeadingCenter}`}>Comparison</p>
-          <h2 className={`${styles.sectionTitle} ${styles.sectionHeadingCenter}`}>比較</h2>
-          <div className={styles.tableWrap}>
-            <table className={styles.compareTable}>
-              <thead>
-                <tr>
-                  <th className={styles.compareHeaderCell}>項目</th>
-                  <th className={styles.compareHeaderCell}>従来のやり方</th>
-                  <th className={styles.compareHeaderCell}>AskPDF</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lpGeneralContent.comparisonRows.map((row) => (
-                  <tr key={row.topic}>
-                    <td className={styles.compareCell}>{row.topic}</td>
-                    <td className={styles.compareCell}>{row.legacy}</td>
-                    <td className={styles.compareCell}>{row.askPdf}</td>
+          <p className={`${styles.sectionKicker} ${styles.sectionHeadingCenter}`}>{content.comparisonSection.kicker}</p>
+          <h2 className={`${styles.sectionTitle} ${styles.sectionHeadingCenter}`}>{content.comparisonSection.title}</h2>
+          <div className={styles.compareScroll}>
+            <div className={styles.tableWrap}>
+              <table className={styles.compareTable}>
+                <thead>
+                  <tr>
+                    <th className={styles.compareHeaderCell}>{content.comparisonSection.headers.topic}</th>
+                    <th className={styles.compareHeaderCell}>{content.comparisonSection.headers.legacy}</th>
+                    <th className={styles.compareHeaderCell}>{content.comparisonSection.headers.askPdf}</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {content.comparisonRows.map((row) => (
+                    <tr key={row.topic}>
+                      <td className={styles.compareCell}>{row.topic}</td>
+                      <td className={styles.compareCell}>{row.legacy}</td>
+                      <td className={styles.compareCell}>{row.askPdf}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>
 
-      <section id="pricing" className={`${styles.section} ${styles.sectionWarm}`}>
+      <section
+        id="pricing"
+        className={`${styles.section} ${styles.sectionWarm} ${styles.pricingSection}`}
+      >
         <div className={`${styles.sectionInner} ${styles.sectionInnerBare}`}>
-          <p className={`${styles.sectionKicker} ${styles.sectionHeadingCenter}`}>Pricing</p>
-          <h2 className={`${styles.sectionTitle} ${styles.sectionHeadingCenter}`}>料金プラン</h2>
+          <p className={`${styles.sectionKicker} ${styles.sectionHeadingCenter}`}>{content.pricingSection.kicker}</p>
+          <h2 className={`${styles.sectionTitle} ${styles.sectionHeadingCenter}`}>{content.pricingSection.title}</h2>
           <div className={styles.pricingGrid}>
-            {lpGeneralContent.plans.map((plan) => (
+            {content.plans.map((plan) => (
               <article
                 key={plan.name}
                 className={`${styles.pricingCard} ${
@@ -470,7 +642,7 @@ export default function LpGeneralPage({ params }: LpPageProps) {
                   ))}
                 </ul>
                 <LpSignupCta
-                  label={plan.name === "Plus" ? "Plusを始める" : "無料で試す"}
+                  label={plan.name === "Plus" ? content.pricingSection.cta.plus : content.pricingSection.cta.default}
                   locale={locale}
                   placement="pricing"
                   variant={plan.featured ? "primary" : "ghost"}
@@ -481,12 +653,12 @@ export default function LpGeneralPage({ params }: LpPageProps) {
         </div>
       </section>
 
-      <section id="faq" className={`${styles.section} ${styles.sectionBlue}`}>
+      <section id="faq" className={`${styles.section} ${styles.sectionWhite}`}>
         <div className={`${styles.sectionInner} ${styles.sectionInnerBare}`}>
-          <p className={`${styles.sectionKicker} ${styles.sectionHeadingCenter}`}>FAQ</p>
-          <h2 className={`${styles.sectionTitle} ${styles.sectionHeadingCenter}`}>FAQ</h2>
+          <p className={`${styles.sectionKicker} ${styles.sectionHeadingCenter}`}>{content.faqSection.kicker}</p>
+          <h2 className={`${styles.sectionTitle} ${styles.sectionHeadingCenter}`}>{content.faqSection.title}</h2>
           <div className={styles.faqList}>
-            {lpGeneralContent.faqs.map((faq, index) => (
+            {content.faqs.map((faq, index) => (
               <details
                 key={faq.question}
                 className={styles.faqItem}
@@ -494,7 +666,7 @@ export default function LpGeneralPage({ params }: LpPageProps) {
                 open={index === 0}
               >
                 <summary className={styles.faqSummary}>
-                  <span className={styles.faqQuestion}>Q. {faq.question}</span>
+                  <span className={styles.faqQuestion}>{content.faqSection.qPrefix} {faq.question}</span>
                   <span className={styles.faqToggle} aria-hidden="true">
                     <svg viewBox="0 0 20 20">
                       <path
@@ -508,7 +680,7 @@ export default function LpGeneralPage({ params }: LpPageProps) {
                     </svg>
                   </span>
                 </summary>
-                <p className={styles.faqAnswer}>A. {faq.answer}</p>
+                <p className={styles.faqAnswer}>{content.faqSection.aPrefix} {faq.answer}</p>
               </details>
             ))}
           </div>
@@ -517,9 +689,9 @@ export default function LpGeneralPage({ params }: LpPageProps) {
 
       <section className={styles.footerCta}>
         <div className={`${styles.sectionInner} ${styles.footerPanel}`}>
-          <p className={styles.footerNote}>{lpGeneralContent.footer.note}</p>
+          <p className={styles.footerNote}>{content.footer.note}</p>
           <LpSignupCta
-            label={lpGeneralContent.footer.cta}
+            label={content.footer.cta}
             locale={locale}
             placement="footer"
           />
@@ -531,22 +703,22 @@ export default function LpGeneralPage({ params }: LpPageProps) {
           <div className={styles.siteFooterBrand}>AskPDF</div>
           <div className={styles.siteFooterLinks}>
             <a href="#features" className={styles.siteFooterLink}>
-              機能
+              {content.footer.links.features}
             </a>
             <a href="#pricing" className={styles.siteFooterLink}>
-              料金
+              {content.footer.links.pricing}
             </a>
             <a href="#faq" className={styles.siteFooterLink}>
-              FAQ
+              {content.footer.links.faq}
             </a>
             <a href={`/${locale}/tokushoho`} className={styles.siteFooterLink}>
-              特定商取引法に基づく表記
+              {content.footer.links.legal}
             </a>
             <a href={`/${locale}/terms`} className={styles.siteFooterLink}>
-              利用規約
+              {content.footer.links.terms}
             </a>
             <a href={`/${locale}/privacy-policy`} className={styles.siteFooterLink}>
-              プライバシーポリシー
+              {content.footer.links.privacy}
             </a>
           </div>
           <div className={styles.siteFooterCopy}>© {new Date().getFullYear()} AskPDF</div>

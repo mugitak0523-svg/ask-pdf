@@ -1,0 +1,207 @@
+{
+  "meta": {
+    "title": "Hazle preguntas a la IA sobre PDF con referencias | AskPDF",
+    "description": "Gestiona y lee contratos, manuales, propuestas y artículos en PDF en una sola pantalla. Las respuestas incluyen referencias para verificar rápido."
+  },
+  "nav": {
+    "brand": "AskPDF",
+    "cta": "Probar gratis",
+    "links": {
+      "features": "Funciones",
+      "compare": "Comparación",
+      "pricing": "Precios",
+      "faq": "FAQ"
+    },
+    "langLabel": "Idioma"
+  },
+  "hero": {
+    "title": "Haz preguntas a la IA sobre PDFs con citas",
+    "subtitle": "Gestiona, lee y consulta contratos, manuales, propuestas y artículos en un solo espacio.",
+    "primaryCta": "Probar gratis",
+    "secondaryCta": "Ver precios",
+    "chips": ["Respuestas con citas", "UI multilingüe", "Sin instalación"]
+  },
+  "trustLine": "AskPDF ayuda a equipos y estudiantes a trabajar con PDFs diarios de forma más rápida y confiable.",
+  "painsSection": {
+    "kicker": "Pain Points",
+    "title": "Problemas comunes"
+  },
+  "pains": [
+    "Tarda demasiado encontrar dónde está la información clave en un PDF.",
+    "Las respuestas de IA sin evidencia visible aún requieren verificación manual.",
+    "Cambiar entre visor de PDF y herramienta de IA interrumpe el flujo de trabajo."
+  ],
+  "solutionSection": {
+    "kicker": "Solution",
+    "title": "Qué resuelve este servicio"
+  },
+  "solutionPoints": [
+    "Cada respuesta incluye referencias para verificar la fuente al instante.",
+    "Gestiona PDFs y haz preguntas en una sola pantalla, sin cambiar de herramienta.",
+    "Empieza gratis y pasa a Plus cuando aumente tu uso."
+  ],
+  "featuresSection": {
+    "kicker": "Features",
+    "title": "Funciones principales"
+  },
+  "featureDetails": [
+    {
+      "id": "pdf_management",
+      "title": "Gestión de PDF",
+      "description": "Organiza archivos en una lista y accede rápido a los documentos. El soporte de carpetas está previsto."
+    },
+    {
+      "id": "pdf_viewing",
+      "title": "Lectura de PDF",
+      "description": "Lee fluidamente con resaltados y subrayados dentro del visor."
+    },
+    {
+      "id": "tabs",
+      "title": "Pestañas",
+      "description": "Cambia de PDF rápidamente con pestañas superiores. Los archivos abiertos se optimizan para reaparecer más rápido."
+    },
+    {
+      "id": "annotation_minimap",
+      "title": "Minimapa de anotaciones",
+      "description": "Salta a ubicaciones anotadas con un clic desde el minimapa."
+    },
+    {
+      "id": "chat",
+      "title": "Chat",
+      "description": "Pregunta a la IA sobre tu PDF con referencias y usa varios chats por archivo."
+    },
+    {
+      "id": "pdf_search",
+      "title": "Búsqueda en PDF",
+      "description": "Busca en el cuerpo del documento para encontrar pasajes importantes más rápido."
+    },
+    {
+      "id": "ocr",
+      "title": "OCR",
+      "description": "Funciona con PDFs de imagen y documentos manuscritos para chat, búsqueda y resaltado."
+    },
+    {
+      "id": "shortcut",
+      "title": "Atajos",
+      "description": "Usa atajos de teclado en acciones principales para un flujo diario más rápido."
+    }
+  ],
+  "stepsSection": {
+    "kicker": "How It Works",
+    "title": "Empieza en 3 pasos"
+  },
+  "steps": [
+    {
+      "title": "Sube PDFs",
+      "description": "Analiza varios documentos al mismo tiempo."
+    },
+    {
+      "title": "Haz preguntas",
+      "description": "Escribe en el chat lo que quieres saber."
+    },
+    {
+      "title": "Verifica la evidencia",
+      "description": "Revisa respuestas y referencias lado a lado."
+    }
+  ],
+  "comparisonSection": {
+    "kicker": "Comparison",
+    "title": "Comparación",
+    "headers": {
+      "topic": "Tema",
+      "legacy": "Convencional",
+      "askPdf": "AskPDF"
+    }
+  },
+  "comparisonRows": [
+    {
+      "topic": "Verificación de evidencia",
+      "legacy": "Comprobar fuentes lleva tiempo",
+      "askPdf": "Las referencias se ven al instante"
+    },
+    {
+      "topic": "Flujo de trabajo",
+      "legacy": "Cambio frecuente de herramientas",
+      "askPdf": "Flujo completo en una sola pantalla"
+    },
+    {
+      "topic": "Secciones omitidas",
+      "legacy": "Hay que volver a buscar manualmente",
+      "askPdf": "Salta de la respuesta a la sección exacta"
+    },
+    {
+      "topic": "Tipos de documento",
+      "legacy": "Los PDFs manuscritos o de imagen son difíciles",
+      "askPdf": "Compatible con manuscritos y PDFs de imagen"
+    }
+  ],
+  "pricingSection": {
+    "kicker": "Pricing",
+    "title": "Planes",
+    "cta": {
+      "plus": "Empezar Plus",
+      "default": "Probar gratis"
+    }
+  },
+  "plans": [
+    {
+      "name": "Guest",
+      "priceAmount": "¥0",
+      "priceUnit": "/mes",
+      "points": ["Sin inicio de sesión", "PDF máx.: 1", "Tamaño máx.: 10MB", "Chats diarios: 8"]
+    },
+    {
+      "name": "Free",
+      "priceAmount": "¥0",
+      "priceUnit": "/mes",
+      "points": ["Para usuarios registrados", "PDF máx.: 5", "Tamaño máx.: 20MB", "Chats diarios: 20"]
+    },
+    {
+      "name": "Plus",
+      "priceAmount": "¥1,980",
+      "priceUnit": "/mes",
+      "featured": true,
+      "points": ["Para uso intensivo", "PDF máx.: 50", "Tamaño máx.: 50MB", "Chats diarios: 120"]
+    }
+  ],
+  "faqSection": {
+    "kicker": "FAQ",
+    "title": "FAQ",
+    "qPrefix": "Q.",
+    "aPrefix": "A."
+  },
+  "faqs": [
+    {
+      "question": "¿Qué tipos de PDF son compatibles?",
+      "answer": "Contratos, documentos internos, manuales, propuestas, artículos y más."
+    },
+    {
+      "question": "¿Puedo verificar las fuentes de la respuesta?",
+      "answer": "Sí. Puedes revisar las referencias enlazadas mientras lees cada respuesta."
+    },
+    {
+      "question": "¿Puedo probarlo gratis?",
+      "answer": "Sí. Empieza con el plan Free y actualiza a Plus cuando quieras."
+    },
+    {
+      "question": "¿Cómo se manejan los datos subidos?",
+      "answer": "Los PDFs subidos y los datos de uso se vinculan a tu cuenta y puedes eliminarlos desde configuración."
+    },
+    {
+      "question": "¿Puedo cancelar en cualquier momento?",
+      "answer": "Sí. Puedes cambiar o cancelar tu plan en cualquier momento desde configuración."
+    }
+  ],
+  "footer": {
+    "note": "Empieza con el plan gratuito y cambia a Plus cuando encaje con tu trabajo.",
+    "cta": "Probar gratis",
+    "links": {
+      "features": "Funciones",
+      "pricing": "Precios",
+      "faq": "FAQ",
+      "legal": "Aviso legal",
+      "terms": "Términos",
+      "privacy": "Privacidad"
+    }
+  }
+}

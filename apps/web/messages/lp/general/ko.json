@@ -1,0 +1,207 @@
+{
+  "meta": {
+    "title": "PDF를 근거와 함께 AI에 질문 | AskPDF",
+    "description": "계약서, 매뉴얼, 제안서, 논문 PDF를 한 화면에서 관리하고 읽으세요. 답변에 근거가 포함되어 빠르게 검증할 수 있습니다."
+  },
+  "nav": {
+    "brand": "AskPDF",
+    "cta": "무료로 시작",
+    "links": {
+      "features": "기능",
+      "compare": "비교",
+      "pricing": "요금",
+      "faq": "FAQ"
+    },
+    "langLabel": "언어"
+  },
+  "hero": {
+    "title": "근거와 함께 PDF를 AI에 질문",
+    "subtitle": "계약서, 매뉴얼, 제안서, 논문을 하나의 워크스페이스에서 관리하고 읽고 질문하세요.",
+    "primaryCta": "무료로 시작",
+    "secondaryCta": "요금 보기",
+    "chips": ["근거 포함 답변", "다국어 UI", "설치 불필요"]
+  },
+  "trustLine": "AskPDF는 팀과 학생이 일상적인 PDF 업무를 더 빠르고 정확하게 처리하도록 돕습니다.",
+  "painsSection": {
+    "kicker": "Pain Points",
+    "title": "자주 겪는 문제"
+  },
+  "pains": [
+    "PDF에서 핵심 정보를 찾는 데 시간이 오래 걸립니다.",
+    "근거가 보이지 않는 AI 답변은 결국 수동 검증이 필요합니다.",
+    "PDF 뷰어와 AI 도구를 오가며 작업 흐름이 끊깁니다."
+  ],
+  "solutionSection": {
+    "kicker": "Solution",
+    "title": "이 서비스로 해결되는 점"
+  },
+  "solutionPoints": [
+    "모든 답변에 근거 위치가 포함되어 즉시 원문 확인이 가능합니다.",
+    "PDF 관리와 질의를 한 화면에서 처리해 도구 전환을 줄입니다.",
+    "무료로 시작하고 사용량에 따라 Plus로 확장할 수 있습니다."
+  ],
+  "featuresSection": {
+    "kicker": "Features",
+    "title": "주요 기능"
+  },
+  "featureDetails": [
+    {
+      "id": "pdf_management",
+      "title": "PDF 관리",
+      "description": "목록에서 PDF를 정리하고 필요한 문서에 빠르게 접근합니다. 폴더 기능은 추후 지원 예정입니다."
+    },
+    {
+      "id": "pdf_viewing",
+      "title": "PDF 보기",
+      "description": "하이라이트와 밑줄을 사용하며 문서를 자연스럽게 읽을 수 있습니다."
+    },
+    {
+      "id": "tabs",
+      "title": "탭",
+      "description": "상단 탭으로 PDF를 빠르게 전환합니다. 이미 연 문서는 더 빠르게 다시 표시되도록 최적화했습니다."
+    },
+    {
+      "id": "annotation_minimap",
+      "title": "주석 미니맵",
+      "description": "미니맵에서 클릭 한 번으로 주석 위치로 이동할 수 있습니다."
+    },
+    {
+      "id": "chat",
+      "title": "채팅",
+      "description": "PDF에 대해 AI에 질문하고 근거를 확인할 수 있습니다. 한 PDF에서 여러 채팅을 분리해 사용할 수 있습니다."
+    },
+    {
+      "id": "pdf_search",
+      "title": "PDF 검색",
+      "description": "본문 기반 검색으로 필요한 구절을 더 빠르게 찾을 수 있습니다."
+    },
+    {
+      "id": "ocr",
+      "title": "OCR",
+      "description": "이미지 PDF와 손글씨 문서에서도 채팅, 검색, 하이라이트를 지원합니다."
+    },
+    {
+      "id": "shortcut",
+      "title": "단축키",
+      "description": "핵심 작업에 단축키를 제공해 익숙해질수록 더 빠르게 작업할 수 있습니다."
+    }
+  ],
+  "stepsSection": {
+    "kicker": "How It Works",
+    "title": "3단계로 시작"
+  },
+  "steps": [
+    {
+      "title": "PDF 업로드",
+      "description": "여러 문서를 동시에 분석할 수 있습니다."
+    },
+    {
+      "title": "질문 입력",
+      "description": "궁금한 내용을 채팅에 입력하세요."
+    },
+    {
+      "title": "근거 확인",
+      "description": "답변과 근거를 나란히 보며 판단하세요."
+    }
+  ],
+  "comparisonSection": {
+    "kicker": "Comparison",
+    "title": "비교",
+    "headers": {
+      "topic": "항목",
+      "legacy": "기존 방식",
+      "askPdf": "AskPDF"
+    }
+  },
+  "comparisonRows": [
+    {
+      "topic": "근거 확인",
+      "legacy": "출처 확인에 시간이 걸림",
+      "askPdf": "근거를 즉시 확인 가능"
+    },
+    {
+      "topic": "작업 흐름",
+      "legacy": "도구를 자주 오가야 함",
+      "askPdf": "한 화면에서 끝나는 워크플로"
+    },
+    {
+      "topic": "누락 방지",
+      "legacy": "해당 위치를 다시 찾아야 함",
+      "askPdf": "답변에서 해당 위치로 바로 이동"
+    },
+    {
+      "topic": "문서 유형",
+      "legacy": "손글씨/이미지 PDF 처리 어려움",
+      "askPdf": "손글씨와 이미지 PDF도 지원"
+    }
+  ],
+  "pricingSection": {
+    "kicker": "Pricing",
+    "title": "요금제",
+    "cta": {
+      "plus": "Plus 시작",
+      "default": "무료로 시작"
+    }
+  },
+  "plans": [
+    {
+      "name": "Guest",
+      "priceAmount": "¥0",
+      "priceUnit": "/월",
+      "points": ["로그인 없이 시작", "최대 PDF: 1", "최대 파일 크기: 10MB", "일일 채팅: 8"]
+    },
+    {
+      "name": "Free",
+      "priceAmount": "¥0",
+      "priceUnit": "/월",
+      "points": ["로그인 사용자용", "최대 PDF: 5", "최대 파일 크기: 20MB", "일일 채팅: 20"]
+    },
+    {
+      "name": "Plus",
+      "priceAmount": "¥1,980",
+      "priceUnit": "/월",
+      "featured": true,
+      "points": ["헤비 유저용", "최대 PDF: 50", "최대 파일 크기: 50MB", "일일 채팅: 120"]
+    }
+  ],
+  "faqSection": {
+    "kicker": "FAQ",
+    "title": "FAQ",
+    "qPrefix": "Q.",
+    "aPrefix": "A."
+  },
+  "faqs": [
+    {
+      "question": "어떤 PDF를 지원하나요?",
+      "answer": "계약서, 사내 문서, 매뉴얼, 제안서, 논문 등 다양한 PDF를 지원합니다."
+    },
+    {
+      "question": "답변의 근거를 확인할 수 있나요?",
+      "answer": "네. 각 답변에 연결된 근거를 보면서 검토할 수 있습니다."
+    },
+    {
+      "question": "무료로 사용할 수 있나요?",
+      "answer": "네. Free 플랜으로 시작하고 필요할 때 Plus로 업그레이드할 수 있습니다."
+    },
+    {
+      "question": "업로드한 데이터는 어떻게 처리되나요?",
+      "answer": "업로드한 PDF와 사용 데이터는 계정에 연결되어 관리되며 설정에서 삭제할 수 있습니다."
+    },
+    {
+      "question": "언제든 해지할 수 있나요?",
+      "answer": "네. 설정 화면에서 언제든 요금제 변경 또는 해지가 가능합니다."
+    }
+  ],
+  "footer": {
+    "note": "먼저 무료로 시작하고, 업무에 맞으면 Plus로 전환하세요.",
+    "cta": "무료로 시작",
+    "links": {
+      "features": "기능",
+      "pricing": "요금",
+      "faq": "FAQ",
+      "legal": "법적 고지",
+      "terms": "이용약관",
+      "privacy": "개인정보처리방침"
+    }
+  }
+}

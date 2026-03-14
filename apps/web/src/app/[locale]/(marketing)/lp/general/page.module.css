@@ -15,7 +15,7 @@
   z-index: 90;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 16px;
   border: 1px solid rgba(255, 255, 255, 0.5);
   border-radius: 999px;
@@ -39,6 +39,7 @@
   gap: 12px;
   text-decoration: none;
   color: inherit;
+  margin-right: auto;
 }
 
 .brandIcon {
@@ -56,14 +57,114 @@
 }
 
 .navLinks {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   align-items: center;
   gap: 24px;
 }
 
+.navRight {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .navCta {
   display: flex;
   align-items: center;
+}
+
+.navLocale {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-right: 0;
+}
+
+.navLocaleDropdown {
+  position: relative;
+}
+
+.navLocaleTrigger {
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #475569;
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 8px 2px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+}
+
+.navLocaleTrigger::-webkit-details-marker {
+  display: none;
+}
+
+.navLocaleTrigger::marker {
+  content: "";
+}
+
+.navLocaleCurrent {
+  white-space: nowrap;
+}
+
+.navLocaleCaret {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.navLocaleCaret svg {
+  width: 100%;
+  height: 100%;
+}
+
+.navLocaleDropdown[open] .navLocaleCaret {
+  transform: rotate(180deg);
+}
+
+.navLocaleMenu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 132px;
+  padding: 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+  display: grid;
+  gap: 4px;
+  z-index: 120;
+}
+
+.navLocaleMenuItem {
+  text-decoration: none;
+  color: #475569;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 7px 9px;
+  border-radius: 8px;
+}
+
+.navLocaleMenuItem:hover {
+  background: #f8fafc;
+}
+
+.navLocaleMenuItemActive {
+  color: #1d4ed8;
+  background: #eff6ff;
 }
 
 .navLink {
@@ -352,29 +453,40 @@
 }
 
 .sectionCool {
-  background: #ffffff;
+  background:
+    radial-gradient(80% 140% at 6% 0%, rgba(59, 130, 246, 0.08) 0%, rgba(59, 130, 246, 0) 56%),
+    linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
 }
 
 .sectionWarm {
-  background: #ffffff;
+  background:
+    radial-gradient(90% 120% at 92% 12%, rgba(245, 158, 11, 0.08) 0%, rgba(245, 158, 11, 0) 58%),
+    linear-gradient(180deg, #ffffff 0%, #fffbf3 100%);
 }
 
 .sectionBlue {
-  background: #ffffff;
+  background:
+    radial-gradient(100% 120% at 50% 0%, rgba(37, 99, 235, 0.1) 0%, rgba(37, 99, 235, 0) 60%),
+    linear-gradient(180deg, #ffffff 0%, #f5f9ff 100%);
 }
 
 .sectionPlain {
-  background: #ffffff;
+  background:
+    linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
 }
 
 .sectionWhite {
-  background: #ffffff;
+  background:
+    radial-gradient(70% 120% at 94% 100%, rgba(148, 163, 184, 0.08) 0%, rgba(148, 163, 184, 0) 56%),
+    linear-gradient(180deg, #ffffff 0%, #fcfdff 100%);
 }
 
 .sectionInner {
   max-width: 1280px;
+  width: 100%;
   margin: 0 auto;
   padding: 44px 34px;
+  box-sizing: border-box;
   border-radius: 28px;
   border: 1px solid rgba(148, 163, 184, 0.28);
   background: rgba(255, 255, 255, 0.72);
@@ -419,6 +531,9 @@
 
 .sectionHeadingCenter {
   text-align: center;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .painGrid,
@@ -717,11 +832,22 @@
 }
 
 .tableWrap {
+  width: 100%;
+  max-width: 100%;
   overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
   border: 1px solid #e2e8f0;
   border-radius: 24px;
   background: #ffffff;
   box-shadow: 0 20px 48px -16px rgba(15, 23, 42, 0.06);
+}
+
+.compareScroll {
+  width: 100%;
+  max-width: 100%;
+  overflow: visible;
 }
 
 .compareTable {
@@ -921,12 +1047,14 @@
 
 .footerCta {
   padding: 40px 20px 100px;
+  background: linear-gradient(90deg, #f7fbff 0%, #e0edff 100%);
 }
 
 .footerPanel {
+  position: relative;
   border-radius: 32px;
   background: #ffffff;
-  border: 1px solid #e2e8f0;
+  border: 1px solid transparent;
   box-shadow: 0 24px 48px -12px rgba(15, 23, 42, 0.05);
   padding: 48px;
   display: flex;
@@ -934,6 +1062,40 @@
   align-items: center;
   justify-content: space-between;
   gap: 24px;
+  overflow: hidden;
+}
+
+.footerPanel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 2px;
+  background: linear-gradient(
+    120deg,
+    #93c5fd 0%,
+    #60a5fa 25%,
+    #22d3ee 50%,
+    #60a5fa 75%,
+    #93c5fd 100%
+  );
+  background-size: 220% 220%;
+  animation: footerGradientShift 4s linear infinite;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+@keyframes footerGradientShift {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 100% 50%;
+  }
 }
 
 .footerNote {
@@ -1060,6 +1222,8 @@
     padding: 6px 10px;
     flex-wrap: wrap;
     justify-content: space-between;
+    align-content: flex-start;
+    row-gap: 4px;
   }
 
   .brandBlock {
@@ -1089,8 +1253,18 @@
   }
 
   .navCta {
+    margin-left: 0;
+  }
+
+  .navLocale {
+    margin-left: 0;
+    margin-right: 0;
+  }
+
+  .navRight {
     order: 2;
     margin-left: auto;
+    gap: 8px;
   }
 
   .navCta .ctaButton {
@@ -1101,11 +1275,14 @@
   }
 
   .navLinks {
-    order: 3;
+    position: static;
+    left: auto;
+    transform: none;
+    order: 4;
     width: 100%;
     justify-content: center;
     gap: 14px;
-    margin-top: 4px;
+    margin-top: 2px;
     padding-top: 4px;
     border-top: 1px solid rgba(148, 163, 184, 0.2);
   }
@@ -1142,6 +1319,20 @@
     border-radius: 20px;
   }
 
+  .compareSection .sectionInner,
+  .pricingSection .sectionInner {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
+  .compareSection .sectionKicker,
+  .compareSection .sectionTitle,
+  .pricingSection .sectionKicker,
+  .pricingSection .sectionTitle {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
   .painCard,
   .featureCard,
   .featureDetailCard,
@@ -1149,8 +1340,58 @@
     grid-column: span 12;
   }
 
+  .compareSection .tableWrap {
+    width: 100%;
+    min-width: 100%;
+    border-radius: 16px;
+    border-left: 1px solid #e2e8f0;
+    border-right: 1px solid #e2e8f0;
+  }
+
+  .compareSection .compareTable {
+    min-width: 720px;
+    width: 720px;
+  }
+
+  .compareScroll {
+    width: 100%;
+    max-width: 100%;
+    overflow: visible;
+  }
+
+  .compareSection .sectionKicker,
+  .compareSection .sectionTitle {
+    text-align: center !important;
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .compareCell {
+    padding: 16px;
+    font-size: 0.92rem;
+    line-height: 1.6;
+  }
+
+  .pricingGrid {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 0 18px;
+  }
+
+  .pricingCard {
+    width: 100%;
+    padding: 28px 20px;
+    gap: 18px;
+  }
+
   .stepsList {
     padding: 0;
+  }
+
+  .solutionVisual {
+    display: none;
   }
 
   .featureDetailTitle {

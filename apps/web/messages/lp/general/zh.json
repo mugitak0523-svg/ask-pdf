@@ -1,0 +1,207 @@
+{
+  "meta": {
+    "title": "带引用地向 AI 提问 PDF | AskPDF",
+    "description": "在一个界面中管理和阅读合同、手册、提案与论文 PDF。回答附带依据位置，便于快速核对。"
+  },
+  "nav": {
+    "brand": "AskPDF",
+    "cta": "免费试用",
+    "links": {
+      "features": "功能",
+      "compare": "对比",
+      "pricing": "价格",
+      "faq": "FAQ"
+    },
+    "langLabel": "语言"
+  },
+  "hero": {
+    "title": "带引用地向 AI 提问 PDF",
+    "subtitle": "在同一工作区管理、阅读并提问合同、手册、提案和论文。",
+    "primaryCta": "免费试用",
+    "secondaryCta": "查看价格",
+    "chips": ["带依据回答", "多语言界面", "无需安装"]
+  },
+  "trustLine": "AskPDF 帮助团队和学生更快、更可靠地处理日常 PDF 工作。",
+  "painsSection": {
+    "kicker": "Pain Points",
+    "title": "常见痛点"
+  },
+  "pains": [
+    "在 PDF 中定位关键信息往往耗时很长。",
+    "没有可见依据的 AI 回答仍需人工二次核对。",
+    "在 PDF 阅读器与 AI 工具之间来回切换会打断流程。"
+  ],
+  "solutionSection": {
+    "kicker": "Solution",
+    "title": "本服务可解决的问题"
+  },
+  "solutionPoints": [
+    "每条回答都附带引用位置，便于立即核实原文。",
+    "在一个界面完成 PDF 管理与提问，减少工具切换。",
+    "可先免费使用，再按用量升级到 Plus。"
+  ],
+  "featuresSection": {
+    "kicker": "Features",
+    "title": "核心功能"
+  },
+  "featureDetails": [
+    {
+      "id": "pdf_management",
+      "title": "PDF 管理",
+      "description": "以列表整理文件，快速访问所需文档。文件夹功能将于后续支持。"
+    },
+    {
+      "id": "pdf_viewing",
+      "title": "PDF 阅读",
+      "description": "可直接在阅读器中使用高亮与下划线，阅读更流畅。"
+    },
+    {
+      "id": "tabs",
+      "title": "标签页",
+      "description": "通过顶部标签快速切换 PDF。已打开文档会优化为更快再次显示。"
+    },
+    {
+      "id": "annotation_minimap",
+      "title": "批注迷你地图",
+      "description": "可从迷你地图一键跳转到批注位置。"
+    },
+    {
+      "id": "chat",
+      "title": "聊天",
+      "description": "可就 PDF 向 AI 提问并查看依据；同一 PDF 还可使用多个聊天会话。"
+    },
+    {
+      "id": "pdf_search",
+      "title": "PDF 搜索",
+      "description": "支持正文搜索，更快找到关键段落。"
+    },
+    {
+      "id": "ocr",
+      "title": "OCR",
+      "description": "支持图片型 PDF 与手写文档的聊天、搜索和高亮。"
+    },
+    {
+      "id": "shortcut",
+      "title": "快捷键",
+      "description": "为核心操作提供快捷键，熟练后可显著提升效率。"
+    }
+  ],
+  "stepsSection": {
+    "kicker": "How It Works",
+    "title": "3 步开始使用"
+  },
+  "steps": [
+    {
+      "title": "上传 PDF",
+      "description": "可同时解析多个文档。"
+    },
+    {
+      "title": "提出问题",
+      "description": "在聊天中输入你想了解的内容。"
+    },
+    {
+      "title": "核对依据",
+      "description": "并排查看回答与引用位置后再判断。"
+    }
+  ],
+  "comparisonSection": {
+    "kicker": "Comparison",
+    "title": "对比",
+    "headers": {
+      "topic": "项目",
+      "legacy": "传统方式",
+      "askPdf": "AskPDF"
+    }
+  },
+  "comparisonRows": [
+    {
+      "topic": "依据核对",
+      "legacy": "核对出处耗时",
+      "askPdf": "可立即查看引用依据"
+    },
+    {
+      "topic": "工作流",
+      "legacy": "需要频繁切换工具",
+      "askPdf": "在一个界面完成全流程"
+    },
+    {
+      "topic": "遗漏防止",
+      "legacy": "需要手动反复查找",
+      "askPdf": "可从回答直达对应段落"
+    },
+    {
+      "topic": "文档类型",
+      "legacy": "手写/图片 PDF 难处理",
+      "askPdf": "支持手写文档与图片 PDF"
+    }
+  ],
+  "pricingSection": {
+    "kicker": "Pricing",
+    "title": "价格方案",
+    "cta": {
+      "plus": "开始 Plus",
+      "default": "免费试用"
+    }
+  },
+  "plans": [
+    {
+      "name": "Guest",
+      "priceAmount": "¥0",
+      "priceUnit": "/月",
+      "points": ["无需登录即可使用", "PDF 上限：1", "文件大小上限：10MB", "每日聊天次数：8"]
+    },
+    {
+      "name": "Free",
+      "priceAmount": "¥0",
+      "priceUnit": "/月",
+      "points": ["适用于登录用户", "PDF 上限：5", "文件大小上限：20MB", "每日聊天次数：20"]
+    },
+    {
+      "name": "Plus",
+      "priceAmount": "¥1,980",
+      "priceUnit": "/月",
+      "featured": true,
+      "points": ["适合重度使用", "PDF 上限：50", "文件大小上限：50MB", "每日聊天次数：120"]
+    }
+  ],
+  "faqSection": {
+    "kicker": "FAQ",
+    "title": "FAQ",
+    "qPrefix": "Q.",
+    "aPrefix": "A."
+  },
+  "faqs": [
+    {
+      "question": "支持哪些类型的 PDF？",
+      "answer": "支持合同、内部资料、手册、提案、论文等多种 PDF。"
+    },
+    {
+      "question": "可以核对回答依据吗？",
+      "answer": "可以。你可以在阅读回答时同时查看对应引用位置。"
+    },
+    {
+      "question": "可以免费试用吗？",
+      "answer": "可以。可先使用 Free 方案，之后按需升级到 Plus。"
+    },
+    {
+      "question": "上传的数据如何处理？",
+      "answer": "上传的 PDF 与使用数据会绑定到你的账号，并可在设置中删除。"
+    },
+    {
+      "question": "可以随时取消吗？",
+      "answer": "可以。你可随时在设置中变更或取消方案。"
+    }
+  ],
+  "footer": {
+    "note": "先免费体验，若符合你的工作需求再切换到 Plus。",
+    "cta": "免费试用",
+    "links": {
+      "features": "功能",
+      "pricing": "价格",
+      "faq": "FAQ",
+      "legal": "法律声明",
+      "terms": "服务条款",
+      "privacy": "隐私政策"
+    }
+  }
+}

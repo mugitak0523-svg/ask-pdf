@@ -1,0 +1,207 @@
+{
+  "meta": {
+    "title": "Stelle der KI Fragen zu PDFs mit Quellenangaben | AskPDF",
+    "description": "Verwalte und lese Verträge, Handbücher, Angebote und Forschungs-PDFs auf einem Bildschirm. Antworten enthalten Quellen zum schnellen Prüfen."
+  },
+  "nav": {
+    "brand": "AskPDF",
+    "cta": "Kostenlos testen",
+    "links": {
+      "features": "Funktionen",
+      "compare": "Vergleich",
+      "pricing": "Preise",
+      "faq": "FAQ"
+    },
+    "langLabel": "Sprache"
+  },
+  "hero": {
+    "title": "Frage KI zu PDFs mit Zitaten",
+    "subtitle": "Verwalte, lese und befrage Verträge, Handbücher, Angebote und Papers in einem einzigen Workspace.",
+    "primaryCta": "Kostenlos testen",
+    "secondaryCta": "Preise ansehen",
+    "chips": ["Antworten mit Quellen", "Mehrsprachige UI", "Keine Installation"]
+  },
+  "trustLine": "AskPDF hilft Teams und Studierenden, tägliche PDF-Arbeit schneller und sicherer zu erledigen.",
+  "painsSection": {
+    "kicker": "Pain Points",
+    "title": "Häufige Probleme"
+  },
+  "pains": [
+    "Es dauert zu lange, wichtige Informationen in einem PDF zu finden.",
+    "KI-Antworten ohne sichtbare Belege erfordern weiterhin manuelle Prüfung.",
+    "Der Wechsel zwischen PDF-Viewer und KI-Tool unterbricht den Arbeitsfluss."
+  ],
+  "solutionSection": {
+    "kicker": "Solution",
+    "title": "Was dieser Service löst"
+  },
+  "solutionPoints": [
+    "Jede Antwort enthält Quellen, sodass du sofort prüfen kannst.",
+    "PDF-Verwaltung und Fragen in einem Bildschirm, ohne Toolwechsel.",
+    "Kostenlos starten und bei steigendem Bedarf auf Plus wechseln."
+  ],
+  "featuresSection": {
+    "kicker": "Features",
+    "title": "Kernfunktionen"
+  },
+  "featureDetails": [
+    {
+      "id": "pdf_management",
+      "title": "PDF-Verwaltung",
+      "description": "Organisiere Dateien in einer Liste und greife schnell auf Dokumente zu. Ordner-Support ist geplant."
+    },
+    {
+      "id": "pdf_viewing",
+      "title": "PDF-Ansicht",
+      "description": "Lies flüssig mit Markierungen und Unterstreichungen direkt im Viewer."
+    },
+    {
+      "id": "tabs",
+      "title": "Tabs",
+      "description": "Wechsle PDFs schnell über Tabs oben. Geöffnete Dateien werden für schnelles Wiederanzeigen optimiert."
+    },
+    {
+      "id": "annotation_minimap",
+      "title": "Anmerkungs-Minimap",
+      "description": "Springe per Klick aus der Minimap zu markierten Stellen."
+    },
+    {
+      "id": "chat",
+      "title": "Chat",
+      "description": "Stelle der KI Fragen zu deinem PDF mit Quellen und nutze mehrere Chats pro Datei."
+    },
+    {
+      "id": "pdf_search",
+      "title": "PDF-Suche",
+      "description": "Suche im Dokumenttext, um wichtige Passagen schneller zu finden."
+    },
+    {
+      "id": "ocr",
+      "title": "OCR",
+      "description": "Funktioniert mit Bild-PDFs und handschriftlichen Dokumenten für Chat, Suche und Markierung."
+    },
+    {
+      "id": "shortcut",
+      "title": "Shortcuts",
+      "description": "Nutze Tastenkürzel für Kernaktionen und arbeite im Alltag schneller."
+    }
+  ],
+  "stepsSection": {
+    "kicker": "How It Works",
+    "title": "In 3 Schritten starten"
+  },
+  "steps": [
+    {
+      "title": "PDFs hochladen",
+      "description": "Analysiere mehrere Dokumente gleichzeitig."
+    },
+    {
+      "title": "Fragen stellen",
+      "description": "Gib im Chat ein, was du wissen willst."
+    },
+    {
+      "title": "Belege prüfen",
+      "description": "Sieh Antworten und Quellen nebeneinander an."
+    }
+  ],
+  "comparisonSection": {
+    "kicker": "Comparison",
+    "title": "Vergleich",
+    "headers": {
+      "topic": "Punkt",
+      "legacy": "Bisher",
+      "askPdf": "AskPDF"
+    }
+  },
+  "comparisonRows": [
+    {
+      "topic": "Quellenprüfung",
+      "legacy": "Quellenprüfung kostet Zeit",
+      "askPdf": "Quellen sofort sichtbar"
+    },
+    {
+      "topic": "Workflow",
+      "legacy": "Häufiger Toolwechsel",
+      "askPdf": "Kompletter Ablauf auf einem Bildschirm"
+    },
+    {
+      "topic": "Übersehene Stellen",
+      "legacy": "Manuelles erneutes Suchen nötig",
+      "askPdf": "Von Antwort direkt zur passenden Stelle"
+    },
+    {
+      "topic": "Dokumenttypen",
+      "legacy": "Handschrift-/Bild-PDFs schwer nutzbar",
+      "askPdf": "Handschriftliche und Bild-PDFs unterstützt"
+    }
+  ],
+  "pricingSection": {
+    "kicker": "Pricing",
+    "title": "Tarife",
+    "cta": {
+      "plus": "Plus starten",
+      "default": "Kostenlos testen"
+    }
+  },
+  "plans": [
+    {
+      "name": "Guest",
+      "priceAmount": "¥0",
+      "priceUnit": "/Monat",
+      "points": ["Keine Anmeldung nötig", "Max. PDFs: 1", "Max. Dateigröße: 10MB", "Chats pro Tag: 8"]
+    },
+    {
+      "name": "Free",
+      "priceAmount": "¥0",
+      "priceUnit": "/Monat",
+      "points": ["Für eingeloggte Nutzer", "Max. PDFs: 5", "Max. Dateigröße: 20MB", "Chats pro Tag: 20"]
+    },
+    {
+      "name": "Plus",
+      "priceAmount": "¥1,980",
+      "priceUnit": "/Monat",
+      "featured": true,
+      "points": ["Für intensive Nutzung", "Max. PDFs: 50", "Max. Dateigröße: 50MB", "Chats pro Tag: 120"]
+    }
+  ],
+  "faqSection": {
+    "kicker": "FAQ",
+    "title": "FAQ",
+    "qPrefix": "Q.",
+    "aPrefix": "A."
+  },
+  "faqs": [
+    {
+      "question": "Welche PDF-Arten werden unterstützt?",
+      "answer": "Verträge, interne Dokumente, Handbücher, Angebote, Papers und mehr."
+    },
+    {
+      "question": "Kann ich die Quellen der Antworten prüfen?",
+      "answer": "Ja. Du kannst die verlinkten Quellen beim Lesen jeder Antwort prüfen."
+    },
+    {
+      "question": "Kann ich es kostenlos testen?",
+      "answer": "Ja. Starte mit Free und wechsle jederzeit zu Plus."
+    },
+    {
+      "question": "Wie werden hochgeladene Daten behandelt?",
+      "answer": "Hochgeladene PDFs und Nutzungsdaten sind deinem Konto zugeordnet und in den Einstellungen löschbar."
+    },
+    {
+      "question": "Kann ich jederzeit kündigen?",
+      "answer": "Ja. Du kannst deinen Tarif jederzeit in den Einstellungen ändern oder kündigen."
+    }
+  ],
+  "footer": {
+    "note": "Starte kostenlos und wechsle zu Plus, wenn es zu deinem Workflow passt.",
+    "cta": "Kostenlos testen",
+    "links": {
+      "features": "Funktionen",
+      "pricing": "Preise",
+      "faq": "FAQ",
+      "legal": "Impressum",
+      "terms": "Nutzungsbedingungen",
+      "privacy": "Datenschutz"
+    }
+  }
+}
