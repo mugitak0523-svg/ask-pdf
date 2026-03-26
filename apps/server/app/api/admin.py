@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, status
+from pydantic import BaseModel, Field
 
 from app.db import repository
 from app.services.auth import AuthDependency, AuthUser
@@ -12,6 +13,21 @@ from app.services.auth import AuthDependency, AuthUser
 
 router = APIRouter()
 _USD_JPY_FALLBACK_RATE = 150.0
+
+
+class AnnouncementCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=20000)
+    publish: bool = False
+
+
+class AdminMessageCreateRequest(BaseModel):
+    user_id: str = Field(min_length=1, max_length=100)
+    content: str = Field(min_length=1, max_length=5000)
+
+
+class ReadStateRequest(BaseModel):
+    read: bool
 
 
 async def _fetch_usd_to_jpy_rate() -> dict[str, Any]:
@@ -190,13 +206,13 @@ async def list_announcements(
 @router.post("/admin/announcements")
 async def create_announcement(
     request: Request,
-    payload: dict[str, Any],
+    payload: AnnouncementCreateRequest,
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
     _ensure_admin(request, user)
-    title = str(payload.get("title") or "").strip()
-    body = str(payload.get("body") or "").strip()
-    publish = bool(payload.get("publish"))
+    title = payload.title.strip()
+    body = payload.body.strip()
+    publish = payload.publish
     if not title or not body:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing title/body")
     status_value = "published" if publish else "draft"
@@ -233,12 +249,12 @@ async def list_messages(
 @router.post("/admin/messages")
 async def send_message(
     request: Request,
-    payload: dict[str, Any],
+    payload: AdminMessageCreateRequest,
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
     _ensure_admin(request, user)
-    user_id = str(payload.get("user_id") or "").strip()
-    content = str(payload.get("content") or "").strip()
+    user_id = payload.user_id.strip()
+    content = payload.content.strip()
     if not user_id or not content:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing user_id/content")
     row = await repository.create_user_message(
@@ -255,15 +271,14 @@ async def send_message(
 async def mark_message_read(
     request: Request,
     message_id: str,
-    payload: dict[str, Any],
+    payload: ReadStateRequest,
     user: AuthUser = AuthDependency,
 ) -> dict[str, str]:
     _ensure_admin(request, user)
-    read = bool(payload.get("read"))
     await repository.set_user_message_read_admin(
         request.app.state.db_pool,
         message_id=message_id,
-        read=read,
+        read=payload.read,
     )
     return {"status": "ok"}
 
@@ -308,14 +323,13 @@ async def get_unread_feedback_count(
 async def mark_feedback_read(
     request: Request,
     feedback_id: str,
-    payload: dict[str, Any],
+    payload: ReadStateRequest,
     user: AuthUser = AuthDependency,
 ) -> dict[str, str]:
     _ensure_admin(request, user)
-    read = bool(payload.get("read"))
     await repository.set_feedback_read_admin(
         request.app.state.db_pool,
         feedback_id=feedback_id,
-        read=read,
+        read=payload.read,
     )
     return {"status": "ok"}

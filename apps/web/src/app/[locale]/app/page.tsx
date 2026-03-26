@@ -9,7 +9,7 @@ import rehypeRaw from "rehype-raw";
 import { Link, usePathname, useRouter } from "@/i18n/navigation";
 import { PdfViewer } from "@/components/pdf-viewer/pdf-viewer";
 import { supabase } from "@/lib/supabase";
-import { privacyMd, termsMd, tokushoMd } from "@/content/legal";
+import { getPrivacyMd, getTermsMd, tokushoMd } from "@/content/legal";
 
 type ChatRef = {
   label: string;
@@ -127,7 +127,7 @@ const normalizePlanLimits = (
 });
 
 const PLAN_PRICES: Record<Exclude<PlanName, "guest">, string> = {
-  free: "¥0",
+  free: "$0",
   plus: "$10",
 };
 
@@ -361,6 +361,8 @@ const getNodeText = (node: React.ReactNode): string => {
 export default function Home() {
   const t = useTranslations("app");
   const locale = useLocale();
+  const termsMd = getTermsMd(locale);
+  const privacyMd = getPrivacyMd(locale);
   const router = useRouter();
   const pathname = usePathname();
   const containerRef = useRef<HTMLElement | null>(null);
@@ -3489,7 +3491,7 @@ export default function Home() {
       key: "price",
       label: t("planTablePrice"),
       values: {
-        guest: "¥0",
+        guest: "$0",
         free: PLAN_PRICES.free,
         plus: PLAN_PRICES.plus,
       },
@@ -4474,7 +4476,6 @@ export default function Home() {
                     <ReactMarkdown
                       className="markdown"
                       remarkPlugins={[remarkGfm]}
-                      rehypePlugins={[rehypeRaw]}
                     >
                       {termsMd}
                     </ReactMarkdown>
@@ -4492,7 +4493,6 @@ export default function Home() {
                     <ReactMarkdown
                       className="markdown"
                       remarkPlugins={[remarkGfm]}
-                      rehypePlugins={[rehypeRaw]}
                     >
                       {privacyMd}
                     </ReactMarkdown>

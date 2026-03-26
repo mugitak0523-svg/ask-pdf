@@ -280,6 +280,20 @@ def _enforce_file_size_limit(file_size: int, limits) -> None:
         )
 
 
+def _validate_pdf_upload(file: UploadFile, content: bytes) -> None:
+    content_type = (file.content_type or "").lower()
+    if content_type and content_type not in {"application/pdf", "application/x-pdf"}:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Only PDF uploads are supported",
+        )
+    if not content.startswith(b"%PDF-"):
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Invalid PDF file",
+        )
+
+
 async def _enforce_thread_limit(pool, user: AuthUser, document_id: str) -> None:
     _, limits = await _resolve_limits(pool, user)
     if limits.max_threads_per_document is None:
@@ -325,6 +339,7 @@ async def index_document(
     user: AuthUser = AuthDependency,
 ) -> dict[str, Any]:
     content = await file.read()
+    _validate_pdf_upload(file, content)
     pool = request.app.state.db_pool
     _, limits = await _resolve_limits(pool, user)
     active_uploads = await repository.count_active_uploads(pool, user.user_id)

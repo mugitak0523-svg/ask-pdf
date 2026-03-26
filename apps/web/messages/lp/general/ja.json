@@ -146,13 +146,13 @@
   "plans": [
     {
       "name": "Guest",
-      "priceAmount": "¥0",
+      "priceAmount": "$0",
       "priceUnit": "/月",
       "points": ["ログイン不要で利用開始", "最大PDF数: 1", "最大ファイルサイズ: 10MB", "1日のチャット数: 8"]
     },
     {
       "name": "Free",
-      "priceAmount": "¥0",
+      "priceAmount": "$0",
       "priceUnit": "/月",
       "points": ["ログインユーザー向け", "最大PDF数: 5", "最大ファイルサイズ: 20MB", "1日のチャット数: 20"]
     },

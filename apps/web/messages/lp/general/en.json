@@ -146,13 +146,13 @@
   "plans": [
     {
       "name": "Guest",
-      "priceAmount": "¥0",
+      "priceAmount": "$0",
       "priceUnit": "/month",
       "points": ["No login required", "Max PDFs: 1", "Max file size: 10MB", "Daily chats: 8"]
     },
     {
       "name": "Free",
-      "priceAmount": "¥0",
+      "priceAmount": "$0",
       "priceUnit": "/month",
       "points": ["For logged-in users", "Max PDFs: 5", "Max file size: 20MB", "Daily chats: 20"]
     },

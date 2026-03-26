@@ -146,13 +146,13 @@
   "plans": [
     {
       "name": "Guest",
-      "priceAmount": "¥0",
+      "priceAmount": "$0",
       "priceUnit": "/月",
       "points": ["无需登录即可使用", "PDF 上限：1", "文件大小上限：10MB", "每日聊天次数：8"]
     },
     {
       "name": "Free",
-      "priceAmount": "¥0",
+      "priceAmount": "$0",
       "priceUnit": "/月",
       "points": ["适用于登录用户", "PDF 上限：5", "文件大小上限：20MB", "每日聊天次数：20"]
     },

@@ -7,12 +7,17 @@ import logging
 import anyio
 import stripe
 from fastapi import APIRouter, HTTPException, Request, status
+from pydantic import BaseModel
 
 from app.db import repository
 from app.services.auth import AuthDependency, AuthUser
 
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
+
+
+class CheckoutRequest(BaseModel):
+    plan: str
 
 
 def _get_stripe_config(request: Request) -> dict[str, str]:
@@ -215,10 +220,10 @@ async def _get_upcoming_invoice(
 @router.post("/billing/checkout")
 async def create_checkout(
     request: Request,
-    payload: dict[str, Any],
+    payload: CheckoutRequest,
     user: AuthUser = AuthDependency,
 ) -> dict[str, str]:
-    plan = str(payload.get("plan") or "")
+    plan = payload.plan.strip()
     if plan not in {"plus"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid plan")
 

@@ -146,13 +146,13 @@
   "plans": [
     {
       "name": "Guest",
-      "priceAmount": "¥0",
+      "priceAmount": "$0",
       "priceUnit": "/월",
       "points": ["로그인 없이 시작", "최대 PDF: 1", "최대 파일 크기: 10MB", "일일 채팅: 8"]
     },
     {
       "name": "Free",
-      "priceAmount": "¥0",
+      "priceAmount": "$0",
       "priceUnit": "/월",
       "points": ["로그인 사용자용", "최대 PDF: 5", "최대 파일 크기: 20MB", "일일 채팅: 20"]
     },
