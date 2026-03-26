@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { supabase } from "@/lib/supabase";
 
@@ -14,6 +15,7 @@ export default function SignupPage() {
   const [resending, setResending] = useState(false);
   const params = useParams();
   const locale = typeof params?.locale === "string" ? params.locale : null;
+  const t = useTranslations("app.auth");
 
   const handleSignUp = async () => {
     setError(null);
@@ -30,11 +32,11 @@ export default function SignupPage() {
     if (authError) {
       setError(authError.message);
     } else if (data.session) {
-      setNotice("登録が完了しました。すぐにログインできます。");
+      setNotice(t("signupComplete"));
     } else if ((data.user?.identities?.length ?? 0) === 0) {
-      setError("このメールアドレスのアカウントは既に存在します。ログインしてください。");
+      setError(t("signupAlreadyExists"));
     } else {
-      setNotice("確認メールを送信しました。メールを確認して認証してください。");
+      setNotice(t("signupConfirmSent"));
     }
     setLoading(false);
   };
@@ -42,7 +44,7 @@ export default function SignupPage() {
   const handleResendConfirmation = async () => {
     const targetEmail = email.trim();
     if (!targetEmail) {
-      setError("メールアドレスを入力してください。");
+      setError(t("resetEmailRequired"));
       return;
     }
     setError(null);
@@ -59,7 +61,7 @@ export default function SignupPage() {
     if (resendError) {
       setError(resendError.message);
     } else {
-      setNotice("確認メールを再送しました。迷惑メールフォルダも確認してください。");
+      setNotice(t("resendSent"));
     }
     setResending(false);
   };
@@ -81,15 +83,15 @@ export default function SignupPage() {
   return (
     <main className="auth-page">
       <div className="auth-card">
-        <Link className="auth-brand" href="/" aria-label="ホームへ">
+        <Link className="auth-brand" href="/" aria-label={t("backHome")}>
           <span className="logo" aria-hidden="true">
             <img className="logo__icon" src="/icon.svg" alt="" />
           </span>
           <span className="brand">AskPDF</span>
         </Link>
-        <h1>サインアップ</h1>
+        <h1>{t("signUp")}</h1>
         <label className="field">
-          <span>Email</span>
+          <span>{t("email")}</span>
           <input
             type="email"
             value={email}
@@ -98,7 +100,7 @@ export default function SignupPage() {
           />
         </label>
         <label className="field">
-          <span>Password</span>
+          <span>{t("password")}</span>
           <input
             type="password"
             value={password}
@@ -109,7 +111,7 @@ export default function SignupPage() {
         {notice ? <p className="auth-notice">{notice}</p> : null}
         {error ? <p className="auth-error">{error}</p> : null}
         <button className="primary" type="button" onClick={handleSignUp} disabled={loading}>
-          サインアップ
+          {t("signUp")}
         </button>
         <button
           className="ghost"
@@ -117,7 +119,7 @@ export default function SignupPage() {
           onClick={handleResendConfirmation}
           disabled={loading || resending}
         >
-          {resending ? "再送中..." : "確認メールを再送"}
+          {resending ? t("resending") : t("resendConfirmation")}
         </button>
         <button className="ghost oauth" type="button" onClick={handleGoogle} disabled={loading}>
           <span className="g-icon" aria-hidden="true">
@@ -140,10 +142,10 @@ export default function SignupPage() {
               />
             </svg>
           </span>
-          Googleで続行
+          {t("continueWithGoogle")}
         </button>
         <p className="auth-alt">
-          すでにアカウントがある場合は <Link href="/login">サインイン</Link>
+          {t("alreadyHaveAccount")} <Link href="/login">{t("signIn")}</Link>
         </p>
       </div>
     </main>

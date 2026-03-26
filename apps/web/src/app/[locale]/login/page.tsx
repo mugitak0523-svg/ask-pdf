@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { supabase } from "@/lib/supabase";
 
@@ -14,6 +15,7 @@ export default function LoginPage() {
   const params = useParams();
   const locale = typeof params?.locale === "string" ? params.locale : null;
   const router = useRouter();
+  const t = useTranslations("app.auth");
 
   const handleSignIn = async () => {
     setError(null);
@@ -51,7 +53,7 @@ export default function LoginPage() {
     setError(null);
     setNotice(null);
     if (!email.trim()) {
-      setError("メールアドレスを入力してください。");
+      setError(t("resetEmailRequired"));
       return;
     }
     setLoading(true);
@@ -64,7 +66,7 @@ export default function LoginPage() {
     if (authError) {
       setError(authError.message);
     } else {
-      setNotice("パスワードリセットのメールを送信しました。メールをご確認ください。");
+      setNotice(t("resetEmailSent"));
     }
     setLoading(false);
   };
@@ -72,15 +74,15 @@ export default function LoginPage() {
   return (
     <main className="auth-page">
       <div className="auth-card">
-        <Link className="auth-brand" href="/" aria-label="ホームへ">
+        <Link className="auth-brand" href="/" aria-label={t("backHome")}>
           <span className="logo" aria-hidden="true">
             <img className="logo__icon" src="/icon.svg" alt="" />
           </span>
           <span className="brand">AskPDF</span>
         </Link>
-        <h1>サインイン</h1>
+        <h1>{t("signIn")}</h1>
         <label className="field">
-          <span>Email</span>
+          <span>{t("email")}</span>
           <input
             type="email"
             value={email}
@@ -89,7 +91,7 @@ export default function LoginPage() {
           />
         </label>
         <label className="field">
-          <span>Password</span>
+          <span>{t("password")}</span>
           <input
             type="password"
             value={password}
@@ -100,10 +102,10 @@ export default function LoginPage() {
         {notice ? <p className="auth-notice">{notice}</p> : null}
         {error ? <p className="auth-error">{error}</p> : null}
         <button className="primary" type="button" onClick={handleSignIn} disabled={loading}>
-          ログイン
+          {t("loginButton")}
         </button>
         <button className="ghost" type="button" onClick={handleResetPassword} disabled={loading}>
-          パスワードを忘れた場合
+          {t("forgotPassword")}
         </button>
         <button className="ghost oauth" type="button" onClick={handleGoogle} disabled={loading}>
           <span className="g-icon" aria-hidden="true">
@@ -126,10 +128,10 @@ export default function LoginPage() {
               />
             </svg>
           </span>
-          Googleで続行
+          {t("continueWithGoogle")}
         </button>
         <p className="auth-alt">
-          アカウントが無い場合は <Link href="/signup">新規登録</Link>
+          {t("noAccount")} <Link href="/signup">{t("signUp")}</Link>
         </p>
       </div>
     </main>
