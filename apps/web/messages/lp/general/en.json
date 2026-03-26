@@ -158,7 +158,7 @@
     },
     {
       "name": "Plus",
-      "priceAmount": "¥1,980",
+      "priceAmount": "$10",
       "priceUnit": "/month",
       "featured": true,
       "points": ["For heavy usage", "Max PDFs: 50", "Max file size: 50MB", "Daily chats: 120"]

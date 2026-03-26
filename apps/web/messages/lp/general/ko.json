@@ -158,7 +158,7 @@
     },
     {
       "name": "Plus",
-      "priceAmount": "¥1,980",
+      "priceAmount": "$10",
       "priceUnit": "/월",
       "featured": true,
       "points": ["헤비 유저용", "최대 PDF: 50", "최대 파일 크기: 50MB", "일일 채팅: 120"]

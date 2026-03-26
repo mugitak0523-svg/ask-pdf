@@ -158,7 +158,7 @@
     },
     {
       "name": "Plus",
-      "priceAmount": "¥1,980",
+      "priceAmount": "$10",
       "priceUnit": "/月",
       "featured": true,
       "points": ["适合重度使用", "PDF 上限：50", "文件大小上限：50MB", "每日聊天次数：120"]

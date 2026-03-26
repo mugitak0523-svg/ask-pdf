@@ -128,7 +128,7 @@ const normalizePlanLimits = (
 
 const PLAN_PRICES: Record<Exclude<PlanName, "guest">, string> = {
   free: "¥0",
-  plus: "¥1,980",
+  plus: "$10",
 };
 
 const STORAGE_KEY = "askpdf.ui.v1";
