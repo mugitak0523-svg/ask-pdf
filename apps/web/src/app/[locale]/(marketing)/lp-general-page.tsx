@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { getLpGeneralContent } from "@/content/lp/general";
 import { Link } from "@/i18n/navigation";
 import { routing } from "@/i18n/routing";
+import { siteUrl } from "@/lib/site.server";
 
 import { LpSignupCta, LpViewTracker } from "./lp/general/lp-events";
 import { LpHeroVideo } from "./lp/general/lp-hero-video";
@@ -14,7 +15,6 @@ type LpPageProps = {
   };
 };
 
-const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 const ogImagePath = "/lp-hero-image.jpg";
 
 const ogLocaleMap: Record<string, string> = {
@@ -61,11 +61,11 @@ export async function generateMetadata({ params }: LpPageProps): Promise<Metadat
   const content = getLpGeneralContent(locale);
   const title = content.meta.title;
   const description = content.meta.description;
-  const canonical = `${appUrl}/${locale}`;
+  const canonical = `${siteUrl}/${locale}`;
   const languageAlternates: Record<string, string> = Object.fromEntries(
-    routing.locales.map((item) => [item, `${appUrl}/${item}`])
+    routing.locales.map((item) => [item, `${siteUrl}/${item}`])
   );
-  languageAlternates["x-default"] = `${appUrl}/${routing.defaultLocale}`;
+  languageAlternates["x-default"] = `${siteUrl}/${routing.defaultLocale}`;
   const openGraphLocale = ogLocaleMap[locale] ?? ogLocaleMap.en;
   const openGraphAlternateLocales = routing.locales
     .filter((item) => item !== locale)
@@ -73,7 +73,7 @@ export async function generateMetadata({ params }: LpPageProps): Promise<Metadat
     .filter(Boolean);
 
   return {
-    metadataBase: new URL(appUrl),
+    metadataBase: new URL(siteUrl),
     title,
     description,
     keywords: keywordMap[locale] ?? keywordMap.en,
@@ -307,7 +307,7 @@ export default function LpGeneralPage({ params }: LpPageProps) {
   const locale = routing.locales.includes(requestedLocale as (typeof routing.locales)[number])
     ? requestedLocale
     : routing.defaultLocale;
-  const canonicalUrl = `${appUrl}/${locale}`;
+  const canonicalUrl = `${siteUrl}/${locale}`;
   const content = getLpGeneralContent(locale);
   const faqPageLd = {
     "@context": "https://schema.org",
@@ -325,14 +325,14 @@ export default function LpGeneralPage({ params }: LpPageProps) {
     "@context": "https://schema.org",
     "@type": "Organization",
     name: "AskPDF",
-    url: appUrl,
-    logo: `${appUrl}/icon.svg`,
+    url: siteUrl,
+    logo: `${siteUrl}/icon.svg`,
   };
   const websiteLd = {
     "@context": "https://schema.org",
     "@type": "WebSite",
     name: "AskPDF",
-    url: appUrl,
+    url: siteUrl,
     inLanguage: locale,
   };
   const breadcrumbLd = {
@@ -705,9 +705,9 @@ export default function LpGeneralPage({ params }: LpPageProps) {
             <a href="#faq" className={styles.siteFooterLink}>
               {content.footer.links.faq}
             </a>
-            <a href={`/${locale}/tokushoho`} className={styles.siteFooterLink}>
+            <Link href="/tokushoho" locale="ja" className={styles.siteFooterLink}>
               {content.footer.links.legal}
-            </a>
+            </Link>
             <a href={`/${locale}/terms`} className={styles.siteFooterLink}>
               {content.footer.links.terms}
             </a>

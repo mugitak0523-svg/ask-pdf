@@ -4504,7 +4504,7 @@ export default function Home() {
               <div>
                 <div className="settings__item-title">{t("servicePolicyTokushoTitle")}</div>
                 <div className="settings__item-actions">
-                  <Link className="settings__btn" href="/tokushoho">
+                  <Link className="settings__btn" href="/tokushoho" locale="ja">
                     {t("open")}
                   </Link>
                 </div>

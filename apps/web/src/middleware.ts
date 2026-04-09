@@ -4,6 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { routing } from "./i18n/routing";
 
 const intlMiddleware = createMiddleware(routing);
+const noindexHeaderValue = "noindex, nofollow, noarchive";
 
 const buildContentSecurityPolicy = () =>
   [
@@ -60,6 +61,23 @@ const isAdminPath = (pathname: string) => {
   );
 };
 
+const isAppPath = (pathname: string) => {
+  if (pathname === "/app" || pathname.startsWith("/app/")) return true;
+  return routing.locales.some(
+    (locale) => pathname === `/${locale}/app` || pathname.startsWith(`/${locale}/app/`)
+  );
+};
+
+const isAuthPath = (pathname: string) =>
+  routing.locales.some((locale) =>
+    [`/${locale}/login`, `/${locale}/signup`, `/${locale}/reset`].some(
+      (path) => pathname === path || pathname.startsWith(`${path}/`)
+    )
+  );
+
+const isNoindexPath = (pathname: string) =>
+  isAdminPath(pathname) || isAppPath(pathname) || isAuthPath(pathname);
+
 const getAdminAuthConfig = () => ({
   user: process.env.ADMIN_BASIC_AUTH_USER ?? "",
   pass: process.env.ADMIN_BASIC_AUTH_PASS ?? "",
@@ -103,7 +121,7 @@ export default function middleware(request: NextRequest) {
         status: 401,
         headers: {
           "WWW-Authenticate": 'Basic realm="Admin Console"',
-          "X-Robots-Tag": "noindex, nofollow, noarchive",
+          "X-Robots-Tag": noindexHeaderValue,
         },
       });
       applySecurityHeaders(response);
@@ -114,8 +132,8 @@ export default function middleware(request: NextRequest) {
   const response = intlMiddleware(request);
   applySecurityHeaders(response);
 
-  if (isAdminPath(pathname)) {
-    response.headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
+  if (isNoindexPath(pathname)) {
+    response.headers.set("X-Robots-Tag", noindexHeaderValue);
   }
 
   return response;

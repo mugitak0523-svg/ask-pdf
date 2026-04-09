@@ -171,6 +171,431 @@ These Terms may be changed without prior notice.
 These Terms are governed by the laws of Japan.
 `;
 
+// source: legal/terms-of-service/es/2026-02-12.md
+export const termsEsMd = `# Términos del Servicio
+
+Última actualización: 12 de febrero de 2026
+
+Estos Términos del Servicio ("Términos") establecen las condiciones de uso de este servicio ("Servicio"). Al utilizar el Servicio, los usuarios aceptan estos Términos.
+
+## Artículo 1 (Definiciones)
+
+- "Usuario" significa cualquier persona que utilice el Servicio.
+- "Usuario registrado" significa un usuario que ha creado una cuenta.
+- "Contenido" significa los PDF, textos, imágenes y otros datos cargados o introducidos por los usuarios.
+
+## Artículo 2 (Descripción general del Servicio)
+
+1. El Servicio analiza los PDF cargados por los usuarios y proporciona respuestas de chat basadas en IA sobre su contenido.
+2. El Servicio ofrece planes gratuitos y de pago.
+3. El operador puede cambiar, suspender o discontinuar el Servicio sin previo aviso.
+
+## Artículo 3 (Cuentas)
+
+1. Los usuarios deben proporcionar información exacta al registrarse.
+2. Los usuarios son responsables de la gestión de las credenciales de su cuenta.
+3. El operador puede suspender una cuenta si se sospecha un uso no autorizado.
+
+## Artículo 4 (Tarifas y pago)
+
+1. Los planes de pago se facturan según el precio mensual mostrado en el momento de la compra.
+2. Los pagos se procesan mediante proveedores externos de pago como Stripe.
+3. En principio, no se ofrecen reembolsos por cancelaciones a mitad del período.
+4. Las tarifas y el contenido de los planes pueden cambiar.
+5. La información de pago es gestionada por el proveedor de pago y nosotros no almacenamos datos de tarjetas.
+
+## Artículo 5 (Conductas prohibidas)
+
+Los usuarios no deben:
+
+- Violar leyes o normativas aplicables
+- Cargar PDF que infrinjan derechos de autor u otros derechos
+- Obtener o divulgar indebidamente información personal
+- Imponer una carga excesiva al sistema
+- Realizar ingeniería inversa del Servicio
+- Acceder al Servicio sin autorización
+
+Si se confirma una infracción, el operador podrá suspender o eliminar la cuenta.
+
+## Artículo 6 (Tratamiento del contenido)
+
+1. Los usuarios declaran que poseen los derechos necesarios para cargar su contenido.
+2. El Servicio puede almacenar temporalmente contenido para su procesamiento por IA.
+3. El operador puede utilizar información estadística para mejorar el Servicio.
+4. Si un titular de derechos solicita la eliminación, podremos eliminar el contenido correspondiente y suspender la cuenta relacionada cuando sea necesario.
+
+## Artículo 7 (Naturaleza de las respuestas de IA)
+
+1. Las respuestas proporcionadas por el Servicio son generadas por IA y no se garantiza su exactitud.
+2. El uso con fines médicos, legales, de inversión u otros fines especializados es responsabilidad exclusiva del usuario.
+3. Los usuarios son responsables de verificar la exactitud y adecuación del resultado generado.
+4. Los usuarios son responsables de tratar el resultado generado conforme a las leyes aplicables y a los términos de terceros.
+
+## Artículo 8 (Exención de responsabilidad)
+
+El operador no será responsable de los daños derivados del uso del Servicio, incluidas interrupciones del servicio, pérdida de datos, fallos de API externas o fallos de pago.
+
+## Artículo 9 (Propiedad intelectual)
+
+Los derechos de autor, marcas y demás derechos de propiedad intelectual relacionados con el Servicio pertenecen al operador.
+
+## Artículo 10 (Restricciones por uso excesivo)
+
+Si el uso excede el uso normal o impone una carga elevada al sistema, el operador podrá restringir o suspender el acceso.
+
+## Artículo 11 (Uso por menores)
+
+Los menores solo pueden utilizar el Servicio con el consentimiento de su padre, madre o tutor legal.
+
+## Artículo 12 (Cambios en los Términos)
+
+Estos Términos pueden modificarse sin previo aviso.
+
+## Artículo 13 (Ley aplicable)
+
+Estos Términos se rigen por las leyes de Japón.
+`;
+
+// source: legal/terms-of-service/fr/2026-02-12.md
+export const termsFrMd = `# Conditions d'utilisation
+
+Dernière mise à jour : 12 février 2026
+
+Les présentes conditions d'utilisation (« Conditions ») définissent les modalités d'utilisation de ce service (« Service »). En utilisant le Service, les utilisateurs acceptent les présentes Conditions.
+
+## Article 1 (Définitions)
+
+- « Utilisateur » désigne toute personne qui utilise le Service.
+- « Utilisateur enregistré » désigne un utilisateur ayant créé un compte.
+- « Contenu » désigne les PDF, textes, images et autres données téléchargés ou saisis par les utilisateurs.
+
+## Article 2 (Présentation du Service)
+
+1. Le Service analyse les PDF téléchargés par les utilisateurs et fournit des réponses de chat basées sur l'IA concernant leur contenu.
+2. Le Service propose des offres gratuites et payantes.
+3. L'exploitant peut modifier, suspendre ou interrompre le Service sans préavis.
+
+## Article 3 (Comptes)
+
+1. Les utilisateurs doivent fournir des informations exactes lors de l'inscription.
+2. Les utilisateurs sont responsables de la gestion de leurs identifiants de compte.
+3. L'exploitant peut suspendre un compte en cas de suspicion d'utilisation non autorisée.
+
+## Article 4 (Frais et paiement)
+
+1. Les offres payantes sont facturées sur la base du prix mensuel affiché au moment de l'achat.
+2. Les paiements sont traités par des prestataires externes tels que Stripe.
+3. En principe, aucun remboursement n'est accordé en cas de résiliation en cours de période.
+4. Les frais et les détails des offres peuvent être modifiés.
+5. Les informations de paiement sont gérées par le prestataire de paiement et nous ne conservons pas les données de carte.
+
+## Article 5 (Comportements interdits)
+
+Les utilisateurs ne doivent pas :
+
+- Violer les lois ou réglementations applicables
+- Télécharger des PDF portant atteinte aux droits d'auteur ou à d'autres droits
+- Obtenir ou divulguer de manière inappropriée des informations personnelles
+- Imposer une charge excessive au système
+- Procéder à l'ingénierie inverse du Service
+- Accéder au Service sans autorisation
+
+En cas de violation confirmée, l'exploitant peut suspendre ou supprimer le compte.
+
+## Article 6 (Traitement du contenu)
+
+1. Les utilisateurs déclarent disposer des droits nécessaires pour télécharger leur contenu.
+2. Le Service peut stocker temporairement du contenu pour le traitement par l'IA.
+3. L'exploitant peut utiliser des informations statistiques pour améliorer le Service.
+4. Si un titulaire de droits demande une suppression, nous pouvons supprimer le contenu concerné et suspendre le compte associé si nécessaire.
+
+## Article 7 (Nature des réponses de l'IA)
+
+1. Les réponses fournies par le Service sont générées par l'IA et leur exactitude n'est pas garantie.
+2. Toute utilisation à des fins médicales, juridiques, d'investissement ou autres usages spécialisés relève de la seule responsabilité de l'utilisateur.
+3. Les utilisateurs sont responsables de la vérification de l'exactitude et de la pertinence des résultats générés.
+4. Les utilisateurs sont responsables de l'utilisation des résultats générés conformément aux lois applicables et aux conditions des tiers.
+
+## Article 8 (Clause de non-responsabilité)
+
+L'exploitant n'est pas responsable des dommages résultant de l'utilisation du Service, y compris les interruptions du service, les pertes de données, les défaillances d'API externes ou les défaillances de paiement.
+
+## Article 9 (Propriété intellectuelle)
+
+Les droits d'auteur, marques et autres droits de propriété intellectuelle liés au Service appartiennent à l'exploitant.
+
+## Article 10 (Restrictions en cas d'utilisation excessive)
+
+Si l'utilisation dépasse l'usage normal ou impose une forte charge au système, l'exploitant peut restreindre ou suspendre l'accès.
+
+## Article 11 (Utilisation par les mineurs)
+
+Les mineurs ne peuvent utiliser le Service qu'avec le consentement d'un parent ou d'un représentant légal.
+
+## Article 12 (Modification des Conditions)
+
+Les présentes Conditions peuvent être modifiées sans préavis.
+
+## Article 13 (Droit applicable)
+
+Les présentes Conditions sont régies par le droit japonais.
+`;
+
+// source: legal/terms-of-service/de/2026-02-12.md
+export const termsDeMd = `# Nutzungsbedingungen
+
+Letzte Aktualisierung: 12. Februar 2026
+
+Diese Nutzungsbedingungen („Bedingungen“) legen die Bedingungen für die Nutzung dieses Dienstes („Dienst“) fest. Durch die Nutzung des Dienstes erklären sich die Nutzer mit diesen Bedingungen einverstanden.
+
+## Artikel 1 (Definitionen)
+
+- „Nutzer“ bezeichnet jede Person, die den Dienst nutzt.
+- „Registrierter Nutzer“ bezeichnet einen Nutzer, der ein Konto erstellt hat.
+- „Inhalte“ bezeichnet PDFs, Texte, Bilder und sonstige Daten, die von Nutzern hochgeladen oder eingegeben werden.
+
+## Artikel 2 (Überblick über den Dienst)
+
+1. Der Dienst analysiert von Nutzern hochgeladene PDFs und stellt KI-basierte Chat-Antworten zu deren Inhalt bereit.
+2. Der Dienst bietet sowohl kostenlose als auch kostenpflichtige Tarife an.
+3. Der Betreiber kann den Dienst ohne vorherige Ankündigung ändern, aussetzen oder einstellen.
+
+## Artikel 3 (Konten)
+
+1. Nutzer müssen bei der Registrierung korrekte Angaben machen.
+2. Nutzer sind für die Verwaltung ihrer Kontodaten selbst verantwortlich.
+3. Der Betreiber kann ein Konto sperren, wenn ein unbefugter Gebrauch vermutet wird.
+
+## Artikel 4 (Gebühren und Zahlung)
+
+1. Kostenpflichtige Tarife werden auf Grundlage des zum Zeitpunkt des Kaufs angezeigten Monatspreises berechnet.
+2. Zahlungen werden über externe Zahlungsanbieter wie Stripe abgewickelt.
+3. Bei einer Kündigung während der laufenden Periode werden grundsätzlich keine Rückerstattungen gewährt.
+4. Gebühren und Tarifinhalte können geändert werden.
+5. Zahlungsinformationen werden vom Zahlungsanbieter verwaltet; wir speichern keine Kartendaten.
+
+## Artikel 5 (Verbotene Handlungen)
+
+Nutzer dürfen nicht:
+
+- Gegen geltende Gesetze oder Vorschriften verstoßen
+- PDFs hochladen, die Urheberrechte oder andere Rechte verletzen
+- Personenbezogene Daten unrechtmäßig beschaffen oder offenlegen
+- Das System übermäßig belasten
+- Den Dienst zurückentwickeln
+- Unbefugt auf den Dienst zugreifen
+
+Wird ein Verstoß festgestellt, kann der Betreiber das Konto sperren oder löschen.
+
+## Artikel 6 (Umgang mit Inhalten)
+
+1. Nutzer sichern zu, dass sie über die erforderlichen Rechte zum Hochladen ihrer Inhalte verfügen.
+2. Der Dienst kann Inhalte zur KI-Verarbeitung vorübergehend speichern.
+3. Der Betreiber kann statistische Informationen zur Verbesserung des Dienstes verwenden.
+4. Wenn ein Rechteinhaber die Löschung verlangt, können wir die betreffenden Inhalte löschen und das zugehörige Konto bei Bedarf sperren.
+
+## Artikel 7 (Charakter von KI-Antworten)
+
+1. Die vom Dienst bereitgestellten Antworten werden durch KI erzeugt und ihre Richtigkeit wird nicht garantiert.
+2. Die Nutzung für medizinische, rechtliche, finanzielle oder andere spezialisierte Zwecke erfolgt auf eigenes Risiko des Nutzers.
+3. Nutzer sind dafür verantwortlich, die Richtigkeit und Eignung der erzeugten Ergebnisse zu überprüfen.
+4. Nutzer sind dafür verantwortlich, erzeugte Ergebnisse im Einklang mit geltendem Recht und den Bedingungen Dritter zu verwenden.
+
+## Artikel 8 (Haftungsausschluss)
+
+Der Betreiber haftet nicht für Schäden, die aus der Nutzung des Dienstes entstehen, einschließlich Dienstausfällen, Datenverlusten, Ausfällen externer APIs oder Zahlungsstörungen.
+
+## Artikel 9 (Geistiges Eigentum)
+
+Urheberrechte, Markenrechte und sonstige Rechte des geistigen Eigentums im Zusammenhang mit dem Dienst stehen dem Betreiber zu.
+
+## Artikel 10 (Beschränkungen bei übermäßiger Nutzung)
+
+Wenn die Nutzung den normalen Rahmen überschreitet oder das System stark belastet, kann der Betreiber den Zugang beschränken oder aussetzen.
+
+## Artikel 11 (Nutzung durch Minderjährige)
+
+Minderjährige dürfen den Dienst nur mit Zustimmung eines Elternteils oder gesetzlichen Vertreters nutzen.
+
+## Artikel 12 (Änderungen der Bedingungen)
+
+Diese Bedingungen können ohne vorherige Ankündigung geändert werden.
+
+## Artikel 13 (Anwendbares Recht)
+
+Diese Bedingungen unterliegen dem Recht Japans.
+`;
+
+// source: legal/terms-of-service/ko/2026-02-12.md
+export const termsKoMd = `# 서비스 이용약관
+
+최종 업데이트: 2026년 2월 12일
+
+본 서비스 이용약관(이하 "약관")은 본 서비스(이하 "서비스")의 이용 조건을 정합니다. 사용자는 서비스를 이용함으로써 본 약관에 동의한 것으로 봅니다.
+
+## 제1조(정의)
+
+- "사용자"란 서비스를 이용하는 모든 사람을 말합니다.
+- "등록 사용자"란 계정을 생성한 사용자를 말합니다.
+- "콘텐츠"란 사용자가 업로드하거나 입력한 PDF, 텍스트, 이미지 및 기타 데이터를 말합니다.
+
+## 제2조(서비스 개요)
+
+1. 서비스는 사용자가 업로드한 PDF를 분석하고, 그 내용에 대해 AI 기반 채팅 응답을 제공합니다.
+2. 서비스는 무료 플랜과 유료 플랜을 모두 제공합니다.
+3. 운영자는 사전 통지 없이 서비스를 변경, 중단 또는 종료할 수 있습니다.
+
+## 제3조(계정)
+
+1. 사용자는 등록 시 정확한 정보를 제공해야 합니다.
+2. 사용자는 자신의 계정 정보 관리에 대한 책임을 집니다.
+3. 무단 사용이 의심되는 경우 운영자는 계정을 정지할 수 있습니다.
+
+## 제4조(요금 및 결제)
+
+1. 유료 플랜은 구매 시 표시된 월간 요금을 기준으로 청구됩니다.
+2. 결제는 Stripe와 같은 외부 결제 제공업체를 통해 처리됩니다.
+3. 원칙적으로 이용 기간 중도 해지에 대한 환불은 제공되지 않습니다.
+4. 요금 및 플랜 내용은 변경될 수 있습니다.
+5. 결제 정보는 결제 제공업체가 관리하며, 당사는 카드 정보를 저장하지 않습니다.
+
+## 제5조(금지 행위)
+
+사용자는 다음 행위를 해서는 안 됩니다.
+
+- 관련 법령 또는 규정을 위반하는 행위
+- 저작권 또는 기타 권리를 침해하는 PDF를 업로드하는 행위
+- 개인정보를 부정하게 취득하거나 공개하는 행위
+- 시스템에 과도한 부하를 주는 행위
+- 서비스를 리버스 엔지니어링하는 행위
+- 무단으로 서비스에 접근하는 행위
+
+위반이 확인되면 운영자는 계정을 정지하거나 삭제할 수 있습니다.
+
+## 제6조(콘텐츠의 취급)
+
+1. 사용자는 자신이 업로드하는 콘텐츠에 대해 필요한 권리를 보유하고 있음을 진술하고 보증합니다.
+2. 서비스는 AI 처리 목적상 콘텐츠를 일시적으로 저장할 수 있습니다.
+3. 운영자는 서비스 개선을 위해 통계 정보를 사용할 수 있습니다.
+4. 권리자가 삭제를 요청하는 경우, 필요에 따라 해당 콘텐츠를 삭제하고 관련 계정을 정지할 수 있습니다.
+
+## 제7조(AI 응답의 성격)
+
+1. 서비스가 제공하는 응답은 AI가 생성한 것으로, 정확성을 보장하지 않습니다.
+2. 의료, 법률, 투자 등 전문 분야 목적으로의 이용은 사용자의 책임 하에 이루어집니다.
+3. 생성된 결과의 정확성과 적절성은 사용자가 직접 확인해야 합니다.
+4. 생성된 결과물의 사용은 관련 법령 및 제3자 약관을 준수하여 사용자가 적절히 처리해야 합니다.
+
+## 제8조(면책사항)
+
+운영자는 서비스 이용으로 인해 발생하는 손해에 대해 책임을 지지 않으며, 여기에는 서비스 중단, 데이터 손실, 외부 API 장애 또는 결제 장애가 포함됩니다.
+
+## 제9조(지식재산권)
+
+서비스와 관련된 저작권, 상표권 및 기타 지식재산권은 운영자에게 귀속됩니다.
+
+## 제10조(과도한 이용의 제한)
+
+이용이 통상적인 범위를 초과하거나 시스템에 높은 부하를 주는 경우, 운영자는 접근을 제한하거나 정지할 수 있습니다.
+
+## 제11조(미성년자의 이용)
+
+미성년자는 부모 또는 법정대리인의 동의를 얻은 경우에만 서비스를 이용할 수 있습니다.
+
+## 제12조(약관 변경)
+
+본 약관은 사전 통지 없이 변경될 수 있습니다.
+
+## 제13조(준거법)
+
+본 약관은 일본 법률을 준거법으로 합니다.
+`;
+
+// source: legal/terms-of-service/zh/2026-02-12.md
+export const termsZhMd = `# 服务条款
+
+最后更新：2026年2月12日
+
+本服务条款（以下简称“条款”）规定了本服务（以下简称“服务”）的使用条件。用户使用本服务即表示同意本条款。
+
+## 第1条（定义）
+
+- “用户”指使用本服务的任何人。
+- “注册用户”指已创建账户的用户。
+- “内容”指用户上传或输入的 PDF、文本、图片及其他数据。
+
+## 第2条（服务概述）
+
+1. 本服务会分析用户上传的 PDF，并就其内容提供基于 AI 的聊天回答。
+2. 本服务同时提供免费方案和付费方案。
+3. 运营方可在不事先通知的情况下变更、暂停或终止本服务。
+
+## 第3条（账户）
+
+1. 用户在注册时必须提供准确的信息。
+2. 用户应自行负责管理其账户凭证。
+3. 如怀疑存在未经授权的使用，运营方可暂停相关账户。
+
+## 第4条（费用与支付）
+
+1. 付费方案按购买时显示的月度价格收费。
+2. 支付通过 Stripe 等外部支付服务提供商处理。
+3. 原则上，不对中途取消提供退款。
+4. 费用及方案内容可能发生变化。
+5. 支付信息由支付服务提供商管理，我们不保存银行卡信息。
+
+## 第5条（禁止行为）
+
+用户不得：
+
+- 违反适用的法律或法规
+- 上传侵犯版权或其他权利的 PDF
+- 不当获取或披露个人信息
+- 对系统施加过大负载
+- 对服务进行逆向工程
+- 未经授权访问服务
+
+如确认存在违规行为，运营方可暂停或删除账户。
+
+## 第6条（内容处理）
+
+1. 用户声明并保证其拥有上传内容所需的权利。
+2. 本服务可能会为 AI 处理而临时存储内容。
+3. 运营方可将统计信息用于改进服务。
+4. 如权利人提出删除请求，我们可在必要时删除相关内容并暂停相关账户。
+
+## 第7条（AI 回答的性质）
+
+1. 本服务提供的回答由 AI 生成，不保证其准确性。
+2. 将本服务用于医疗、法律、投资等专业用途所产生的风险由用户自行承担。
+3. 用户有责任核实生成结果的准确性和适当性。
+4. 用户有责任按照适用法律及第三方条款妥善处理生成结果。
+
+## 第8条（免责声明）
+
+对于因使用本服务而产生的损害，包括服务中断、数据丢失、外部 API 故障或支付故障，运营方概不负责。
+
+## 第9条（知识产权）
+
+与本服务相关的版权、商标及其他知识产权均归运营方所有。
+
+## 第10条（过度使用限制）
+
+如果使用超出正常范围或给系统带来较高负载，运营方可限制或暂停访问。
+
+## 第11条（未成年人使用）
+
+未成年人仅可在父母或法定监护人同意的情况下使用本服务。
+
+## 第12条（条款变更）
+
+本条款可在不事先通知的情况下进行变更。
+
+## 第13条（适用法律）
+
+本条款适用日本法律。
+`;
+
 // source: legal/privacy-policy/ja/2026-02-12.md
 export const privacyMd = `# プライバシーポリシー
 
@@ -285,6 +710,296 @@ Whether data sent through APIs is used for model training depends on the terms o
 ## 10. Contact
 
 For privacy-related inquiries, please contact us using the designated support channel.
+`;
+
+// source: legal/privacy-policy/es/2026-02-12.md
+export const privacyEsMd = `# Política de Privacidad
+
+Última actualización: 12 de febrero de 2026
+
+Esta Política de Privacidad explica cómo tratamos la información personal en relación con el Servicio.
+
+## 1. Información que recopilamos
+
+- Información de la cuenta, como dirección de correo electrónico e ID de usuario
+- Información relacionada con pagos obtenida a través de Stripe
+- Contenido de los PDF cargados
+- Información de registro, como dirección IP e historial de uso
+- Cookies e identificadores similares
+
+## 2. Finalidades del uso
+
+- Proporcionar y operar el Servicio
+- Gestionar la facturación y los pagos
+- Prevenir usos no autorizados o abusivos
+- Mejorar el Servicio
+- Cumplir con obligaciones legales
+
+## 3. Compartición con terceros
+
+1. Podemos proporcionar la información necesaria a Stripe para el procesamiento de pagos.
+2. Podemos transmitir datos a proveedores externos de API para el procesamiento mediante IA.
+3. Salvo cuando la ley lo exija, no proporcionamos información personal a terceros sin el consentimiento del usuario.
+
+## 4. Transferencias externas y servidores en el extranjero
+
+El Servicio puede utilizar servidores ubicados fuera de Japón para el procesamiento de IA y operaciones relacionadas. Cualquier transferencia externa se gestiona de acuerdo con las políticas de los proveedores correspondientes.
+
+## 5. Conservación de datos
+
+En general, el contenido se elimina tras un determinado período, salvo que la ley exija su conservación.
+
+## 6. Seguridad
+
+Aplicamos medidas de seguridad adecuadas y nos esforzamos por prevenir accesos no autorizados y fugas de datos.
+
+## 7. Derechos del usuario
+
+Los usuarios pueden solicitar acceso, corrección o eliminación de su información personal.
+
+## 8. Cookies
+
+El Servicio utiliza cookies para mejorar la usabilidad y el funcionamiento del servicio.
+
+## 9. Entrenamiento de modelos
+
+El uso de los datos enviados a través de las API para el entrenamiento de modelos depende de las condiciones de los proveedores externos correspondientes.
+
+## 10. Contacto
+
+Para consultas relacionadas con la privacidad, póngase en contacto con nosotros a través del canal de soporte designado.
+`;
+
+// source: legal/privacy-policy/fr/2026-02-12.md
+export const privacyFrMd = `# Politique de confidentialité
+
+Dernière mise à jour : 12 février 2026
+
+La présente politique de confidentialité explique comment nous traitons les informations personnelles dans le cadre du Service.
+
+## 1. Informations que nous collectons
+
+- Informations de compte telles que l'adresse e-mail et l'identifiant utilisateur
+- Informations liées au paiement obtenues via Stripe
+- Contenu des PDF téléchargés
+- Informations de journalisation telles que l'adresse IP et l'historique d'utilisation
+- Cookies et identifiants similaires
+
+## 2. Finalités d'utilisation
+
+- Fournir et exploiter le Service
+- Gérer la facturation et les paiements
+- Prévenir les usages non autorisés ou abusifs
+- Améliorer le Service
+- Respecter les obligations légales
+
+## 3. Partage avec des tiers
+
+1. Nous pouvons fournir à Stripe les informations nécessaires au traitement des paiements.
+2. Nous pouvons transmettre des données à des fournisseurs d'API externes pour le traitement par l'IA.
+3. Sauf obligation légale, nous ne communiquons pas d'informations personnelles à des tiers sans le consentement de l'utilisateur.
+
+## 4. Transferts externes et serveurs à l'étranger
+
+Le Service peut utiliser des serveurs situés hors du Japon pour le traitement par l'IA et les opérations associées. Tout transfert externe est géré conformément aux politiques des prestataires concernés.
+
+## 5. Conservation des données
+
+Le contenu est généralement supprimé après une certaine période, sauf si la loi impose sa conservation.
+
+## 6. Sécurité
+
+Nous mettons en œuvre des mesures de sécurité appropriées et nous efforçons de prévenir les accès non autorisés et les fuites de données.
+
+## 7. Droits des utilisateurs
+
+Les utilisateurs peuvent demander l'accès à leurs informations personnelles, leur rectification ou leur suppression.
+
+## 8. Cookies
+
+Le Service utilise des cookies afin d'améliorer l'ergonomie et le fonctionnement du service.
+
+## 9. Entraînement des modèles
+
+L'utilisation des données transmises via les API pour l'entraînement des modèles dépend des conditions des prestataires externes concernés.
+
+## 10. Contact
+
+Pour toute question relative à la confidentialité, veuillez nous contacter via le canal d'assistance désigné.
+`;
+
+// source: legal/privacy-policy/de/2026-02-12.md
+export const privacyDeMd = `# Datenschutzrichtlinie
+
+Letzte Aktualisierung: 12. Februar 2026
+
+Diese Datenschutzrichtlinie erläutert, wie wir personenbezogene Informationen im Zusammenhang mit dem Dienst verarbeiten.
+
+## 1. Welche Informationen wir erfassen
+
+- Kontoinformationen wie E-Mail-Adresse und Benutzer-ID
+- Zahlungsbezogene Informationen, die über Stripe erhalten werden
+- Inhalte hochgeladener PDFs
+- Protokollinformationen wie IP-Adresse und Nutzungshistorie
+- Cookies und ähnliche Kennungen
+
+## 2. Zwecke der Nutzung
+
+- Bereitstellung und Betrieb des Dienstes
+- Verwaltung von Abrechnung und Zahlungen
+- Verhinderung unbefugter oder missbräuchlicher Nutzung
+- Verbesserung des Dienstes
+- Erfüllung gesetzlicher Verpflichtungen
+
+## 3. Weitergabe an Dritte
+
+1. Wir können Stripe die für die Zahlungsabwicklung erforderlichen Informationen bereitstellen.
+2. Wir können Daten zur KI-Verarbeitung an externe API-Anbieter übermitteln.
+3. Soweit gesetzlich nicht anders vorgeschrieben, geben wir personenbezogene Informationen nicht ohne Zustimmung des Nutzers an Dritte weiter.
+
+## 4. Externe Übermittlungen und Server im Ausland
+
+Der Dienst kann für KI-Verarbeitung und damit verbundene Vorgänge Server außerhalb Japans verwenden. Externe Übermittlungen werden entsprechend den Richtlinien der jeweiligen Anbieter verwaltet.
+
+## 5. Datenaufbewahrung
+
+Inhalte werden grundsätzlich nach einer bestimmten Zeit gelöscht, sofern keine gesetzliche Aufbewahrungspflicht besteht.
+
+## 6. Sicherheit
+
+Wir treffen angemessene Sicherheitsmaßnahmen und bemühen uns, unbefugten Zugriff und Datenlecks zu verhindern.
+
+## 7. Rechte der Nutzer
+
+Nutzer können Auskunft, Berichtigung oder Löschung ihrer personenbezogenen Daten verlangen.
+
+## 8. Cookies
+
+Der Dienst verwendet Cookies, um die Benutzerfreundlichkeit und den Betrieb des Dienstes zu verbessern.
+
+## 9. Modelltraining
+
+Ob über APIs übermittelte Daten für das Training von Modellen verwendet werden, hängt von den Bedingungen der jeweiligen externen Dienstanbieter ab.
+
+## 10. Kontakt
+
+Bei Fragen zum Datenschutz kontaktieren Sie uns bitte über den vorgesehenen Support-Kanal.
+`;
+
+// source: legal/privacy-policy/ko/2026-02-12.md
+export const privacyKoMd = `# 개인정보처리방침
+
+최종 업데이트: 2026년 2월 12일
+
+본 개인정보처리방침은 서비스와 관련하여 당사가 개인정보를 어떻게 처리하는지 설명합니다.
+
+## 1. 수집하는 정보
+
+- 이메일 주소 및 사용자 ID와 같은 계정 정보
+- Stripe를 통해 취득되는 결제 관련 정보
+- 업로드된 PDF의 내용
+- IP 주소 및 이용 이력과 같은 로그 정보
+- 쿠키 및 유사한 식별자
+
+## 2. 이용 목적
+
+- 서비스 제공 및 운영
+- 청구 및 결제 관리
+- 무단 또는 남용적 이용 방지
+- 서비스 개선
+- 법적 의무 준수
+
+## 3. 제3자 제공
+
+1. 결제 처리를 위해 필요한 정보를 Stripe에 제공할 수 있습니다.
+2. AI 처리를 위해 외부 API 제공업체에 데이터를 전송할 수 있습니다.
+3. 법률상 요구되는 경우를 제외하고, 사용자의 동의 없이 개인정보를 제3자에게 제공하지 않습니다.
+
+## 4. 외부 전송 및 해외 서버
+
+서비스는 AI 처리 및 관련 운영을 위해 일본 외부에 위치한 서버를 사용할 수 있습니다. 외부 전송은 관련 제공업체의 정책에 따라 관리됩니다.
+
+## 5. 데이터 보관
+
+콘텐츠는 법률상 보관이 요구되지 않는 한 일반적으로 일정 기간 후 삭제됩니다.
+
+## 6. 보안
+
+당사는 적절한 보안 조치를 시행하고 무단 접근 및 데이터 유출 방지를 위해 노력합니다.
+
+## 7. 사용자 권리
+
+사용자는 자신의 개인정보에 대한 열람, 정정 또는 삭제를 요청할 수 있습니다.
+
+## 8. 쿠키
+
+서비스는 사용성과 서비스 운영 개선을 위해 쿠키를 사용합니다.
+
+## 9. 모델 학습
+
+API를 통해 전송된 데이터가 모델 학습에 사용되는지는 관련 외부 서비스 제공업체의 약관에 따릅니다.
+
+## 10. 문의
+
+개인정보 관련 문의는 지정된 지원 채널을 통해 연락해 주시기 바랍니다.
+`;
+
+// source: legal/privacy-policy/zh/2026-02-12.md
+export const privacyZhMd = `# 隐私政策
+
+最后更新：2026年2月12日
+
+本隐私政策说明我们如何在与本服务相关的范围内处理个人信息。
+
+## 1. 我们收集的信息
+
+- 电子邮箱地址、用户 ID 等账户信息
+- 通过 Stripe 获取的支付相关信息
+- 已上传 PDF 的内容
+- IP 地址、使用历史等日志信息
+- Cookie 及类似标识符
+
+## 2. 使用目的
+
+- 提供和运营本服务
+- 管理账单和支付
+- 防止未经授权或滥用的使用
+- 改进本服务
+- 履行法律义务
+
+## 3. 向第三方共享
+
+1. 我们可能会向 Stripe 提供支付处理所需的信息。
+2. 我们可能会向外部 API 提供商传输数据以进行 AI 处理。
+3. 除法律要求外，未经用户同意，我们不会向第三方提供个人信息。
+
+## 4. 外部传输与海外服务器
+
+本服务可能会为 AI 处理及相关操作使用位于日本境外的服务器。任何外部传输均按照相关服务提供商的政策进行管理。
+
+## 5. 数据保存
+
+除法律要求保存外，内容通常会在一定期限后删除。
+
+## 6. 安全
+
+我们采取适当的安全措施，并努力防止未经授权的访问和数据泄露。
+
+## 7. 用户权利
+
+用户可以请求访问、更正或删除其个人信息。
+
+## 8. Cookie
+
+本服务使用 Cookie 以提升可用性和服务运营。
+
+## 9. 模型训练
+
+通过 API 发送的数据是否会用于模型训练，取决于相关外部服务提供商的条款。
+
+## 10. 联系方式
+
+如有与隐私相关的咨询，请通过指定的支持渠道与我们联系。
 `;
 
 // source: legal/tokushoho/ja/2026-03-07.md

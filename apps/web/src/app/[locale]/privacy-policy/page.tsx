@@ -1,8 +1,19 @@
-import Link from "next/link";
+import type { Metadata } from "next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { getPrivacyMd } from "@/content/legal";
+import { getLegalBackLabel, getPrivacyMd } from "@/content/legal";
+import { Link } from "@/i18n/navigation";
+
+import { buildLegalMetadata } from "../legal-page-metadata";
+
+export function generateMetadata({
+  params: { locale },
+}: {
+  params: { locale: string };
+}): Metadata {
+  return buildLegalMetadata("privacy", locale);
+}
 
 export default function PrivacyPolicyPage({
   params: { locale },
@@ -10,13 +21,13 @@ export default function PrivacyPolicyPage({
   params: { locale: string };
 }) {
   const privacyMd = getPrivacyMd(locale);
-  const backLabel = locale === "ja" ? "← ホームへ" : "← Back to home";
+  const backLabel = getLegalBackLabel(locale);
 
   return (
     <main className="legal-page">
       <article className="legal-card">
         <div className="legal-card__header">
-          <Link href="/" className="legal-card__back">
+          <Link href="/" locale={locale} className="legal-card__back">
             {backLabel}
           </Link>
         </div>

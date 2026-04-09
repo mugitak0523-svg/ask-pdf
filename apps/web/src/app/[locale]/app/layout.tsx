@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
-const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+import { siteUrl } from "@/lib/site.server";
+
 const shareImage = "/icon.svg";
 
 export const metadata: Metadata = {
-  metadataBase: new URL(appUrl),
+  metadataBase: new URL(siteUrl),
   title: "AskPDF",
   description: "AskPDF App",
   openGraph: {

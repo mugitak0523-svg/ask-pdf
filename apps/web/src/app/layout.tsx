@@ -2,19 +2,22 @@ import "./globals.css";
 import type { ReactNode } from "react";
 import type { Metadata } from "next";
 import Script from "next/script";
+import { getLocale } from "next-intl/server";
 
-const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+import { routing } from "@/i18n/routing";
+import { siteUrl } from "@/lib/site.server";
+
 const ogImage = "/icon.svg";
 const gaMeasurementId = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID;
 
 export const metadata: Metadata = {
   title: "AskPDF",
   description: "AskPDF UI",
-  metadataBase: new URL(appUrl),
+  metadataBase: new URL(siteUrl),
   openGraph: {
     title: "AskPDF",
     description: "AskPDF UI",
-    url: appUrl,
+    url: siteUrl,
     siteName: "AskPDF",
     images: [
       {
@@ -34,9 +37,11 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  const locale = await getLocale().catch(() => routing.defaultLocale);
+
   return (
-    <html lang="ja">
+    <html lang={locale}>
       <body>
         {gaMeasurementId ? (
           <>
