@@ -37,6 +37,18 @@ export function ArticleAppPromo({
 
   return (
     <section className={styles.promoCard} aria-label={title}>
+      <button
+        type="button"
+        className={styles.promoDismiss}
+        aria-label={dismiss}
+        onClick={() => {
+          window.localStorage.setItem(STORAGE_KEY, "1");
+          setDismissed(true);
+        }}
+      >
+        ×
+      </button>
+
       <div className={styles.promoCopy}>
         <p className={styles.promoEyebrow}>AskPDF</p>
         <h2 className={styles.promoTitle}>{title}</h2>
@@ -47,17 +59,6 @@ export function ArticleAppPromo({
         <Link href="/app" locale={locale} className={styles.promoCta}>
           {cta}
         </Link>
-        <button
-          type="button"
-          className={styles.promoDismiss}
-          aria-label={dismiss}
-          onClick={() => {
-            window.localStorage.setItem(STORAGE_KEY, "1");
-            setDismissed(true);
-          }}
-        >
-          ×
-        </button>
       </div>
     </section>
   );
