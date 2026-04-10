@@ -793,6 +793,59 @@
   color: #475569;
 }
 
+.articleSectionBody {
+  max-width: 720px;
+  margin: 14px auto 0;
+  text-align: center;
+  color: #536276;
+  line-height: 1.8;
+}
+
+.lpArticleGrid {
+  margin-top: 30px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.lpArticleCard {
+  display: grid;
+  min-height: 220px;
+  padding: 24px;
+  border: 1px solid #dbe4ee;
+  border-radius: 14px;
+  background: #ffffff;
+  text-decoration: none;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.lpArticleCard:hover {
+  transform: translateY(-2px);
+  border-color: #bfd5eb;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.08);
+}
+
+.lpArticleTitle {
+  margin: 0;
+  color: #0f172a;
+  font-size: 1.1rem;
+  line-height: 1.5;
+  font-weight: 800;
+}
+
+.lpArticleDescription {
+  margin: 10px 0 0;
+  color: #536276;
+  line-height: 1.75;
+}
+
+.lpArticleActions {
+  margin-top: 28px;
+  display: flex;
+  justify-content: center;
+}
+
 .stepCard {
   background: linear-gradient(160deg, #fffaf0 0%, #fff1cc 100%);
   border: 1px solid #fcd34d;
@@ -1194,6 +1247,10 @@
 
   .featureDetailCard {
     grid-column: span 6;
+  }
+
+  .lpArticleGrid {
+    grid-template-columns: 1fr;
   }
 
   .solutionSplit {
