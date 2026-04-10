@@ -19,8 +19,7 @@ const chromeCopy = {
     home: "ホーム",
     articles: "記事",
     openApp: "アプリを開く",
-    title: "記事",
-    body: "AskPDF の機能解説、使い方、比較記事を Markdown ベースで公開するための一覧です。",
+    title: "記事一覧",
     footer: "AskPDF",
   },
   en: {
@@ -28,7 +27,6 @@ const chromeCopy = {
     articles: "Articles",
     openApp: "Open App",
     title: "Articles",
-    body: "A markdown-based article index for AskPDF feature explainers, tutorials, and comparisons.",
     footer: "AskPDF",
   },
   es: {
@@ -36,7 +34,6 @@ const chromeCopy = {
     articles: "Artículos",
     openApp: "Abrir app",
     title: "Artículos",
-    body: "Índice markdown para artículos de AskPDF sobre funciones, tutoriales y comparativas.",
     footer: "AskPDF",
   },
   fr: {
@@ -44,7 +41,6 @@ const chromeCopy = {
     articles: "Articles",
     openApp: "Ouvrir l'app",
     title: "Articles",
-    body: "Index markdown des articles AskPDF sur les fonctionnalités, l'usage et les comparaisons.",
     footer: "AskPDF",
   },
   de: {
@@ -52,7 +48,6 @@ const chromeCopy = {
     articles: "Artikel",
     openApp: "App öffnen",
     title: "Artikel",
-    body: "Markdown-Index für AskPDF-Artikel zu Funktionen, Nutzung und Vergleichen.",
     footer: "AskPDF",
   },
   ko: {
@@ -60,7 +55,6 @@ const chromeCopy = {
     articles: "아티클",
     openApp: "앱 열기",
     title: "아티클",
-    body: "AskPDF 기능 설명, 사용법, 비교 글을 위한 Markdown 기반 아티클 목록입니다.",
     footer: "AskPDF",
   },
   zh: {
@@ -68,7 +62,6 @@ const chromeCopy = {
     articles: "文章",
     openApp: "打开应用",
     title: "文章",
-    body: "用于 AskPDF 功能说明、教程和对比内容的 Markdown 文章索引。",
     footer: "AskPDF",
   },
 } as const;
@@ -138,9 +131,8 @@ export default function ArticlesIndexPage({
 
       <div className={styles.pageInner}>
         <div className={styles.indexWrap}>
-          <header className={styles.indexHeader}>
+          <header className={styles.indexHeading}>
             <h1 className={styles.indexTitle}>{chromeText.title}</h1>
-            <p className={styles.indexBody}>{chromeText.body}</p>
           </header>
 
           <section className={styles.indexPanel}>

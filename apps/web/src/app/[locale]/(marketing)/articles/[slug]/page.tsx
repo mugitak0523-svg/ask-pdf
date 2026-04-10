@@ -16,6 +16,7 @@ import { routing } from "@/i18n/routing";
 import { siteUrl } from "@/lib/site.server";
 
 import { ArticleAppPromo } from "../article-app-promo";
+import { ArticleImageLightbox } from "../article-image-lightbox";
 import { ArticleLocaleSelect } from "../article-locale-select";
 import { ArticleMobileToc } from "../article-mobile-toc";
 import styles from "../article-page.module.css";
@@ -143,6 +144,7 @@ function createMarkdownComponents(headings: ArticleHeading[]): Components {
         </a>
       );
     },
+    img: ({ src, alt }) => <ArticleImageLightbox src={src} alt={alt} />,
   };
 }
 
