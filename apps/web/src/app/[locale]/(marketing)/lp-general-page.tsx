@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { getArticleSummaries } from "@/content/articles";
 import { getLpGeneralContent } from "@/content/lp/general";
 import { Link } from "@/i18n/navigation";
 import { routing } from "@/i18n/routing";
@@ -140,6 +141,61 @@ const localeLabels: Record<string, string> = {
   de: "Deutsch",
   ko: "한국어",
   zh: "中文",
+};
+
+const articleSectionCopy: Record<
+  string,
+  { kicker: string; title: string; body: string; cta: string; footerLink: string }
+> = {
+  ja: {
+    kicker: "Articles",
+    title: "記事一覧",
+    body: "AskPDF の使い方や機能紹介を記事でまとめています。",
+    cta: "記事一覧を見る",
+    footerLink: "記事一覧",
+  },
+  en: {
+    kicker: "Articles",
+    title: "Articles",
+    body: "Browse product explainers and practical guides for AskPDF.",
+    cta: "View articles",
+    footerLink: "Articles",
+  },
+  es: {
+    kicker: "Articles",
+    title: "Artículos",
+    body: "Consulta artículos sobre funciones y uso práctico de AskPDF.",
+    cta: "Ver artículos",
+    footerLink: "Artículos",
+  },
+  fr: {
+    kicker: "Articles",
+    title: "Articles",
+    body: "Consultez des articles sur les fonctionnalités et les usages d'AskPDF.",
+    cta: "Voir les articles",
+    footerLink: "Articles",
+  },
+  de: {
+    kicker: "Articles",
+    title: "Artikel",
+    body: "Lesen Sie Funktionsübersichten und praktische Anleitungen zu AskPDF.",
+    cta: "Artikel ansehen",
+    footerLink: "Artikel",
+  },
+  ko: {
+    kicker: "Articles",
+    title: "아티클",
+    body: "AskPDF 기능 소개와 실전 사용법을 아티클로 볼 수 있습니다.",
+    cta: "아티클 보기",
+    footerLink: "아티클",
+  },
+  zh: {
+    kicker: "Articles",
+    title: "文章",
+    body: "查看 AskPDF 的功能介绍与实际使用文章。",
+    cta: "查看文章",
+    footerLink: "文章",
+  },
 };
 
 const painIcons = [
@@ -309,6 +365,8 @@ export default function LpGeneralPage({ params }: LpPageProps) {
     : routing.defaultLocale;
   const canonicalUrl = `${siteUrl}/${locale}`;
   const content = getLpGeneralContent(locale);
+  const articleCopy = articleSectionCopy[locale] ?? articleSectionCopy.en;
+  const articles = getArticleSummaries(locale).slice(0, 3);
   const faqPageLd = {
     "@context": "https://schema.org",
     "@type": "FAQPage",
@@ -681,6 +739,36 @@ export default function LpGeneralPage({ params }: LpPageProps) {
         </div>
       </section>
 
+      {articles.length ? (
+        <section className={`${styles.section} ${styles.sectionWhite}`}>
+          <div className={`${styles.sectionInner} ${styles.sectionInnerBare}`}>
+            <p className={`${styles.sectionKicker} ${styles.sectionHeadingCenter}`}>{articleCopy.kicker}</p>
+            <h2 className={`${styles.sectionTitle} ${styles.sectionHeadingCenter}`}>{articleCopy.title}</h2>
+            <p className={styles.articleSectionBody}>{articleCopy.body}</p>
+            <div className={styles.lpArticleGrid}>
+              {articles.map((article) => (
+                <Link
+                  key={`${article.slug}-${article.locale}`}
+                  href={`/articles/${article.slug}`}
+                  locale={locale}
+                  className={styles.lpArticleCard}
+                >
+                  <div>
+                    <h3 className={styles.lpArticleTitle}>{article.meta.title}</h3>
+                    <p className={styles.lpArticleDescription}>{article.meta.description}</p>
+                  </div>
+                </Link>
+              ))}
+            </div>
+            <div className={styles.lpArticleActions}>
+              <Link href="/articles" locale={locale} className={`${styles.ctaButton} ${styles.ctaButtonGhost}`}>
+                {articleCopy.cta}
+              </Link>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
       <section className={styles.footerCta}>
         <div className={`${styles.sectionInner} ${styles.footerPanel}`}>
           <p className={styles.footerNote}>{content.footer.note}</p>
@@ -705,6 +793,9 @@ export default function LpGeneralPage({ params }: LpPageProps) {
             <a href="#faq" className={styles.siteFooterLink}>
               {content.footer.links.faq}
             </a>
+            <Link href="/articles" locale={locale} className={styles.siteFooterLink}>
+              {articleCopy.footerLink}
+            </Link>
             <Link href="/tokushoho" locale="ja" className={styles.siteFooterLink}>
               {content.footer.links.legal}
             </Link>
