@@ -299,6 +299,7 @@
 }
 
 .promoCard {
+  position: relative;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -313,6 +314,7 @@
   display: grid;
   gap: 10px;
   min-width: 0;
+  padding-right: 44px;
 }
 
 .promoEyebrow {
@@ -341,7 +343,6 @@
 .promoActions {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
   flex-shrink: 0;
 }
 
@@ -361,6 +362,9 @@
 }
 
 .promoDismiss {
+  position: absolute;
+  top: 14px;
+  right: 14px;
   width: 40px;
   height: 40px;
   border: 1px solid #dbe4ee;
@@ -898,7 +902,6 @@
 
   .promoActions {
     width: 100%;
-    justify-content: space-between;
   }
 
   .promoCta {
